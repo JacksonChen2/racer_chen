@@ -1,3 +1,23 @@
+# modified_RACER — ROS 2 / Python / Isaac migration
+
+This repository now has two intentionally separate layers:
+
+- `main` is the byte-for-byte upstream RACER reference baseline at commit
+  `049c332e3634ef72d8beb155b4c13dc91ca52916`.
+- `migration/ros2-python-isaac` contains the Python-first ROS 2 migration.
+  Its active colcon workspace is [`ros2_ws`](ros2_ws); the original ROS 1
+  directories remain available as references and are excluded using
+  `COLCON_IGNORE`.
+
+Target runtime: Ubuntu 22.04, ROS 2 Humble, external Python 3.10, Isaac Sim
+5.1/Isaac Lab, ROS 2 Bridge and RViz2. This checkout was changed on Windows at
+the owner's request without build or runtime verification. See
+[`docs/BUILD_AND_RUN.md`](docs/BUILD_AND_RUN.md),
+[`docs/ISAAC_SIM.md`](docs/ISAAC_SIM.md), and
+[`docs/VALIDATION_STATUS.md`](docs/VALIDATION_STATUS.md).
+
+---
+
 # RACER
 
 **RACER**, a **RA**pid **C**ollaborative **E**xplo**R**ation approach using a

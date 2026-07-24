@@ -1,0 +1,2 @@
+The original ROS 1 simulator is replaced by the Isaac Sim ROS 2 Bridge integration.
+The active ROS 2 implementation lives under ros2_ws/src.

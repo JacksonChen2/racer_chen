@@ -1,0 +1,74 @@
+/**:
+  ros__parameters:
+    use_sim_time: true
+    drone_count: 1
+    frame_id: world
+    fsm:
+      period: 0.05
+      replan_time: 0.2
+      sync_interval: 0.2
+    multi_map:
+      chunk_size: 200
+    map:
+      resolution: 0.1
+      size: [35.0, 35.0, 3.5]
+      ground_height: -1.0
+      obstacles_inflation: 0.199
+      optimistic: true
+      p_hit: 0.65
+      p_miss: 0.35
+      p_min: 0.12
+      p_max: 0.90
+      p_occupied: 0.80
+      max_ray_length: 4.5
+      box_min: [-7.0, -15.0, 0.0]
+      box_max: [7.0, 15.0, 1.7]
+    manager:
+      max_velocity: 2.0
+      max_acceleration: 2.0
+      max_yaw_rate: 2.0943951
+      control_point_distance: 0.5
+      clearance_threshold: 0.2
+      use_optimization: true
+      use_active_perception: true
+    exploration:
+      direction_weight: 1.5
+    frontier:
+      cluster_min: 100
+      cluster_size_xy: 2.0
+      cluster_size_z: 10.0
+      min_candidate_distance: 0.5
+      min_candidate_clearance: 0.21
+      candidate_delta_yaw: 0.2617994
+      candidate_radius_count: 3
+      candidate_radius_min: 1.0
+      candidate_radius_max: 1.5
+      downsample: 3
+      min_visible_count: 30
+      finish_fraction: 0.2
+    perception:
+      top_angle: 0.56125
+      left_angle: 0.69222
+      right_angle: 0.68901
+      max_distance: 4.5
+      visualization_distance: 1.0
+    heading:
+      yaw_diff: 0.5235988
+      half_vertical_num: 5
+      lambda1: 2.0
+      lambda2: 1.0
+      max_yaw_rate: 0.1745329
+      weight: 20000.0
+    optimization:
+      lambda_smoothness: 5.0
+      lambda_distance: 10.0
+      lambda_feasibility: 2.0
+      safe_distance: 0.7
+      max_iterations: 200
+    command_period: 0.01
+    kx: [5.7, 5.7, 6.2]
+    kv: [3.4, 3.4, 4.0]
+    position_gain: [5.7, 5.7, 6.2]
+    velocity_gain: [3.4, 3.4, 4.0]
+    max_acceleration: 10.0
+

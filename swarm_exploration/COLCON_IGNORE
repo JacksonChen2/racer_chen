@@ -1,0 +1,2 @@
+The ROS 1 implementation is retained only as the immutable migration reference.
+The active ROS 2 implementation lives under ros2_ws/src.

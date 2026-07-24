@@ -1,0 +1,46 @@
+Panels:
+  - Class: rviz_common/Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+      Plane: XY
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Drone 1 Point Cloud
+      Enabled: true
+      Topic:
+        Value: /drone_1/pointcloud
+      Size (Pixels): 2
+    - Class: rviz_default_plugins/MarkerArray
+      Name: RACER Planning
+      Enabled: true
+      Topic:
+        Value: /drone_1/planning/markers
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: world
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/SetInitialPose
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Value: /move_base_simple/goal
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 20
+      Pitch: 0.5
+      Yaw: 0.8
+Window Geometry:
+  Width: 1400
+  Height: 900
+
