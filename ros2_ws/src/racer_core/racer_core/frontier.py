@@ -127,6 +127,26 @@ class FrontierFinder:
                 retained.append(frontier)
         self.frontiers = retained
 
+        retained_dormant: list[Frontier] = []
+        for frontier in self.dormant_frontiers:
+            overlaps = bool(
+                np.all(
+                    np.maximum(frontier.box_min, updated_min)
+                    <= np.minimum(frontier.box_max, updated_max) + 1.0e-3
+                )
+            )
+            changed = overlaps and any(
+                not self._is_frontier_cell(
+                    tuple(int(value) for value in self.map.position_to_index(cell))
+                )
+                for cell in frontier.cells
+            )
+            if changed:
+                self._clear_flags(frontier)
+            else:
+                retained_dormant.append(frontier)
+        self.dormant_frontiers = retained_dormant
+
         search_min = np.maximum(updated_min - np.asarray((1.0, 1.0, 0.2)), self.map.box_min)
         search_max = np.minimum(updated_max + np.asarray((1.0, 1.0, 0.2)), self.map.box_max)
         minimum = self.map.bound_index(self.map.position_to_index(search_min))
@@ -378,7 +398,16 @@ class FrontierFinder:
         self.next_frontier = self.frontiers[frontier_id]
 
     def is_frontier_covered(self) -> bool:
+        updated_min, updated_max = self.map.updated_box()
+        restrict_to_update = bool(
+            np.all(np.isfinite(updated_min)) and np.all(np.isfinite(updated_max))
+        )
         for frontier in [*self.frontiers, *self.dormant_frontiers]:
+            if restrict_to_update and not np.all(
+                np.maximum(frontier.box_min, updated_min)
+                <= np.minimum(frontier.box_max, updated_max) + 1.0e-3
+            ):
+                continue
             threshold = int(self.config.min_view_finish_fraction * len(frontier.cells))
             changed = 0
             for cell in frontier.cells:

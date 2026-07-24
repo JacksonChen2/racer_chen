@@ -29,13 +29,7 @@ class LkhSolver:
         if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
             raise ValueError("cost matrix must be square")
         if not self.available():
-            remaining, route, current = set(range(len(matrix))), [start_index], start_index
-            remaining.remove(current)
-            while remaining:
-                current = min(remaining, key=lambda index: matrix[current, index])
-                remaining.remove(current)
-                route.append(current)
-            return route
+            return self._fallback_tsp(matrix, start_index)
         with tempfile.TemporaryDirectory(prefix="racer_lkh_") as directory:
             root = Path(directory)
             problem, parameter, tour = root / "problem.atsp", root / "problem.par", root / "tour.txt"
@@ -66,6 +60,57 @@ class LkhSolver:
                 ids = ids[offset:] + ids[:offset]
             return ids
 
+    @staticmethod
+    def _fallback_tsp(matrix: Array, start_index: int) -> list[int]:
+        """Use exact dynamic programming for normal RACER tour sizes.
+
+        LKH remains the production solver.  This fallback avoids silently
+        changing the planning objective to nearest-neighbour when LKH is not
+        installed, which is especially important in a Python-only deployment.
+        """
+        nodes = [index for index in range(len(matrix)) if index != start_index]
+        if len(nodes) <= 11:
+            states: dict[tuple[int, int], tuple[float, list[int]]] = {}
+            for offset, node in enumerate(nodes):
+                states[1 << offset, offset] = (
+                    float(matrix[start_index, node]),
+                    [start_index, node],
+                )
+            for mask in range(1, 1 << len(nodes)):
+                for last in range(len(nodes)):
+                    item = states.get((mask, last))
+                    if item is None:
+                        continue
+                    cost, path = item
+                    for target in range(len(nodes)):
+                        if mask & (1 << target):
+                            continue
+                        next_mask = mask | (1 << target)
+                        next_cost = cost + float(matrix[nodes[last], nodes[target]])
+                        previous = states.get((next_mask, target))
+                        if previous is None or next_cost < previous[0]:
+                            states[next_mask, target] = (
+                                next_cost,
+                                [*path, nodes[target]],
+                            )
+            full = (1 << len(nodes)) - 1
+            return min(
+                (
+                    value
+                    for (mask, _), value in states.items()
+                    if mask == full
+                ),
+                key=lambda item: item[0],
+                default=(0.0, [start_index]),
+            )[1]
+
+        remaining, route, current = set(nodes), [start_index], start_index
+        while remaining:
+            current = min(remaining, key=lambda index: matrix[current, index])
+            remaining.remove(current)
+            route.append(current)
+        return route
+
     def solve_multiple(self, costs: Array, depot_count: int) -> list[list[int]]:
         remaining = set(range(depot_count, len(costs)))
         tours, current = [[] for _ in range(depot_count)], list(range(depot_count))
@@ -80,4 +125,3 @@ class LkhSolver:
             current[drone] = target
             remaining.remove(target)
         return tours
-

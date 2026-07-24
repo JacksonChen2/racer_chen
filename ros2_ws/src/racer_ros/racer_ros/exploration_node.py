@@ -24,6 +24,7 @@ from racer_core import (
     MapChunk,
     MultiMapManager,
     OptimizerConfig,
+    PartitionConfig,
     PerceptionConfig,
     PlannerConfig,
     PlannerStatus,
@@ -33,7 +34,7 @@ from racer_core import (
     VoxelMapConfig,
 )
 from racer_core.bspline import NonUniformBspline
-from racer_core.math_utils import quaternion_to_yaw
+from racer_core.math_utils import quaternion_to_rotation, quaternion_to_yaw
 from racer_interfaces.msg import Bspline, ChunkData, ChunkStamps, DroneState, IdxList
 
 from .conversions import point_message, seconds_to_time
@@ -45,6 +46,7 @@ class FsmState(IntEnum):
     PLAN = 2
     EXECUTE = 3
     FINISH = 4
+    IDLE = 5
 
 
 class ExplorationNode(Node):
@@ -84,6 +86,12 @@ class ExplorationNode(Node):
                 clearance_threshold=self.get_parameter("manager.clearance_threshold").value,
                 use_optimization=self.get_parameter("manager.use_optimization").value,
                 use_active_perception=self.get_parameter("manager.use_active_perception").value,
+                astar_resolution=self.get_parameter("search.astar_resolution").value,
+                astar_max_search_time=self.get_parameter("search.astar_max_time").value,
+                kino_max_search_time=self.get_parameter("search.kino_max_time").value,
+                initial_plan_count=self.get_parameter("search.initial_plan_count").value,
+                close_radius=self.get_parameter("search.close_radius").value,
+                far_radius=self.get_parameter("search.far_radius").value,
             ),
             FrontierConfig(
                 cluster_min=self.get_parameter("frontier.cluster_min").value,
@@ -114,6 +122,8 @@ class ExplorationNode(Node):
                 max_velocity=max_velocity,
                 max_acceleration=max_acceleration,
                 max_iterations=self.get_parameter("optimization.max_iterations").value,
+                lambda_swarm=self.get_parameter("optimization.lambda_swarm").value,
+                swarm_clearance=self.get_parameter("optimization.swarm_clearance").value,
             ),
             HeadingConfig(
                 yaw_diff=self.get_parameter("heading.yaw_diff").value,
@@ -122,6 +132,16 @@ class ExplorationNode(Node):
                 weight=self.get_parameter("heading.weight").value,
                 info_lambda1=self.get_parameter("heading.lambda1").value,
                 info_lambda2=self.get_parameter("heading.lambda2").value,
+            ),
+            PartitionConfig(
+                minimum_unknown=self.get_parameter("partition.minimum_unknown").value,
+                minimum_frontier=self.get_parameter("partition.minimum_frontier").value,
+                minimum_free=self.get_parameter("partition.minimum_free").value,
+                consistent_cost=self.get_parameter("partition.consistent_cost").value,
+                consistent_cost2=self.get_parameter("partition.consistent_cost2").value,
+                unknown_weight=self.get_parameter("partition.unknown_weight").value,
+                grid_size=self.get_parameter("partition.grid_size").value,
+                first_weight=self.get_parameter("partition.first_weight").value,
             ),
         )
         self.state = VehicleState()
@@ -136,6 +156,21 @@ class ExplorationNode(Node):
         self.busy = False
         self.trajectory_id = 0
         self.last_plan_time = -math.inf
+        self.last_idle_check = -math.inf
+        self.rotation_world_from_body = np.eye(3, dtype=np.float64)
+        self.lidar_translation = np.asarray(
+            self.get_parameter("pointcloud.translation").value, dtype=np.float64
+        )
+        self.pointcloud_is_world = bool(
+            self.get_parameter("pointcloud.is_world").value
+        )
+        self.current_position_trajectory: NonUniformBspline | None = None
+        self.current_yaw_trajectory: NonUniformBspline | None = None
+        self.current_trajectory_start = 0.0
+        self.current_trajectory_duration = 0.0
+        self.swarm_trajectories: dict[
+            int, tuple[NonUniformBspline, float]
+        ] = {}
         self.lock = threading.Lock()
         self.create_subscription(
             Odometry, "odometry", self._odom_callback, qos_profile_sensor_data
@@ -175,14 +210,19 @@ class ExplorationNode(Node):
             ChunkStamps, "/multi_map_manager/chunk_stamps", self._chunk_stamps_callback, 10
         )
         self.create_timer(self.get_parameter("fsm.period").value, self._fsm_tick)
+        self.create_timer(0.05, self._safety_tick)
         self.create_timer(self.get_parameter("fsm.sync_interval").value, self._publish_state)
         self.create_timer(0.1, self._publish_chunk_stamps)
+        self.create_timer(0.1, self._publish_pending_chunk)
 
     def _declare_parameters(self) -> None:
         values = {
             "drone_id": 1, "drone_count": 1, "frame_id": "world",
             "multi_map.chunk_size": 200,
             "fsm.period": 0.05, "fsm.replan_time": 0.2, "fsm.sync_interval": 0.2,
+            "fsm.replan_near_end": 0.5, "fsm.periodic_replan": 1.0,
+            "fsm.idle_retry": 1.0,
+            "pointcloud.is_world": False, "pointcloud.translation": [0.0, 0.0, 0.0],
             "map.resolution": 0.1, "map.size": [35.0, 35.0, 3.5],
             "map.ground_height": -1.0, "map.obstacles_inflation": 0.199,
             "map.optimistic": True, "map.p_hit": 0.65, "map.p_miss": 0.35,
@@ -193,6 +233,9 @@ class ExplorationNode(Node):
             "manager.max_yaw_rate": math.radians(120.0),
             "manager.control_point_distance": 0.5, "manager.clearance_threshold": 0.2,
             "manager.use_optimization": True, "manager.use_active_perception": True,
+            "search.astar_resolution": 0.3, "search.astar_max_time": 0.1,
+            "search.kino_max_time": 0.25, "search.initial_plan_count": 2,
+            "search.close_radius": 1.5, "search.far_radius": 7.0,
             "exploration.direction_weight": 1.5,
             "frontier.cluster_min": 100, "frontier.cluster_size_xy": 2.0,
             "frontier.cluster_size_z": 10.0, "frontier.min_candidate_distance": 0.5,
@@ -208,6 +251,16 @@ class ExplorationNode(Node):
             "optimization.lambda_distance": 10.0,
             "optimization.lambda_feasibility": 2.0,
             "optimization.safe_distance": 0.7, "optimization.max_iterations": 200,
+            "optimization.lambda_swarm": 10.0,
+            "optimization.swarm_clearance": 0.7,
+            "partition.minimum_unknown": 4000,
+            "partition.minimum_frontier": 100,
+            "partition.minimum_free": 3000,
+            "partition.consistent_cost": -5.0,
+            "partition.consistent_cost2": 8.0,
+            "partition.unknown_weight": 0.0,
+            "partition.grid_size": 5.0,
+            "partition.first_weight": 1.0,
             "heading.yaw_diff": math.radians(30.0), "heading.half_vertical_num": 5,
             "heading.max_yaw_rate": math.radians(10.0), "heading.weight": 20000.0,
             "heading.lambda1": 2.0, "heading.lambda2": 1.0,
@@ -218,13 +271,26 @@ class ExplorationNode(Node):
     def _odom_callback(self, message: Odometry) -> None:
         position, velocity = message.pose.pose.position, message.twist.twist.linear
         orientation = message.pose.pose.orientation
+        now = self.get_clock().now().nanoseconds * 1.0e-9
+        previous_velocity = self.state.velocity.copy()
+        previous_stamp = self.state.stamp
         self.state.position[:] = position.x, position.y, position.z
         self.state.velocity[:] = velocity.x, velocity.y, velocity.z
         self.state.yaw = quaternion_to_yaw(
             orientation.x, orientation.y, orientation.z, orientation.w
         )
+        self.rotation_world_from_body = quaternion_to_rotation(
+            orientation.x, orientation.y, orientation.z, orientation.w
+        )
         self.state.yaw_rate = message.twist.twist.angular.z
-        self.state.stamp = self.get_clock().now().nanoseconds * 1.0e-9
+        if previous_stamp > 0.0 and now > previous_stamp + 1.0e-4:
+            measured = (self.state.velocity - previous_velocity) / (now - previous_stamp)
+            self.state.acceleration[:] = np.clip(
+                0.2 * measured + 0.8 * self.state.acceleration,
+                -self.get_parameter("manager.max_acceleration").value,
+                self.get_parameter("manager.max_acceleration").value,
+            )
+        self.state.stamp = now
         self.have_odom = True
 
     def _cloud_callback(self, message: PointCloud2) -> None:
@@ -233,9 +299,19 @@ class ExplorationNode(Node):
         points = point_cloud2.read_points_numpy(message, field_names=("x", "y", "z"))
         if points.size == 0:
             return
+        cloud = np.asarray(points[:, :3], dtype=np.float64)
+        sensor_origin = (
+            self.state.position
+            + self.rotation_world_from_body @ self.lidar_translation
+        )
+        if not self.pointcloud_is_world:
+            cloud = (
+                cloud @ self.rotation_world_from_body.T
+                + sensor_origin
+            )
         with self.lock:
             addresses = self.voxel_map.input_point_cloud(
-                np.asarray(points[:, :3]), self.state.position
+                cloud, sensor_origin
             )
             self.voxel_map.inflate_local_map()
             self.voxel_map.update_esdf()
@@ -294,6 +370,11 @@ class ExplorationNode(Node):
             message.idx_lists.append(item)
         self.chunk_stamps_publisher.publish(message)
 
+    def _publish_pending_chunk(self) -> None:
+        chunk = self.multi_map.flush_pending(self._address_occupancy)
+        if chunk is not None:
+            self._publish_chunk(chunk, -1)
+
     def _chunk_stamps_callback(self, message: ChunkStamps) -> None:
         if message.from_drone_id == self.drone_id:
             return
@@ -315,7 +396,9 @@ class ExplorationNode(Node):
             yaw=float(message.yaw),
             stamp=float(message.stamp),
         )
-        self.planner.swarm.update_state(int(message.drone_id), state)
+        self.planner.swarm.update_state(
+            int(message.drone_id), state, list(message.grid_ids)
+        )
 
     def _swarm_trajectory_callback(self, message: Bspline) -> None:
         if message.drone_id == self.drone_id or len(message.pos_pts) <= message.order:
@@ -338,9 +421,88 @@ class ExplorationNode(Node):
             box for box in self.planner.environment.predicted_boxes
             if getattr(box, "drone_id", -1) != message.drone_id
         ]
-        box = PredictedBox(position, velocity, np.ones(3), self.state.stamp, int(message.drone_id))
+        box = PredictedBox(position, velocity, np.ones(3), 0.0, int(message.drone_id))
         boxes.append(box)
         self.planner.environment.predicted_boxes = boxes
+        previous = self.swarm_trajectories.get(int(message.drone_id))
+        start_time = message.start_time.sec + message.start_time.nanosec * 1.0e-9
+        if previous is None or start_time > previous[1] + 1.0e-3:
+            self.swarm_trajectories[int(message.drone_id)] = (spline, start_time)
+
+    def _planning_state(self, now: float) -> VehicleState:
+        if (
+            self.current_position_trajectory is None
+            or self.fsm_state not in (FsmState.EXECUTE, FsmState.PLAN)
+        ):
+            return VehicleState(
+                position=self.state.position.copy(),
+                velocity=self.state.velocity.copy(),
+                acceleration=self.state.acceleration.copy(),
+                yaw=self.state.yaw,
+                yaw_rate=self.state.yaw_rate,
+                stamp=now,
+            )
+        replan_time = self.get_parameter("fsm.replan_time").value
+        stamp = float(
+            np.clip(
+                now - self.current_trajectory_start + replan_time,
+                0.0,
+                self.current_trajectory_duration,
+            )
+        )
+        derivatives = self.current_position_trajectory.derivatives(2)
+        yaw = self.state.yaw
+        yaw_rate = self.state.yaw_rate
+        if self.current_yaw_trajectory is not None:
+            yaw_stamp = min(stamp, self.current_yaw_trajectory.get_time_sum())
+            yaw = float(self.current_yaw_trajectory.evaluate(yaw_stamp)[0])
+            yaw_derivative = self.current_yaw_trajectory.derivative()
+            yaw_rate = float(
+                yaw_derivative.evaluate(
+                    min(yaw_stamp, yaw_derivative.get_time_sum())
+                )[0]
+            )
+        return VehicleState(
+            position=self.current_position_trajectory.evaluate(stamp),
+            velocity=derivatives[0].evaluate(
+                min(stamp, derivatives[0].get_time_sum())
+            ),
+            acceleration=derivatives[1].evaluate(
+                min(stamp, derivatives[1].get_time_sum())
+            ),
+            yaw=yaw,
+            yaw_rate=yaw_rate,
+            stamp=now + replan_time,
+        )
+
+    def _safety_tick(self) -> None:
+        if self.fsm_state != FsmState.EXECUTE or self.current_position_trajectory is None:
+            return
+        now = self.get_clock().now().nanoseconds * 1.0e-9
+        elapsed = max(0.0, now - self.current_trajectory_start)
+        end = min(self.current_trajectory_duration, elapsed + 1.0)
+        for stamp in np.arange(elapsed, end + 1.0e-6, 0.05):
+            position = self.current_position_trajectory.evaluate(float(stamp))
+            if (
+                self.voxel_map.get_inflated_occupancy(position) == 1
+                or self.voxel_map.get_distance(position)
+                <= self.get_parameter("manager.clearance_threshold").value
+            ):
+                self.get_logger().warning("trajectory collision predicted; replanning")
+                self.fsm_state = FsmState.PLAN
+                return
+            absolute_time = self.current_trajectory_start + float(stamp)
+            for drone_id, (trajectory, start_time) in self.swarm_trajectories.items():
+                other_stamp = absolute_time - start_time
+                if not 0.0 <= other_stamp <= trajectory.get_time_sum():
+                    continue
+                other = trajectory.evaluate(other_stamp)
+                if np.linalg.norm((position - other)[:2]) < 0.5:
+                    self.get_logger().warning(
+                        f"trajectory collision with drone {drone_id}; replanning"
+                    )
+                    self.fsm_state = FsmState.PLAN
+                    return
 
     def _fsm_tick(self) -> None:
         now = self.get_clock().now().nanoseconds * 1.0e-9
@@ -351,26 +513,39 @@ class ExplorationNode(Node):
             if self.triggered:
                 self.fsm_state = FsmState.PLAN
         elif self.fsm_state == FsmState.EXECUTE:
+            elapsed = now - self.current_trajectory_start
             if (
-                now - self.last_plan_time >= self.get_parameter("fsm.replan_time").value
+                self.current_trajectory_duration - elapsed
+                <= self.get_parameter("fsm.replan_near_end").value
+                or now - self.last_plan_time
+                >= self.get_parameter("fsm.periodic_replan").value
                 or self.planner.frontier.is_frontier_covered()
             ):
                 self.fsm_state = FsmState.PLAN
                 self.replan_publisher.publish(Empty())
+        elif self.fsm_state == FsmState.IDLE:
+            if now - self.last_idle_check >= self.get_parameter("fsm.idle_retry").value:
+                self.last_idle_check = now
+                self.fsm_state = FsmState.PLAN
         if self.fsm_state == FsmState.PLAN and not self.busy:
             self.busy = True
             try:
                 with self.lock:
-                    result = self.planner.plan(self.state)
+                    result = self.planner.plan(self._planning_state(now))
                 if result.status == PlannerStatus.SUCCEED:
                     self._publish_trajectory(result)
                     self._publish_markers(result)
                     self.fsm_state = FsmState.EXECUTE
                     self.last_plan_time = now
-                elif result.status == PlannerStatus.NO_FRONTIER:
-                    self.fsm_state = FsmState.FINISH
+                elif result.status in (
+                    PlannerStatus.NO_FRONTIER,
+                    PlannerStatus.NO_GRID,
+                ):
+                    self.last_idle_check = now
+                    self.fsm_state = FsmState.IDLE
                 else:
-                    self.fsm_state = FsmState.WAIT_TRIGGER
+                    self.last_idle_check = now
+                    self.fsm_state = FsmState.IDLE
             finally:
                 self.busy = False
 
@@ -389,15 +564,22 @@ class ExplorationNode(Node):
         )
         message.pos_pts = [point_message(point) for point in result.position_control_points]
         message.yaw_pts = np.asarray(result.yaw_control_points).reshape(-1).tolist()
-        message.yaw_dt = float(result.knot_span)
+        message.yaw_dt = float(result.yaw_knot_span)
         self.bspline_publisher.publish(message)
         self.swarm_trajectory_publisher.publish(message)
         self.new_publisher.publish(Empty())
+        self.current_position_trajectory = position
+        self.current_yaw_trajectory = NonUniformBspline(
+            result.yaw_control_points, 3, result.yaw_knot_span
+        )
+        self.current_trajectory_start = start
+        self.current_trajectory_duration = position.get_time_sum()
 
     def _publish_state(self) -> None:
         message = DroneState()
         message.drone_id = int(self.drone_id)
-        message.trajectory_id = int(self.trajectory_id)
+        message.grid_ids = [int(value) for value in self.planner.grid_ids]
+        message.recent_attempt_time = float(max(self.last_plan_time, 0.0))
         message.stamp = self.get_clock().now().nanoseconds * 1.0e-9
         message.pos = self.state.position.astype(np.float32).tolist()
         message.vel = self.state.velocity.astype(np.float32).tolist()
@@ -433,6 +615,9 @@ def main(args=None) -> None:
     node = ExplorationNode()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

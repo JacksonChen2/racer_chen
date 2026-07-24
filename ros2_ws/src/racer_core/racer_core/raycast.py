@@ -47,7 +47,11 @@ class RayCaster:
         end_grid = self._grid_coordinate(end)
         current = np.floor(start_grid).astype(np.int64)
         target = np.floor(end_grid).astype(np.int64)
-        direction = end_grid - start_grid
+        # RACER's C++ implementation steps according to the difference
+        # between the integer endpoint voxels.  Using the raw floating ray
+        # direction can step along an axis whose start and end are already in
+        # the same voxel, overshoot the target, and loop forever.
+        direction = (target - current).astype(np.float64)
         step = np.sign(direction).astype(np.int64)
         t_max = np.asarray(
             [intbound(start_grid[axis], direction[axis]) for axis in range(3)],
@@ -58,12 +62,17 @@ class RayCaster:
             dtype=np.float64,
         )
         yield current.copy()
-        while not np.array_equal(current, target):
+        maximum_steps = int(np.sum(np.abs(target - current))) + 1
+        for _ in range(maximum_steps):
+            if np.array_equal(current, target):
+                break
             axis = int(np.argmin(t_max))
             current[axis] += step[axis]
             t_max[axis] += t_delta[axis]
             if include_end or not np.array_equal(current, target):
                 yield current.copy()
+        else:
+            raise RuntimeError("ray traversal failed to reach its target voxel")
 
     def positions(self, start: Vector, end: Vector, include_end: bool = True) -> Iterator[Vector]:
         half = np.full(3, 0.5, dtype=np.float64)

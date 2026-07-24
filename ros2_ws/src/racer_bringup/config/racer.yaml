@@ -7,6 +7,12 @@
       period: 0.05
       replan_time: 0.2
       sync_interval: 0.2
+      replan_near_end: 0.5
+      periodic_replan: 1.0
+      idle_retry: 1.0
+    pointcloud:
+      is_world: false
+      translation: [0.0, 0.0, 0.0]
     multi_map:
       chunk_size: 200
     map:
@@ -31,6 +37,22 @@
       clearance_threshold: 0.2
       use_optimization: true
       use_active_perception: true
+    search:
+      astar_resolution: 0.3
+      astar_max_time: 0.1
+      kino_max_time: 0.25
+      initial_plan_count: 2
+      close_radius: 1.5
+      far_radius: 7.0
+    partition:
+      minimum_unknown: 4000
+      minimum_frontier: 100
+      minimum_free: 3000
+      consistent_cost: -5.0
+      consistent_cost2: 8.0
+      unknown_weight: 0.0
+      grid_size: 5.0
+      first_weight: 1.0
     exploration:
       direction_weight: 1.5
     frontier:
@@ -65,10 +87,11 @@
       lambda_feasibility: 2.0
       safe_distance: 0.7
       max_iterations: 200
+      lambda_swarm: 10.0
+      swarm_clearance: 0.7
     command_period: 0.01
     kx: [5.7, 5.7, 6.2]
     kv: [3.4, 3.4, 4.0]
     position_gain: [5.7, 5.7, 6.2]
     velocity_gain: [3.4, 3.4, 4.0]
     max_acceleration: 10.0
-

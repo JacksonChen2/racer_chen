@@ -54,10 +54,16 @@ class ViewGraph:
         if safe:
             return float(np.linalg.norm(start - end)), [start.copy(), end.copy()]
         self.astar.reset()
+        previous_resolution = self.astar.resolution
         self.astar.set_resolution(0.4)
-        if self.astar.search(start, end) == AStar.REACH_END:
-            return AStar.path_length(self.astar.path), [point.copy() for point in self.astar.path]
-        return 100.0, [start.copy(), end.copy()]
+        try:
+            if self.astar.search(start, end) == AStar.REACH_END:
+                return AStar.path_length(self.astar.path), [
+                    point.copy() for point in self.astar.path
+                ]
+            return 100.0, [start.copy(), end.copy()]
+        finally:
+            self.astar.set_resolution(previous_resolution)
 
     def compute_cost(
         self,

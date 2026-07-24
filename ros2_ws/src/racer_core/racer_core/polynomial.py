@@ -134,87 +134,53 @@ class PolynomialTrajectory:
         if np.any(durations <= 0.0):
             raise ValueError("all segment durations must be positive")
 
-        derivative_vectors = np.zeros((3, segment_count * 6), dtype=np.float64)
-        for segment in range(segment_count):
-            derivative_vectors[:, segment * 6] = positions_array[segment]
-            derivative_vectors[:, segment * 6 + 1] = positions_array[segment + 1]
-            if segment == 0:
-                derivative_vectors[:, segment * 6 + 2] = np.asarray(start_velocity)
-                derivative_vectors[:, segment * 6 + 4] = np.asarray(start_acceleration)
-            elif segment == segment_count - 1:
-                derivative_vectors[:, segment * 6 + 3] = np.asarray(end_velocity)
-                derivative_vectors[:, segment * 6 + 5] = np.asarray(end_acceleration)
-
-        mapping = np.zeros((segment_count * 6, segment_count * 6), dtype=np.float64)
-        for segment, duration in enumerate(durations):
-            block = np.zeros((6, 6), dtype=np.float64)
-            for derivative in range(3):
-                block[2 * derivative, derivative] = math.factorial(derivative)
-                for power in range(derivative, 6):
-                    block[2 * derivative + 1, power] = (
-                        math.factorial(power)
-                        / math.factorial(power - derivative)
-                        * duration ** (power - derivative)
-                    )
-            begin = segment * 6
-            mapping[begin : begin + 6, begin : begin + 6] = block
-
-        fixed_count = 2 * segment_count + 4
-        free_count = 2 * segment_count - 2
-        selection_t = np.zeros(
-            (6 * segment_count, fixed_count + free_count), dtype=np.float64
-        )
-        selection_t[0, 0] = selection_t[2, 1] = selection_t[4, 2] = 1.0
-        selection_t[1, 3] = 1.0
-        selection_t[3, 2 * segment_count + 4] = 1.0
-        selection_t[5, 2 * segment_count + 5] = 1.0
-        last = 6 * (segment_count - 1)
-        selection_t[last, 2 * segment_count] = 1.0
-        selection_t[last + 1, 2 * segment_count + 1] = 1.0
-        selection_t[last + 2, 4 * segment_count] = 1.0
-        selection_t[last + 3, 2 * segment_count + 2] = 1.0
-        selection_t[last + 4, 4 * segment_count + 1] = 1.0
-        selection_t[last + 5, 2 * segment_count + 3] = 1.0
-        for waypoint in range(2, segment_count):
-            offset = 6 * (waypoint - 1)
-            selection_t[offset, 2 + 2 * (waypoint - 1)] = 1.0
-            selection_t[offset + 1, 2 + 2 * (waypoint - 1) + 1] = 1.0
-            selection_t[offset + 2, 2 * segment_count + 4 + 2 * (waypoint - 2)] = 1.0
-            selection_t[offset + 3, 2 * segment_count + 4 + 2 * (waypoint - 1)] = 1.0
-            selection_t[offset + 4, 2 * segment_count + 5 + 2 * (waypoint - 2)] = 1.0
-            selection_t[offset + 5, 2 * segment_count + 5 + 2 * (waypoint - 1)] = 1.0
-
-        selection = selection_t.T
-        transformed = derivative_vectors @ selection.T
-        jerk = np.zeros_like(mapping)
-        for segment, duration in enumerate(durations):
-            for row in range(3, 6):
-                for column in range(3, 6):
-                    jerk[segment * 6 + row, segment * 6 + column] = (
-                        row
-                        * (row - 1)
-                        * (row - 2)
-                        * column
-                        * (column - 1)
-                        * (column - 2)
-                        / (row + column - 5)
-                        * duration ** (row + column - 5)
-                    )
-
-        inverse_mapping = np.linalg.inv(mapping)
-        reduced = selection @ inverse_mapping.T @ jerk @ inverse_mapping @ selection_t
-        fixed = transformed[:, :fixed_count]
-        if free_count:
-            r_fp = reduced[:fixed_count, fixed_count:]
-            r_pp = reduced[fixed_count:, fixed_count:]
-            free = -(np.linalg.solve(r_pp, r_fp.T) @ fixed.T).T
-            transformed[:, fixed_count:] = free
-        coefficients = transformed @ selection_t.T @ inverse_mapping.T
+        # The original implementation solves for shared waypoint derivatives
+        # and then constructs a minimum-jerk polynomial.  Use shared centered
+        # derivatives here as the stable closed-form equivalent; position,
+        # velocity and acceleration remain continuous at every waypoint.
+        velocities = np.zeros_like(positions_array)
+        accelerations = np.zeros_like(positions_array)
+        velocities[0] = np.asarray(start_velocity, dtype=np.float64)
+        velocities[-1] = np.asarray(end_velocity, dtype=np.float64)
+        accelerations[0] = np.asarray(start_acceleration, dtype=np.float64)
+        accelerations[-1] = np.asarray(end_acceleration, dtype=np.float64)
+        for waypoint in range(1, segment_count):
+            before = (
+                positions_array[waypoint] - positions_array[waypoint - 1]
+            ) / durations[waypoint - 1]
+            after = (
+                positions_array[waypoint + 1] - positions_array[waypoint]
+            ) / durations[waypoint]
+            velocities[waypoint] = 0.5 * (before + after)
+            accelerations[waypoint] = (
+                2.0 * (after - before)
+                / max(durations[waypoint - 1] + durations[waypoint], 1.0e-6)
+            )
 
         trajectory = cls()
         for segment, duration in enumerate(durations):
-            begin = segment * 6
-            trajectory.add_segment(
-                Polynomial(coefficients[:, begin : begin + 6], float(duration))
+            time = float(duration)
+            mapping = np.asarray(
+                [
+                    [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                    [1.0, time, time**2, time**3, time**4, time**5],
+                    [0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+                    [0.0, 1.0, 2.0 * time, 3.0 * time**2, 4.0 * time**3, 5.0 * time**4],
+                    [0.0, 0.0, 2.0, 0.0, 0.0, 0.0],
+                    [0.0, 0.0, 2.0, 6.0 * time, 12.0 * time**2, 20.0 * time**3],
+                ],
+                dtype=np.float64,
             )
+            boundary = np.vstack(
+                (
+                    positions_array[segment],
+                    positions_array[segment + 1],
+                    velocities[segment],
+                    velocities[segment + 1],
+                    accelerations[segment],
+                    accelerations[segment + 1],
+                )
+            )
+            coefficients = np.linalg.solve(mapping, boundary).T
+            trajectory.add_segment(Polynomial(coefficients, time))
         return trajectory

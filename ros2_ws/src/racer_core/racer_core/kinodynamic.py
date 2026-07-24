@@ -111,7 +111,8 @@ class KinodynamicAStar:
             velocity = coefficients[:, 1] + 2.0 * coefficients[:, 2] * stamp + 3.0 * coefficients[:, 3] * stamp**2
             acceleration = 2.0 * coefficients[:, 2] + 6.0 * coefficients[:, 3] * stamp
             if (
-                np.max(np.abs(velocity)) > self.config.max_velocity
+                not self.environment.voxel_map.is_in_box(point)
+                or np.max(np.abs(velocity)) > self.config.max_velocity
                 or np.max(np.abs(acceleration)) > self.config.max_acceleration
                 or self.environment.evaluate_coarse(point) <= self.config.collision_clearance
             ):
@@ -140,17 +141,33 @@ class KinodynamicAStar:
     ) -> KinoResult:
         start = np.r_[start_position, start_velocity].astype(np.float64)
         goal = np.r_[goal_position, np.zeros(3) if goal_velocity is None else goal_velocity].astype(np.float64)
-        initial_h, _ = self._heuristic(start, goal)
+        initial_h, initial_shot_time = self._heuristic(start, goal)
+        if np.linalg.norm(start[:3] - goal[:3]) <= self.config.horizon:
+            initial_shot = self._shot(start, goal, initial_shot_time)
+            if self._shot_safe(initial_shot, initial_shot_time):
+                return KinoResult(
+                    self.REACH_END,
+                    [start.copy()],
+                    [],
+                    [],
+                    initial_shot,
+                    initial_shot_time,
+                )
         root = _Node(start, 0.0, self.config.lambda_heu * initial_h, None, np.zeros(3), 0.0)
         queue: list[tuple[float, int, _Node]] = [(root.f, 0, root)]
         best: dict[tuple[int, ...], float] = {self._key(start): 0.0}
         sequence = itertools.count(1)
         began = time.perf_counter()
-        values = np.linspace(-self.config.max_acceleration, self.config.max_acceleration, 5)
+        values = np.linspace(-self.config.max_acceleration, self.config.max_acceleration, 3)
         regular_controls = [np.asarray(value) for value in itertools.product(values, repeat=3)]
-        first_controls = [np.asarray(start_acceleration, dtype=np.float64)] if initial_search else regular_controls
+        first_controls = regular_controls
+        if np.linalg.norm(start_acceleration) > 1.0e-6:
+            first_controls = [
+                np.asarray(start_acceleration, dtype=np.float64),
+                *regular_controls,
+            ]
         first_durations = (
-            np.linspace(self.config.initial_max_tau / 20.0, self.config.initial_max_tau, 20)
+            np.linspace(self.config.initial_max_tau / 5.0, self.config.initial_max_tau, 5)
             if initial_search else np.asarray((self.config.max_tau,))
         )
         expanded_root = False
@@ -195,4 +212,3 @@ class KinodynamicAStar:
                             )
                     heapq.heappush(queue, (node.f, next(sequence), node))
         return KinoResult(self.NO_PATH, [], [], [])
-

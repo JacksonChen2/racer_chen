@@ -41,6 +41,21 @@ class MultiMapManager:
             emitted.append(chunk)
         return emitted
 
+    def flush_pending(self, occupancy_lookup) -> MapChunk | None:
+        if not self.pending_addresses:
+            return None
+        owner_chunks = self.chunks[self.drone_id]
+        selected = self.pending_addresses.copy()
+        self.pending_addresses.clear()
+        chunk = MapChunk(
+            self.drone_id,
+            len(owner_chunks) + 1,
+            selected,
+            [int(occupancy_lookup(address)) for address in selected],
+        )
+        owner_chunks[chunk.index] = chunk
+        return chunk
+
     def insert(self, chunk: MapChunk) -> bool:
         owner = self.chunks.setdefault(chunk.owner, {})
         if chunk.index in owner:

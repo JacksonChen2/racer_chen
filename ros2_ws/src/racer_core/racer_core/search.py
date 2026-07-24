@@ -69,7 +69,8 @@ class AStar:
         self.inverse_resolution = 1.0 / self.resolution
 
     def position_to_index(self, point: Vector) -> IndexTuple:
-        index = np.floor((np.asarray(point) - self.origin) * self.inverse_resolution).astype(int)
+        scaled = (np.asarray(point) - self.origin) * self.inverse_resolution
+        index = np.floor(scaled + 1.0e-7).astype(int)
         return int(index[0]), int(index[1]), int(index[2])
 
     def diagonal_heuristic(self, first: Vector, second: Vector) -> float:

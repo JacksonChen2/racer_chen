@@ -23,6 +23,8 @@ class OptimizerConfig:
     max_velocity: float = 2.0
     max_acceleration: float = 2.0
     max_iterations: int = 200
+    lambda_swarm: float = 10.0
+    swarm_clearance: float = 0.7
 
 
 class BsplineOptimizer:
@@ -46,11 +48,30 @@ class BsplineOptimizer:
             gradient[i + 2] -= 3.0 * grad
             gradient[i + 3] += grad
         for i in range(1, len(points) - 1):
-            distance, distance_gradient = self.environment.evaluate_with_gradient(points[i])
+            sample_time = max(0.0, (i - fixed_start + 1) * knot_span)
+            distance, distance_gradient = (
+                self.environment.voxel_map.get_distance_with_gradient(points[i])
+            )
             if distance < cfg.safe_distance:
                 error = cfg.safe_distance - distance
                 cost += cfg.lambda_distance * error**2
                 gradient[i] -= 2.0 * cfg.lambda_distance * error * distance_gradient
+            if self.environment.predicted_boxes:
+                swarm_distance, swarm_gradient = min(
+                    (
+                        self.environment.distance_to_box_with_gradient(
+                            box, points[i], sample_time
+                        )
+                        for box in self.environment.predicted_boxes
+                    ),
+                    key=lambda item: item[0],
+                )
+                if swarm_distance < cfg.swarm_clearance:
+                    error = cfg.swarm_clearance - swarm_distance
+                    cost += cfg.lambda_swarm * error**2
+                    gradient[i] -= (
+                        2.0 * cfg.lambda_swarm * error * swarm_gradient
+                    )
         inv_dt, inv_dt2 = 1.0 / knot_span, 1.0 / knot_span**2
         for i in range(len(points) - 1):
             velocity = 3.0 * (points[i + 1] - points[i]) * inv_dt
@@ -86,4 +107,3 @@ class BsplineOptimizer:
         optimized = points.copy()
         optimized[fixed_start : len(points) - fixed_end] = result.x.reshape((-1, 3))
         return optimized
-

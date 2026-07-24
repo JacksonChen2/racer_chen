@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import rclpy
-from geometry_msgs.msg import AccelStamped, PoseStamped, TwistStamped
+from geometry_msgs.msg import AccelStamped, PoseStamped, Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -19,6 +19,7 @@ class IsaacCommandAdapter(Node):
         self.declare_parameter("position_gain", [5.7, 5.7, 6.2])
         self.declare_parameter("velocity_gain", [3.4, 3.4, 4.0])
         self.declare_parameter("max_acceleration", 10.0)
+        self.declare_parameter("velocity_control_horizon", 0.1)
         self.controller = PositionController(
             ControllerConfig(
                 np.asarray(self.get_parameter("position_gain").value),
@@ -31,7 +32,7 @@ class IsaacCommandAdapter(Node):
         self.have_odom = False
         self.create_subscription(Odometry, "odometry", self._odom, qos_profile_sensor_data)
         self.create_subscription(PositionCommand, "position_cmd", self._command, 10)
-        self.twist_publisher = self.create_publisher(TwistStamped, "isaac/velocity_command", 10)
+        self.twist_publisher = self.create_publisher(Twist, "isaac/velocity_command", 10)
         self.accel_publisher = self.create_publisher(AccelStamped, "isaac/acceleration_command", 10)
         self.pose_publisher = self.create_publisher(PoseStamped, "isaac/pose_command", 10)
 
@@ -54,17 +55,23 @@ class IsaacCommandAdapter(Node):
             target_acceleration, message.yaw, message.yaw_dot
         )
         now = self.get_clock().now().to_msg()
-        twist = TwistStamped()
-        twist.header.stamp, twist.header.frame_id = now, message.header.frame_id
-        twist.twist.linear = message.velocity
-        twist.twist.angular.z = message.yaw_dot
+        twist = Twist()
+        correction = (
+            control.acceleration - target_acceleration
+        ) * self.get_parameter("velocity_control_horizon").value
+        commanded_velocity = target_velocity + correction
+        twist.linear.x, twist.linear.y, twist.linear.z = map(
+            float, commanded_velocity
+        )
+        twist.angular.z = float(message.yaw_dot)
         acceleration = AccelStamped()
-        acceleration.header = twist.header
+        acceleration.header.stamp = now
+        acceleration.header.frame_id = message.header.frame_id
         acceleration.accel.linear.x, acceleration.accel.linear.y, acceleration.accel.linear.z = map(
             float, control.acceleration
         )
         pose = PoseStamped()
-        pose.header = twist.header
+        pose.header = acceleration.header
         pose.pose.position = message.position
         pose.pose.orientation.z = float(np.sin(message.yaw / 2.0))
         pose.pose.orientation.w = float(np.cos(message.yaw / 2.0))
@@ -78,7 +85,9 @@ def main(args=None) -> None:
     node = IsaacCommandAdapter()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
-
+        if rclpy.ok():
+            rclpy.shutdown()

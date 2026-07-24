@@ -18,10 +18,11 @@ ROS 1、catkin 和 C++ 工程迁移到以下软件栈：
 | 仿真通信 | Isaac Sim ROS 2 Bridge |
 | 可视化 | RViz2 |
 
-> 当前分支已经完成源代码与工程结构迁移，但尚未在 Ubuntu 22.04、ROS 2
-> Humble 和 Isaac Sim 5.1 上执行构建、数值对比或闭环验证。详细状态见
-> [验证状态](docs/VALIDATION_STATUS.md)。在完成目标环境验证前，请勿将本项目
-> 直接用于真实无人机飞行。
+> 当前代码已经在 Ubuntu 22.04、ROS 2 Humble 和 Python 3.10 下通过构建、
+> 算法回归、单机输入链路与三机 ROS 图烟雾测试。由于本机没有 ROS Noetic，
+> 尚未执行 ROS 1/C++ 与 ROS 2/Python 的同输入数值对拍；真实 Isaac UAV
+> 闭环也仍需使用具体 Stage 和飞行器资产验证。详细边界见
+> [验证状态](docs/VALIDATION_STATUS.md)。在完成闭环验证前，请勿用于真实飞行。
 
 ## 1. 分支与上游基线
 
@@ -209,6 +210,19 @@ source /opt/ros/humble/setup.bash
 source modified_RACER/ros2_ws/install/setup.bash
 ```
 
+Linux 下若 Isaac 5.1 使用随 ROS 2 Bridge 扩展附带的 Humble 库，应在启动
+Isaac 前设置下面的环境变量。将 `ISAAC_SIM_PATH` 换成实际安装目录，并且
+不要在这个终端 `source /opt/ros/humble/setup.bash`，否则会把 Python 3.10
+的系统 `rclpy` 混入 Isaac 的 Python 3.11：
+
+```bash
+export ISAAC_SIM_PATH=/home/user/isaacsim
+export ROS_DISTRO=humble
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:${ISAAC_SIM_PATH}/exts/isaacsim.ros2.bridge/humble/lib"
+"${ISAAC_SIM_PATH}/isaac-sim.sh"
+```
+
 ### 7.2 创建 Isaac Bridge 图
 
 1. 在 Isaac Sim 中启用 ROS 2 Bridge。
@@ -231,11 +245,12 @@ source modified_RACER/ros2_ws/install/setup.bash
    ```
 
 6. 在 Isaac Sim 内运行脚本。
-7. 将生成图中 `SubscribeVelocity` 的输出连接到所选 UAV 资产的控制器。
+7. 默认回调会把 `Twist` 的世界系线速度和角速度施加到 `base_prim` 的
+   `RigidBodyAPI`；动力学四旋翼应以资产自己的控制器替换这个回调。
 
 最后一步与具体无人机资产相关：Crazyflie、四旋翼 articulation、Isaac Lab
-管理器任务和运动学测试模型的执行器接口并不相同。此连接只位于仿真适配
-边界，不改变 RACER 的规划逻辑。
+管理器任务和运动学测试模型的执行器接口并不相同。此适配只位于仿真边界，
+不改变 RACER 的规划逻辑。
 
 ### 7.3 坐标系要求
 

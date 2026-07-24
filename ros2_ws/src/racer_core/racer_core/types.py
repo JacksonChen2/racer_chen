@@ -26,6 +26,7 @@ class PlannerStatus(IntEnum):
     SUCCEED = 1
     NO_FRONTIER = 2
     NO_PATH = 3
+    NO_GRID = 4
 
 
 @dataclass(slots=True)
@@ -66,7 +67,9 @@ class PlannerResult:
     position_control_points: Optional[NDArray[np.float64]] = None
     yaw_control_points: Optional[NDArray[np.float64]] = None
     knot_span: float = 0.0
+    yaw_knot_span: float = 0.0
     position_knots: Optional[NDArray[np.float64]] = None
+    duration: float = 0.0
     path: list[Vector] = field(default_factory=list)
     goal: Optional[Vector] = None
     goal_yaw: float = 0.0
