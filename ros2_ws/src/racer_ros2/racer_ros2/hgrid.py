@@ -6,7 +6,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .mapping import FREE, UNKNOWN, OccupancyMap
+from .mapping import UNKNOWN, OccupancyMap
 
 
 @dataclass(frozen=True)

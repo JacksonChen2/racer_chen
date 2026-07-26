@@ -6,6 +6,9 @@ PACKAGE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 WORKSPACE_DIR="$(cd "${PACKAGE_DIR}/../.." && pwd)"
 RESULT_FILE="${1:-/tmp/racer_mock_result.json}"
 DURATION="${RACER_TEST_DURATION:-45}"
+SCENARIO="${RACER_SCENARIO:-small}"
+DRONE_COUNT="${RACER_DRONE_COUNT:-3}"
+MINIMUM_COVERAGE="${RACER_MINIMUM_COVERAGE:-0.70}"
 
 source /opt/ros/humble/setup.bash
 if [[ ! -f "${WORKSPACE_DIR}/install/setup.bash" ]]; then
@@ -20,7 +23,10 @@ fi
 
 ros2 launch racer_ros2 swarm_exploration.launch.py \
   backend:=mock \
+  scenario:="${SCENARIO}" \
+  drone_count:="${DRONE_COUNT}" \
   duration:="${DURATION}" \
+  minimum_coverage:="${MINIMUM_COVERAGE}" \
   result_file:="${RESULT_FILE}" &
 LAUNCH_PID=$!
 cleanup() {

@@ -7,6 +7,9 @@ WORKSPACE_DIR="$(cd "${PACKAGE_DIR}/../.." && pwd)"
 ISAAC_ROOT="${ISAAC_SIM_ROOT:-/home/jackson/isaacsim}"
 RESULT_FILE="${1:-/tmp/racer_isaac_result.json}"
 DURATION="${RACER_TEST_DURATION:-45}"
+SCENARIO="${RACER_SCENARIO:-small}"
+DRONE_COUNT="${RACER_DRONE_COUNT:-3}"
+MINIMUM_COVERAGE="${RACER_MINIMUM_COVERAGE:-0.70}"
 ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-47}"
 export ROS_DOMAIN_ID
 
@@ -23,7 +26,10 @@ fi
 
 ros2 launch racer_ros2 swarm_exploration.launch.py \
   backend:=isaac \
+  scenario:="${SCENARIO}" \
+  drone_count:="${DRONE_COUNT}" \
   duration:="${DURATION}" \
+  minimum_coverage:="${MINIMUM_COVERAGE}" \
   result_file:="${RESULT_FILE}" &
 LAUNCH_PID=$!
 cleanup() {
@@ -42,12 +48,13 @@ env \
   ROS_DISTRO=humble \
   RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
   LD_LIBRARY_PATH="${ISAAC_ROOT}/exts/isaacsim.ros2.bridge/humble/lib" \
-  timeout "$((DURATION + 45))" \
+  timeout "$((DURATION + 90))" \
   "${ISAAC_ROOT}/python.sh" \
   "${PACKAGE_DIR}/isaac_sim/isaac_sim_racer.py" \
   --headless \
   --duration "${DURATION}" \
-  --drone-count 3
+  --drone-count "${DRONE_COUNT}" \
+  --scenario "${SCENARIO}"
 
 deadline=$((SECONDS + 15))
 while [[ ! -s "${RESULT_FILE}" && ${SECONDS} -lt ${deadline} ]]; do

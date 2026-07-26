@@ -2,7 +2,7 @@
 
 import json
 import math
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import rclpy
 from geometry_msgs.msg import Twist
@@ -30,6 +30,7 @@ class MockSwarmSimulator(Node):
     def __init__(self) -> None:
         super().__init__("racer_mock_sim")
         self.declare_parameter("drone_count", 3)
+        self.declare_parameter("scenario", "small")
         self.declare_parameter(
             "start_positions", [-8.2, -4.8, -8.2, 4.8, 7.8, 0.0]
         )
@@ -40,6 +41,7 @@ class MockSwarmSimulator(Node):
         self.declare_parameter("max_speed", 1.2)
         self.declare_parameter("max_acceleration", 1.5)
         self.declare_parameter("robot_radius", DRONE_RADIUS)
+        self.declare_parameter("flight_z", FLIGHT_Z)
 
         self.drone_count = int(self.get_parameter("drone_count").value)
         flattened = [
@@ -55,7 +57,9 @@ class MockSwarmSimulator(Node):
         self.velocities = [[0.0, 0.0] for _ in range(self.drone_count)]
         self.commands = [[0.0, 0.0, 0.0] for _ in range(self.drone_count)]
         self.yaws = [0.0 for _ in range(self.drone_count)]
-        self.obstacles = default_obstacles()
+        self.scenario_name = str(self.get_parameter("scenario").value)
+        self.obstacles = default_obstacles(self.scenario_name)
+        self.flight_z = float(self.get_parameter("flight_z").value)
         self.radius = float(self.get_parameter("robot_radius").value)
         self.max_speed = float(self.get_parameter("max_speed").value)
         self.max_acceleration = float(
@@ -195,7 +199,7 @@ class MockSwarmSimulator(Node):
             message.child_frame_id = f"drone_{drone_id}/base_link"
             message.pose.pose.position.x = self.positions[drone_id][0]
             message.pose.pose.position.y = self.positions[drone_id][1]
-            message.pose.pose.position.z = FLIGHT_Z
+            message.pose.pose.position.z = self.flight_z
             message.pose.pose.orientation.z = math.sin(
                 0.5 * self.yaws[drone_id]
             )
@@ -232,6 +236,7 @@ class MockSwarmSimulator(Node):
     def _publish_metrics(self) -> None:
         metrics = {
             "backend": "mock",
+            "scenario": self.scenario_name,
             "elapsed": self.elapsed,
             "collision_events": self.collision_events,
             "safety_interventions": self.safety_interventions,

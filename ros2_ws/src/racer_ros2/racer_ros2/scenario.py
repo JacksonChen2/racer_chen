@@ -1,8 +1,13 @@
-"""Deterministic exploration scene shared by mock and Isaac Sim adapters."""
+"""Deterministic exploration scenes shared by the test backends.
+
+The ``small`` scene is intentionally cheap enough for rapid integration tests.
+The ``large`` scene is the requested 20 m x 10 m x 2 m acceptance volume.
+Obstacles are floor-to-ceiling because the current ROS 2 mapper is planar.
+"""
 
 from dataclasses import dataclass
 import math
-from typing import Iterable, List, Sequence, Tuple
+from typing import Dict, Iterable, List, Sequence, Tuple
 
 
 @dataclass(frozen=True)
@@ -25,33 +30,111 @@ class Box2D:
         )
 
 
-MAP_MIN = (-10.0, -7.0)
-MAP_MAX = (10.0, 7.0)
-FLIGHT_Z = 1.2
-DRONE_RADIUS = 0.30
-STARTS = ((-8.2, -4.8), (-8.2, 4.8), (7.8, 0.0))
+@dataclass(frozen=True)
+class Scenario:
+    """A bounded fixed-altitude exploration volume."""
+
+    name: str
+    map_min: Tuple[float, float]
+    map_max: Tuple[float, float]
+    height: float
+    flight_z: float
+    starts: Tuple[Tuple[float, float], ...]
+    obstacles: Tuple[Box2D, ...]
+
+    @property
+    def map_size(self) -> Tuple[float, float]:
+        return (
+            self.map_max[0] - self.map_min[0],
+            self.map_max[1] - self.map_min[1],
+        )
 
 
-def default_obstacles() -> List[Box2D]:
-    """Return a connected indoor scene with multiple passages."""
+# The collision proxy is a 0.16 m square Crazyflie-like body. A conservative
+# circular radius is used by the planner and acceptance metrics.
+DRONE_RADIUS = 0.12
 
-    return [
-        # Outer boundary.
-        Box2D(0.0, -6.85, 20.0, 0.30),
-        Box2D(0.0, 6.85, 20.0, 0.30),
-        Box2D(-9.85, 0.0, 0.30, 14.0),
-        Box2D(9.85, 0.0, 0.30, 14.0),
-        # Interior walls and pillars. Gaps are deliberately wider than the
-        # inflated planning radius.
-        Box2D(-3.3, -3.8, 0.55, 5.3),
-        Box2D(-3.3, 4.2, 0.55, 4.8),
-        Box2D(3.0, -4.1, 0.55, 4.6),
-        Box2D(3.0, 3.7, 0.55, 5.5),
-        Box2D(0.0, 0.0, 2.0, 1.2),
-        Box2D(6.4, -3.5, 1.0, 1.0),
-        Box2D(6.2, 3.6, 1.0, 1.0),
-        Box2D(-6.4, 0.0, 1.1, 1.1),
-    ]
+
+def _boundary(
+    half_x: float, half_y: float, height: float, thickness: float = 0.25
+) -> Tuple[Box2D, ...]:
+    return (
+        Box2D(0.0, -half_y + thickness * 0.5, 2.0 * half_x, thickness, height),
+        Box2D(0.0, half_y - thickness * 0.5, 2.0 * half_x, thickness, height),
+        Box2D(-half_x + thickness * 0.5, 0.0, thickness, 2.0 * half_y, height),
+        Box2D(half_x - thickness * 0.5, 0.0, thickness, 2.0 * half_y, height),
+    )
+
+
+def _small_scene() -> Scenario:
+    height = 2.0
+    obstacles = _boundary(4.0, 3.0, height) + (
+        Box2D(-0.8, -1.55, 0.35, 2.25, height),
+        Box2D(-0.8, 1.75, 0.35, 1.75, height),
+        Box2D(1.7, 0.0, 0.75, 0.75, height),
+    )
+    return Scenario(
+        name="small",
+        map_min=(-4.0, -3.0),
+        map_max=(4.0, 3.0),
+        height=height,
+        flight_z=1.0,
+        starts=((-3.1, -2.1), (-3.1, 2.1), (2.9, 0.0)),
+        obstacles=obstacles,
+    )
+
+
+def _large_scene() -> Scenario:
+    """20 m x 10 m x 2 m indoor scene with connected passages."""
+
+    height = 2.0
+    obstacles = _boundary(10.0, 5.0, height) + (
+        # Two offset partitions create three connected work regions.
+        Box2D(-3.3, -3.15, 0.40, 3.45, height),
+        Box2D(-3.3, 2.55, 0.40, 4.65, height),
+        Box2D(3.0, -2.80, 0.40, 4.15, height),
+        Box2D(3.0, 3.05, 0.40, 3.65, height),
+        # Central and side clutter.
+        Box2D(0.0, 0.0, 1.60, 0.85, height),
+        Box2D(6.7, -2.9, 0.80, 0.80, height),
+        Box2D(6.3, 2.8, 0.80, 0.80, height),
+        Box2D(-6.5, 0.0, 0.90, 0.90, height),
+    )
+    return Scenario(
+        name="large",
+        map_min=(-10.0, -5.0),
+        map_max=(10.0, 5.0),
+        height=height,
+        flight_z=1.0,
+        starts=((-8.4, -3.6), (-8.4, 3.6), (7.8, 0.0)),
+        obstacles=obstacles,
+    )
+
+
+SCENARIOS: Dict[str, Scenario] = {
+    item.name: item for item in (_small_scene(), _large_scene())
+}
+
+
+def get_scenario(name: str = "large") -> Scenario:
+    try:
+        return SCENARIOS[name]
+    except KeyError as error:
+        choices = ", ".join(sorted(SCENARIOS))
+        raise ValueError(f"unknown scenario {name!r}; choose {choices}") from error
+
+
+DEFAULT_SCENARIO = get_scenario("large")
+MAP_MIN = DEFAULT_SCENARIO.map_min
+MAP_MAX = DEFAULT_SCENARIO.map_max
+FLIGHT_Z = DEFAULT_SCENARIO.flight_z
+STARTS = DEFAULT_SCENARIO.starts
+
+
+def default_obstacles(name: str = "large") -> List[Box2D]:
+    """Return a mutable copy of one scene's collision geometry."""
+
+    return list(get_scenario(name).obstacles)
 
 
 def point_box_clearance(x: float, y: float, box: Box2D) -> float:
@@ -128,5 +211,5 @@ def pairwise_distances(
 ) -> Iterable[float]:
     points = list(positions)
     for i, first in enumerate(points):
-        for second in points[i + 1 :]:
+        for second in points[i + 1:]:
             yield math.hypot(first[0] - second[0], first[1] - second[1])

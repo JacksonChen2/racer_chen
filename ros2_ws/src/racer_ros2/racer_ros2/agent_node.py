@@ -2,7 +2,6 @@
 
 import json
 import math
-import time
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -51,6 +50,7 @@ class RacerAgent(Node):
         self.declare_parameter("planning_clearance", 0.60)
         self.declare_parameter("swarm_safe_distance", 1.15)
         self.declare_parameter("robot_radius", 0.30)
+        self.declare_parameter("flight_z", 1.0)
         self.declare_parameter("max_speed", 1.20)
         self.declare_parameter("max_acceleration", 1.50)
         self.declare_parameter("planning_period", 0.8)
@@ -90,6 +90,7 @@ class RacerAgent(Node):
             self.get_parameter("swarm_safe_distance").value
         )
         self.robot_radius = float(self.get_parameter("robot_radius").value)
+        self.flight_z = float(self.get_parameter("flight_z").value)
         self.max_speed = float(self.get_parameter("max_speed").value)
         self.max_acceleration = float(
             self.get_parameter("max_acceleration").value
@@ -155,6 +156,10 @@ class RacerAgent(Node):
         self.velocity = (0.0, 0.0)
         self.yaw = 0.0
         self.latest_scan: Optional[LaserScan] = None
+        self.odom_samples: Dict[
+            int, Tuple[Tuple[float, float], float]
+        ] = {}
+        self.pending_scans: Dict[int, LaserScan] = {}
         self.peers: Dict[int, dict] = {}
         self.owned_cells: List[str] = []
         self.coverage_route: List[str] = []
@@ -186,6 +191,12 @@ class RacerAgent(Node):
     def _now(self) -> float:
         return self.get_clock().now().nanoseconds * 1.0e-9
 
+    @staticmethod
+    def _stamp_key(message_stamp) -> int:
+        return int(message_stamp.sec) * 1_000_000_000 + int(
+            message_stamp.nanosec
+        )
+
     def _odom_callback(self, message: Odometry) -> None:
         pose = message.pose.pose
         self.position = (pose.position.x, pose.position.y)
@@ -196,14 +207,34 @@ class RacerAgent(Node):
         self.yaw = _yaw_from_quaternion(
             pose.orientation.z, pose.orientation.w
         )
+        stamp = self._stamp_key(message.header.stamp)
+        self.odom_samples[stamp] = (self.position, self.yaw)
+        while len(self.odom_samples) > 32:
+            self.odom_samples.pop(next(iter(self.odom_samples)))
+        pending = self.pending_scans.pop(stamp, None)
+        if pending is not None:
+            self._integrate_scan(pending, self.position, self.yaw)
 
     def _scan_callback(self, message: LaserScan) -> None:
         self.latest_scan = message
-        if self.position is None:
+        stamp = self._stamp_key(message.header.stamp)
+        sample = self.odom_samples.get(stamp)
+        if sample is None:
+            self.pending_scans[stamp] = message
+            while len(self.pending_scans) > 8:
+                self.pending_scans.pop(next(iter(self.pending_scans)))
             return
+        self._integrate_scan(message, sample[0], sample[1])
+
+    def _integrate_scan(
+        self,
+        message: LaserScan,
+        position: Tuple[float, float],
+        yaw: float,
+    ) -> None:
         self.occupancy_map.update_scan(
-            self.position,
-            self.yaw,
+            position,
+            yaw,
             message.ranges,
             message.angle_min,
             message.angle_increment,
@@ -579,7 +610,7 @@ class RacerAgent(Node):
             pose.header = message.header
             pose.pose.position.x = x
             pose.pose.position.y = y
-            pose.pose.position.z = 1.2
+            pose.pose.position.z = self.flight_z
             pose.pose.orientation.w = 1.0
             message.poses.append(pose)
         self.path_publisher.publish(message)

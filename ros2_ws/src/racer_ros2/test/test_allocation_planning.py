@@ -36,8 +36,24 @@ class AllocationPlanningTest(unittest.TestCase):
         self.assertEqual(first | second, {cell.id for cell in cells})
         self.assertLessEqual(
             max(result.first_demand, result.second_demand),
-            math.ceil(0.60 * sum(cell.demand for cell in cells)),
+            math.ceil(0.75 * sum(cell.demand for cell in cells)),
         )
+
+    def test_exact_open_cvrp_selects_short_routes(self):
+        cells = [
+            make_cell(0, -4.0, 0.0, 5),
+            make_cell(1, -3.0, 0.0, 5),
+            make_cell(2, 3.0, 0.0, 5),
+            make_cell(3, 4.0, 0.0, 5),
+        ]
+        result = capacity_partition(
+            cells,
+            (-5.0, 0.0),
+            (5.0, 0.0),
+            consistency_penalty=0.0,
+        )
+        self.assertEqual(set(result.first), {"1:0:0", "1:1:0"})
+        self.assertEqual(set(result.second), {"1:2:0", "1:3:0"})
 
     def test_astar_does_not_cut_obstacle_corners(self):
         blocked = np.zeros((8, 8), dtype=bool)

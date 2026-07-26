@@ -1,71 +1,88 @@
-# RACER ROS 2 acceptance report
+# RACER ROS 2 / Isaac Sim acceptance report
 
 Test date: 2026-07-26
 
 ## Platform
 
 - Ubuntu 22.04.5 LTS
-- ROS 2 Humble (`rmw_fastrtps_cpp`)
-- Isaac Sim `5.1.0-rc.19+release.26219.9c81211b.gl`
-- NVIDIA GeForce RTX 4060 Laptop GPU, driver 580.159.03, 8 GB VRAM
+- ROS 2 Humble with `rmw_fastrtps_cpp`
+- Isaac Sim 5.1
+- NVIDIA GeForce RTX 4060 Laptop GPU, driver 580.159.03
+- three Crazyflie-like 27 g PhysX rigid-body proxies
 
-Isaac Sim's compatibility checker warns that 8 GB is below its recommended
-10 GB VRAM. The lightweight headless RACER scene nevertheless completed every
-test below. Larger RTX-sensor scenes may need a GPU with more VRAM.
+## Final results
 
-## Results
-
-### Unit and algorithm tests
-
-Command:
+### Build and unit tests
 
 ```bash
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 colcon test --packages-select racer_ros2
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install --packages-select racer_ros2
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+  colcon test --packages-select racer_ros2
 colcon test-result --verbose
 ```
 
-Result: 10 tests, 0 errors, 0 failures, 0 skipped.
+Result: 14 tests, 0 errors, 0 failures, 0 skipped.
 
-Covered modules include scan fusion, peer-map merge, hgrid subdivision,
-capacity partition completeness/balance, A* safety, CP-guided frontier
-planning, B-spline corridor validation, CBF separation, lidar braking and
-trajectory conflict prediction.
+The tests cover log-odds scan fusion, non-finite sensor input, map-boundary
+clipping, hit-surface voxel placement, peer-map merge, hierarchical-grid
+subdivision, exact small-instance open CVRP allocation, A*, B-splines, CBF
+separation, lidar braking and shared-trajectory conflicts.
 
-### ROS 2 deterministic integration, 12 seconds
+### PhysX sensor-coordinate probe
 
-- Passed: yes
-- Merged-map coverage: 94.14%
-- Pairwise proposals / accepted: 5 / 4
-- Collision events: 0
-- Simulator safety interventions: 0
-- Minimum UAV center distance: 3.064 m
-- Minimum UAV-body obstacle clearance: 0.347 m
+A body was translated at 0.8 m/s and rotated at 1.5 rad/s while measured lidar
+ranges were compared against scene geometry.
 
-### Isaac Sim + ROS 2 Humble integration, 12 seconds
+- PhysX buffer: 180 azimuth columns x 2 elevation rows
+- azimuth coverage: -pi to 3.1067 rad
+- detected sensor delay: 2 physics steps, 0.10 s
+- mean range error after synchronized-pose correction: 0.000261 m
+- mean error when incorrectly treating azimuth as world-frame: 1.2097 m
 
-- Passed: yes
-- Merged-map coverage: 94.44%
-- Pairwise proposals / accepted: 4 / 3
-- Collision events: 0
-- Simulator safety interventions: 0
-- Minimum UAV center distance: 2.972 m
-- Minimum UAV-body obstacle clearance: 0.362 m
+### Contact-sensor positive control
 
-### Isaac Sim endurance run, 45 seconds
+The test body was intentionally driven into a wall.
 
-- Passed: yes
-- Merged-map coverage: 96.68%
-- Collision events: 0
-- Simulator safety interventions: 0
-- Minimum UAV center distance: 1.413 m
-- Minimum UAV-body obstacle clearance: 0.303 m
+- collision events: 1
+- maximum contact force: 0.424882 N
+- obstacle penetration: 0.0400 m
 
-An earlier 45-second run exposed two agents converging on a residual frontier:
-their distance reached 0.668 m and failed the then 0.70 m acceptance limit.
-The implementation was changed to publish trajectories at 5 Hz, stop pursuing
-residual frontiers after the completion threshold, apply an explicit
-close-range separation layer, and use 0.60 m obstacle inflation. The repeated
-45-second run produced the passing result above. Current acceptance limits are
-stricter: 1.00 m inter-UAV distance, 0.10 m obstacle clearance, zero collision
-events, zero plant safety interventions, and at least one acknowledged
-pairwise allocation.
+This confirms that a zero event count in the exploration runs is not caused by
+a disabled detector. Zero-force startup states are excluded from collisions.
+
+### Small scene: 8 m x 6 m x 2 m, 30 seconds
+
+Result file: `/tmp/racer_small_range35.json`
+
+- passed: yes
+- map coverage: 97.92%
+- moving UAVs: 2
+- pairwise proposals / accepted: 10 / 8
+- PhysX lidar frames: 897
+- PhysX contact events: 0
+- minimum UAV center distance: 2.794 m
+- minimum UAV-body obstacle clearance: 0.351 m
+- false-free obstacle cells: 0
+- occupied-cell precision: 100%
+
+### Large scene: 20 m x 10 m x 2 m, 60 seconds
+
+Result file: `/tmp/racer_large_final.json`
+
+- passed: yes
+- map coverage: 98.38%
+- moving UAVs: 3
+- pairwise proposals / accepted: 26 / 20
+- PhysX lidar frames: 1794
+- PhysX contact events: 0
+- minimum UAV center distance: 4.035 m
+- minimum UAV-body obstacle clearance: 0.291 m
+- false-free obstacle cells: 7 / 416, 1.68%
+- occupied-cell precision: 88.50%
+
+Both acceptance runs used actual Isaac rigid-body poses, actual
+`RotatingLidarPhysX` ranges and actual contact-sensor state. The adapter's
+simulator-side safety intervention count remained zero, so the no-collision
+result came from the ROS 2 planners/controllers rather than hidden teleporting
+or position clipping.

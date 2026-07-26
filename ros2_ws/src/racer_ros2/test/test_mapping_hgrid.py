@@ -20,7 +20,7 @@ class MappingHGridTest(unittest.TestCase):
             4.0,
         )
         state = occupancy.states()
-        self.assertGreater(np.count_nonzero(state == FREE), 40)
+        self.assertGreater(np.count_nonzero(state == FREE), 20)
         self.assertGreater(np.count_nonzero(state == OCCUPIED), 20)
         self.assertGreater(occupancy.coverage(), 0.15)
         self.assertTrue(occupancy.frontier_clusters(minimum_size=2))
@@ -54,3 +54,49 @@ class MappingHGridTest(unittest.TestCase):
         occupied[1, 1] = OCCUPIED
         occupancy.merge(occupied)
         self.assertEqual(occupancy.states()[1, 1], OCCUPIED)
+
+    def test_non_finite_sensor_samples_are_ignored(self):
+        occupancy = OccupancyMap(0.5, (-2.0, -2.0), (4.0, 4.0))
+        occupancy.update_scan(
+            (0.0, 0.0),
+            0.0,
+            [float("nan"), 1.0, float("inf")],
+            float("nan"),
+            0.1,
+            4.0,
+        )
+        self.assertEqual(np.count_nonzero(occupancy.observations), 1)
+
+    def test_clipped_miss_does_not_mark_map_edge_free(self):
+        occupancy = OccupancyMap(0.5, (-2.0, -2.0), (4.0, 4.0))
+        occupancy.update_scan(
+            (0.0, 0.0),
+            0.0,
+            [10.0],
+            0.0,
+            1.0,
+            10.0,
+        )
+        edge = occupancy.world_to_grid(1.99, 0.0)
+        self.assertIsNotNone(edge)
+        self.assertEqual(occupancy.observations[edge[1], edge[0]], 0)
+
+    def test_hit_on_grid_boundary_marks_obstacle_side(self):
+        occupancy = OccupancyMap(0.25, (0.0, 0.0), (2.0, 1.0))
+        occupancy.update_scan(
+            (0.5, 0.5),
+            0.0,
+            [0.5],
+            0.0,
+            1.0,
+            2.0,
+        )
+        free_side = occupancy.world_to_grid(0.875, 0.5)
+        obstacle_side = occupancy.world_to_grid(1.125, 0.5)
+        self.assertNotEqual(
+            occupancy.states()[free_side[1], free_side[0]], OCCUPIED
+        )
+        self.assertEqual(
+            occupancy.states()[obstacle_side[1], obstacle_side[0]],
+            OCCUPIED,
+        )

@@ -103,14 +103,23 @@ class OccupancyMap:
         for index, measured in enumerate(ranges):
             if not math.isfinite(measured) or measured <= 0.0:
                 continue
+            angle = yaw + angle_min + index * angle_increment
+            if not math.isfinite(angle):
+                continue
             hit = measured < range_max - 0.05
             distance = min(measured, range_max)
-            angle = yaw + angle_min + index * angle_increment
+            direction = (math.cos(angle), math.sin(angle))
+            free_distance = (
+                max(0.0, distance - 0.5 * self.resolution)
+                if hit
+                else distance
+            )
             endpoint = (
-                position[0] + distance * math.cos(angle),
-                position[1] + distance * math.sin(angle),
+                position[0] + free_distance * direction[0],
+                position[1] + free_distance * direction[1],
             )
             end = self.world_to_grid(*endpoint)
+            clamped_to_map = end is None
             if end is None:
                 # Clamp a ray endpoint just inside the map.
                 endpoint = (
@@ -127,15 +136,53 @@ class OccupancyMap:
             if end is None:
                 continue
             cells = self.bresenham(start, end)
-            free_cells = cells[:-1] if hit else cells
-            self._observe(free_cells, -2)
+            # The last cell of a clipped miss is an artificial map-boundary
+            # endpoint, not a sensor observation. A hit endpoint also gets
+            # occupancy rather than free evidence.
+            candidate_free = (
+                cells[:-1] if hit or clamped_to_map else cells
+            )
+            free_cells = []
+            for cell in candidate_free:
+                center_x, center_y = self.grid_to_world(cell)
+                offset_x = center_x - position[0]
+                offset_y = center_y - position[1]
+                projection = (
+                    offset_x * direction[0] + offset_y * direction[1]
+                )
+                perpendicular = abs(
+                    offset_x * direction[1] - offset_y * direction[0]
+                )
+                if (
+                    projection <= free_distance
+                    and perpendicular <= 0.45 * self.resolution
+                ):
+                    free_cells.append(cell)
+            # A dense rotating lidar can traverse a boundary cell from many
+            # neighbouring angles. Keep free-space evidence conservative so
+            # those traversals do not erase repeated physical surface hits.
+            self._observe(free_cells, -1)
             if hit:
-                self._observe([cells[-1]], 5)
+                # Measurements terminate on a continuous surface. If that
+                # surface coincides with a grid boundary, flooring the raw
+                # endpoint can select the free-side cell. Place occupancy
+                # evidence half a voxel behind the measured surface and stop
+                # free carving half a voxel before it.
+                occupied_distance = distance + 0.5 * self.resolution
+                occupied_endpoint = (
+                    position[0] + occupied_distance * direction[0],
+                    position[1] + occupied_distance * direction[1],
+                )
+                occupied_cell = self.world_to_grid(*occupied_endpoint)
+                if occupied_cell is not None:
+                    self._observe([occupied_cell], 7)
 
     def states(self) -> np.ndarray:
         state = np.full((self.height, self.width), UNKNOWN, dtype=np.int8)
         known = self.observations > 0
-        state[known & (self.log_odds <= 1)] = FREE
+        # A single grazing ray remains unknown; two net free observations are
+        # required before publishing FREE.
+        state[known & (self.log_odds <= -2)] = FREE
         state[known & (self.log_odds > 1)] = OCCUPIED
         return state
 

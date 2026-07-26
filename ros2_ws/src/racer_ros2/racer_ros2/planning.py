@@ -3,12 +3,12 @@
 from dataclasses import dataclass
 import heapq
 import math
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
 from .hgrid import HierarchicalGrid
-from .mapping import FREE, UNKNOWN, GridIndex, OccupancyMap
+from .mapping import UNKNOWN, GridIndex, OccupancyMap
 
 
 WorldPoint = Tuple[float, float]

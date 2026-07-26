@@ -1,27 +1,46 @@
-# RACER ROS 2 / Isaac Sim reproduction
+# RACER ROS 2 Humble / Isaac Sim compatibility implementation
 
-This package is a clean ROS 2 Humble reproduction of the RACER pipeline in
-`racer.pdf` and the adjacent ROS 1 source tree. The original source remains
-unchanged. Each UAV runs a separate `racer_agent` process and only exchanges
-maps, state, trajectories and pairwise allocation messages.
+This package reimplements the main decentralized RACER workflow described in
+`racer.pdf` and the adjacent ROS 1 source tree for Ubuntu 22.04, ROS 2 Humble
+and Isaac Sim 5.1.
 
-## Paper-to-code mapping
+It is not a source-identical port of the original RACER. The original project
+uses ROS 1/catkin, a custom UAV simulator, 3-D occupancy/ESDF mapping, LKH-3
+and NLopt. It has no native ROS 2 or Isaac Sim launch path. This package is a
+Python/ROS 2 compatibility implementation with a fixed-altitude 2.5-D map.
+See [test_results/FIDELITY_AUDIT.md](test_results/FIDELITY_AUDIT.md) for the
+component-by-component comparison.
 
-| RACER component | ROS 2 implementation |
+## Implemented workflow
+
+Each UAV runs an independent `racer_agent` process. Agents exchange only maps,
+states, trajectories and pairwise allocation messages.
+
+| RACER concept | ROS 2 implementation |
 |---|---|
-| Online hgrid decomposition (Algorithm 1) | `racer_ros2/hgrid.py` |
-| Pairwise request/response (Algorithm 2) | `RacerAgent._pairwise_timer()` and `_pairwise_callback()` |
-| Capacity-constrained open VRP | `racer_ros2/allocation.py` |
-| Incremental frontiers and viewpoints (Algorithm 3) | `OccupancyMap.frontier_clusters()` and `plan_exploration()` |
-| CP-guided local TSP / path search | `coverage_route()`, viewpoint scoring and 8-connected A* |
-| Minimum-time B-spline | `UniformBSpline` and `minimum_time_trajectory()` |
-| Inter-UAV trajectory avoidance (Equations 13–14) | trajectory conflict yielding plus continuous control-barrier projection |
-| Volumetric map exchange | fixed-height occupancy chunks over `/racer/map_share` |
+| Online hierarchical-grid decomposition | `racer_ros2/hgrid.py` |
+| Asynchronous pairwise request/response | `RacerAgent._pairwise_timer()` and `_pairwise_callback()` |
+| Capacity-limited two-UAV allocation | exact open CVRP for small instances, deterministic insertion fallback |
+| Frontier viewpoints and CP guidance | frontier clusters, information gain and hgrid coverage routes |
+| Local path and trajectory generation | 8-connected A*, corridor-safe cubic B-spline and time scaling |
+| Decentralized collision avoidance | shared trajectories, priority yielding, CBF separation and lidar braking |
+| Map sharing | per-UAV log-odds maps on `/racer/map_share`, occupied evidence wins |
 
-The provided acceptance environment is 2.5-D: all obstacles extend above the
-fixed flight altitude. The mapping/planning interface is intentionally isolated,
-so a 3-D point-cloud mapper can replace `OccupancyMap` without changing the
-decentralized allocation protocol.
+## Isaac Sim integration
+
+The Isaac adapter uses:
+
+- real PhysX rigid bodies, not Python-integrated positions;
+- a 27 g, 0.16 m Crazyflie-like collision proxy with the bundled Crazyflie
+  visual asset;
+- `RotatingLidarPhysX` depth and azimuth buffers for mapping;
+- PhysX contact sensors for collision acceptance;
+- synchronized odometry and scans, including the measured two-step PhysX
+  sensor latency.
+
+The vehicle is velocity-controlled at a fixed altitude. It is not a
+motor/propeller/aerodynamic Crazyflie model. Obstacles are floor-to-ceiling,
+so the 20 m x 10 m x 2 m physical scene is mapped as a horizontal 2.5-D slice.
 
 ## Build
 
@@ -32,58 +51,67 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
-## Fast ROS 2 integration test
+## Tests
+
+The script defaults to `/home/jackson/isaacsim`. Set `ISAAC_SIM_ROOT` when
+Isaac Sim is installed elsewhere.
+
+Small 8 m x 6 m x 2 m scene:
 
 ```bash
 cd RACER/ros2_ws
-RACER_TEST_DURATION=45 src/racer_ros2/scripts/run_mock_test.sh
+RACER_SCENARIO=small \
+RACER_TEST_DURATION=30 \
+src/racer_ros2/scripts/run_isaac_test.sh /tmp/racer_small.json
 ```
 
-## Isaac Sim test
-
-The script defaults to `/home/jackson/isaacsim`; set `ISAAC_SIM_ROOT` if the
-installation is elsewhere.
+Requested 20 m x 10 m x 2 m scene:
 
 ```bash
 cd RACER/ros2_ws
-RACER_TEST_DURATION=45 src/racer_ros2/scripts/run_isaac_test.sh
+RACER_SCENARIO=large \
+RACER_TEST_DURATION=60 \
+src/racer_ros2/scripts/run_isaac_test.sh /tmp/racer_large.json
 ```
 
-Isaac Sim 5.x uses Python 3.11 while Ubuntu's Humble installation uses Python
-3.10. `run_isaac_test.sh` deliberately starts Isaac with its bundled Humble
-bridge and starts the exploration nodes with the system Humble installation.
-They communicate through Fast DDS.
+Isaac Sim 5.x and system ROS 2 Humble use different Python installations.
+The test script starts Isaac with its bundled Humble bridge and the agents
+with system Humble; they communicate through Fast DDS.
 
-For an interactive window, launch the ROS side with `backend:=isaac`, then run
-the adapter without `--headless`:
+For an interactive Isaac window, first launch the ROS side:
 
 ```bash
 source /opt/ros/humble/setup.bash
 source install/setup.bash
-ros2 launch racer_ros2 swarm_exploration.launch.py backend:=isaac
+ros2 launch racer_ros2 swarm_exploration.launch.py \
+  backend:=isaac scenario:=large drone_count:=3 duration:=120
+```
 
+Then run the adapter in another terminal:
+
+```bash
 env -u PYTHONPATH -u AMENT_PREFIX_PATH -u CMAKE_PREFIX_PATH \
   -u COLCON_PREFIX_PATH ROS_DISTRO=humble \
   RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
   LD_LIBRARY_PATH=/home/jackson/isaacsim/exts/isaacsim.ros2.bridge/humble/lib \
   /home/jackson/isaacsim/python.sh \
-  src/racer_ros2/isaac_sim/isaac_sim_racer.py --duration 120
+  src/racer_ros2/isaac_sim/isaac_sim_racer.py \
+  --duration 120 --scenario large --drone-count 3
 ```
 
-## Acceptance criteria
+## Acceptance checks
 
-`racer_monitor` writes a JSON result containing:
+`racer_monitor` fails the Isaac test unless all of the following hold:
 
-- merged-map known coverage;
-- collision event count;
-- minimum center-to-center UAV distance;
-- minimum UAV-body-to-obstacle clearance;
-- simulator safety-kernel interventions and final positions.
+- all UAV maps are received and requested coverage is reached;
+- the backend, odometry and scan sources are real Isaac PhysX components;
+- at least two UAVs move at least 0.5 m;
+- at least one pairwise allocation is accepted;
+- PhysX contact events and simulator safety interventions are both zero;
+- minimum inter-UAV distance is at least 0.50 m;
+- UAV-body obstacle clearance is at least 0.05 m;
+- the map contains obstacle evidence, false-free obstacle cells are at most
+  5%, and occupied-cell precision is at least 80%.
 
-The default test passes only when all UAV maps are received, coverage is at
-least 55%, at least one pairwise allocation is acknowledged, collision and
-plant safety-intervention counts are both zero, center distance never drops
-below 1.00 m, and UAV-body obstacle clearance never drops below 0.10 m.
-
-The results produced on the supplied machine are recorded in
-[`test_results/TEST_REPORT.md`](test_results/TEST_REPORT.md).
+Measured results are in
+[test_results/TEST_REPORT.md](test_results/TEST_REPORT.md).
