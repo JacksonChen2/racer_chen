@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+package_dir="$(cd "${script_dir}/.." && pwd)"
+workspace_dir="$(cd "${package_dir}/../.." && pwd)"
+isaac_root="${ISAAC_SIM_ROOT:-/home/jackson/isaacsim}"
+result_file="${1:-${package_dir}/test_results/ISAAC_15X9X2_RESULT.json}"
+duration="${RACER_3D_DURATION:-120}"
+duration_seconds="${duration%%.*}"
+monitor_duration="$((duration_seconds + 15))"
+drone_count="${RACER_3D_DRONE_COUNT:-3}"
+ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-63}"
+export ROS_DOMAIN_ID
+
+source /opt/ros/humble/setup.bash
+if [[ ! -f "${workspace_dir}/install/setup.bash" ]]; then
+  printf 'Build the workspace first: colcon build --symlink-install\n' >&2
+  exit 2
+fi
+source "${workspace_dir}/install/setup.bash"
+set -u
+if [[ -f "${result_file}" ]]; then
+  rm -- "${result_file}"
+fi
+
+ros2 launch racer_3d swarm_3d.launch.py \
+  backend:=isaac \
+  drone_count:="${drone_count}" \
+  duration:="${monitor_duration}" \
+  result_file:="${result_file}" &
+launch_pid=$!
+cleanup() {
+  kill "${launch_pid}" 2>/dev/null || true
+  wait "${launch_pid}" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+sleep 2
+env \
+  -u AMENT_PREFIX_PATH \
+  -u CMAKE_PREFIX_PATH \
+  -u COLCON_PREFIX_PATH \
+  -u PYTHONPATH \
+  ROS_DOMAIN_ID="${ROS_DOMAIN_ID}" \
+  ROS_DISTRO=humble \
+  RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+  LD_LIBRARY_PATH="${isaac_root}/exts/isaacsim.ros2.bridge/humble/lib" \
+  timeout "$((duration_seconds + 120))" \
+  "${isaac_root}/python.sh" \
+  "${package_dir}/isaac_sim/isaac_sim_racer_3d.py" \
+  --headless \
+  --duration "${duration}" \
+  --drone-count "${drone_count}" \
+  --diagnostics
+
+deadline=$((SECONDS + 20))
+while [[ ! -s "${result_file}" && ${SECONDS} -lt ${deadline} ]]; do
+  sleep 1
+done
+
+python3 - "${result_file}" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+if not path.exists():
+    raise SystemExit(f"missing result file: {path}")
+result = json.loads(path.read_text(encoding="utf-8"))
+print(json.dumps(result, indent=2, sort_keys=True))
+raise SystemExit(0 if result.get("passed") else 1)
+PY

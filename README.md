@@ -5,10 +5,15 @@ fleet of decentralized UAVs.
 
 We develop a fully decentralized approach for exploration tasks using a fleet of quadrotors. The proposed system features robustness against unstable communication and a high degree of coordination. The quadrotor team operates with asynchronous and limited communication and does not require any central control. The coverage paths and workload allocations of the team are optimized and balanced in order to fully realize the system's potential. The associated paper has been published in IEEE Transactions on Robotics and is selected as the **2023 IEEE TRO Best Paper**!
 
-> A tested ROS 2 Humble / Isaac Sim compatibility implementation is available
-> in [`ros2_ws/src/racer_ros2`](ros2_ws/src/racer_ros2). It reproduces the
-> decentralized workflow with a fixed-altitude 2.5-D map; it is not a
-> source-identical port of the original ROS 1 3-D system.
+> A fully three-dimensional ROS 2 Humble / Isaac Sim reproduction is available
+> in [`ros2_3d_ws/src/racer_3d`](ros2_3d_ws/src/racer_3d). It includes a voxel
+> occupancy map and ESDF, 3-D HGrid/CVRP coordination, XYZ A*, cubic B-splines,
+> 3-D collision avoidance and a six-DOF Crazyflie PhysX plant. Its formal
+> three-vehicle 15 m × 9 m × 2 m result is documented in
+> [`TEST_REPORT.md`](ros2_3d_ws/src/racer_3d/test_results/TEST_REPORT.md).
+>
+> The older [`ros2_ws/src/racer_ros2`](ros2_ws/src/racer_ros2) package is the
+> fixed-altitude 2.5-D compatibility implementation.
 
 
 Try [Quick Start](#quick-start) to run a demo in a few minutes!  
