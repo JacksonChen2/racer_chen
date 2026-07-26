@@ -1,0 +1,226 @@
+"""Acceptance monitor for mock and Isaac Sim exploration runs."""
+
+import json
+import math
+from pathlib import Path
+from typing import Dict, List, Optional
+
+import rclpy
+from nav_msgs.msg import OccupancyGrid, Odometry
+from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from std_msgs.msg import String
+
+
+class ExplorationMonitor(Node):
+    def __init__(self) -> None:
+        super().__init__("racer_monitor")
+        self.declare_parameter("drone_count", 3)
+        self.declare_parameter("duration", 45.0)
+        self.declare_parameter("result_file", "/tmp/racer_result.json")
+        self.declare_parameter("minimum_coverage", 0.55)
+        self.declare_parameter("minimum_inter_drone", 0.70)
+        self.declare_parameter("minimum_obstacle_clearance", 0.0)
+        self.drone_count = int(self.get_parameter("drone_count").value)
+        self.duration = float(self.get_parameter("duration").value)
+        self.result_file = str(self.get_parameter("result_file").value)
+        self.minimum_coverage = float(
+            self.get_parameter("minimum_coverage").value
+        )
+        self.inter_threshold = float(
+            self.get_parameter("minimum_inter_drone").value
+        )
+        self.obstacle_threshold = float(
+            self.get_parameter("minimum_obstacle_clearance").value
+        )
+        # Isaac Sim may need several seconds to initialize its renderer and ROS
+        # bridge. The acceptance window starts on the first plant message, not
+        # when the ROS launch process was created.
+        self.started = None
+        self.coverage: Dict[int, float] = {}
+        self.status: Dict[int, dict] = {}
+        self.positions: Dict[int, tuple] = {}
+        self.metrics = {
+            "backend": "unknown",
+            "collision_events": 0,
+            "safety_interventions": 0,
+            "min_inter_drone": math.inf,
+            "min_obstacle_clearance": math.inf,
+        }
+        self.pairwise_proposals = 0
+        self.pairwise_acceptances = 0
+        self.finished = False
+
+        qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
+        for drone_id in range(self.drone_count):
+            self.create_subscription(
+                OccupancyGrid,
+                f"/drone_{drone_id}/map",
+                lambda message, index=drone_id: self._map(index, message),
+                qos,
+            )
+            self.create_subscription(
+                String,
+                f"/drone_{drone_id}/status",
+                lambda message, index=drone_id: self._status(index, message),
+                qos,
+            )
+            self.create_subscription(
+                Odometry,
+                f"/drone_{drone_id}/odom",
+                lambda message, index=drone_id: self._odom(index, message),
+                qos,
+            )
+        self.create_subscription(
+            String, "/racer/sim_metrics", self._metrics, qos
+        )
+        self.create_subscription(
+            String, "/racer/pairwise", self._pairwise, qos
+        )
+        result_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.result_publisher = self.create_publisher(
+            String, "/racer/test_result", result_qos
+        )
+        self.create_timer(0.25, self._timer)
+
+    def _map(self, drone_id: int, message: OccupancyGrid) -> None:
+        if not message.data:
+            return
+        known = sum(1 for item in message.data if item >= 0)
+        self.coverage[drone_id] = known / len(message.data)
+
+    def _status(self, drone_id: int, message: String) -> None:
+        try:
+            self.status[drone_id] = json.loads(message.data)
+        except json.JSONDecodeError:
+            pass
+
+    def _odom(self, drone_id: int, message: Odometry) -> None:
+        if self.started is None:
+            self.started = self.get_clock().now()
+        self.positions[drone_id] = (
+            message.pose.pose.position.x,
+            message.pose.pose.position.y,
+        )
+
+    def _metrics(self, message: String) -> None:
+        try:
+            incoming = json.loads(message.data)
+        except json.JSONDecodeError:
+            return
+        if self.started is None:
+            self.started = self.get_clock().now()
+        self.metrics.update(incoming)
+
+    def _pairwise(self, message: String) -> None:
+        try:
+            data = json.loads(message.data)
+        except json.JSONDecodeError:
+            return
+        if data.get("kind") == "proposal":
+            self.pairwise_proposals += 1
+        elif data.get("kind") == "response" and bool(
+            data.get("accepted", False)
+        ):
+            self.pairwise_acceptances += 1
+
+    def _timer(self) -> None:
+        if self.started is None:
+            return
+        elapsed = (self.get_clock().now() - self.started).nanoseconds * 1.0e-9
+        if elapsed >= self.duration and not self.finished:
+            self._finish(elapsed)
+
+    def _finish(self, elapsed: float) -> None:
+        self.finished = True
+        coverage = max(self.coverage.values(), default=0.0)
+        failures = []
+        if len(self.coverage) < self.drone_count:
+            failures.append("not all UAV maps were received")
+        if coverage < self.minimum_coverage:
+            failures.append(
+                f"coverage {coverage:.3f} < {self.minimum_coverage:.3f}"
+            )
+        collisions = int(self.metrics.get("collision_events", 0))
+        if collisions != 0:
+            failures.append(f"{collisions} collision events")
+        interventions = int(self.metrics.get("safety_interventions", 0))
+        if interventions != 0:
+            failures.append(
+                f"{interventions} simulator safety-kernel interventions"
+            )
+        if self.pairwise_acceptances == 0:
+            failures.append("no successful RACER pairwise allocation")
+        min_inter = float(self.metrics.get("min_inter_drone", 0.0))
+        if min_inter < self.inter_threshold:
+            failures.append(
+                f"minimum inter-UAV distance {min_inter:.3f} "
+                f"< {self.inter_threshold:.3f}"
+            )
+        min_obstacle = float(
+            self.metrics.get("min_obstacle_clearance", -math.inf)
+        )
+        if min_obstacle < self.obstacle_threshold:
+            failures.append(
+                f"minimum obstacle clearance {min_obstacle:.3f} "
+                f"< {self.obstacle_threshold:.3f}"
+            )
+        result = {
+            "passed": not failures,
+            "elapsed": elapsed,
+            "drone_count": self.drone_count,
+            "coverage": coverage,
+            "per_drone_coverage": self.coverage,
+            "collision_events": collisions,
+            "safety_interventions": interventions,
+            "pairwise_proposals": self.pairwise_proposals,
+            "pairwise_acceptances": self.pairwise_acceptances,
+            "min_inter_drone": min_inter,
+            "min_obstacle_clearance": min_obstacle,
+            "backend": self.metrics.get("backend", "unknown"),
+            "failures": failures,
+            "positions": self.positions,
+        }
+        output = json.dumps(result, indent=2, sort_keys=True)
+        result_path = Path(self.result_file)
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(output + "\n", encoding="utf-8")
+        self.result_publisher.publish(String(data=output))
+        if failures:
+            self.get_logger().error("RACER acceptance FAILED: " + "; ".join(failures))
+        else:
+            self.get_logger().info(
+                "RACER acceptance PASSED: "
+                f"coverage={coverage:.3f}, min_inter={min_inter:.3f}, "
+                f"min_obstacle={min_obstacle:.3f}"
+            )
+
+
+def main(args: Optional[List[str]] = None) -> None:
+    rclpy.init(args=args)
+    node = ExplorationMonitor()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if not node.finished:
+            elapsed = 0.0
+            if node.started is not None:
+                elapsed = (
+                    node.get_clock().now() - node.started
+                ).nanoseconds * 1.0e-9
+            node._finish(
+                elapsed
+            )
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()

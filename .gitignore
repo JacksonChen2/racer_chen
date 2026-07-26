@@ -1,3 +1,11 @@
 swarm_exploration/utils/lkh_mtsp_solver/resource/*.atsp
 swarm_exploration/utils/lkh_mtsp_solver/resource/*.par
 swarm_exploration/utils/lkh_mtsp_solver/resource/*.tour
+
+# ROS 2 workspace and Python-generated files
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+**/__pycache__/
+**/.pytest_cache/
+*.pyc
