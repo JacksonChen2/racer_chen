@@ -5,6 +5,7 @@ import numpy as np
 
 from racer_ros2.hgrid import HierarchicalGrid
 from racer_ros2.mapping import FREE, OCCUPIED, OccupancyMap
+from racer_ros2.scenario import get_scenario, obstacle_clearance
 
 
 class MappingHGridTest(unittest.TestCase):
@@ -100,3 +101,14 @@ class MappingHGridTest(unittest.TestCase):
             occupancy.states()[obstacle_side[1], obstacle_side[0]],
             OCCUPIED,
         )
+
+    def test_long_scene_dimensions_and_clear_starts(self):
+        scenario = get_scenario("long")
+        self.assertEqual(scenario.map_size, (20.0, 50.0))
+        self.assertEqual(scenario.height, 3.0)
+        self.assertEqual(len(scenario.starts), 3)
+        self.assertGreaterEqual(len(scenario.obstacles), 10)
+        for start in scenario.starts:
+            self.assertGreater(
+                obstacle_clearance(*start, scenario.obstacles), 0.5
+            )

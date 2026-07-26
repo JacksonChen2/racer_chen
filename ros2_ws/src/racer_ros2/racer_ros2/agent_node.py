@@ -49,7 +49,9 @@ class RacerAgent(Node):
         self.declare_parameter("hgrid_minimum_unknown", 4)
         self.declare_parameter("planning_clearance", 0.60)
         self.declare_parameter("swarm_safe_distance", 1.15)
+        self.declare_parameter("emergency_distance", 1.45)
         self.declare_parameter("robot_radius", 0.30)
+        self.declare_parameter("obstacle_braking_margin", 0.45)
         self.declare_parameter("flight_z", 1.0)
         self.declare_parameter("max_speed", 1.20)
         self.declare_parameter("max_acceleration", 1.50)
@@ -89,7 +91,13 @@ class RacerAgent(Node):
         self.safe_distance = float(
             self.get_parameter("swarm_safe_distance").value
         )
+        self.emergency_distance = float(
+            self.get_parameter("emergency_distance").value
+        )
         self.robot_radius = float(self.get_parameter("robot_radius").value)
+        self.obstacle_braking_margin = float(
+            self.get_parameter("obstacle_braking_margin").value
+        )
         self.flight_z = float(self.get_parameter("flight_z").value)
         self.max_speed = float(self.get_parameter("max_speed").value)
         self.max_acceleration = float(
@@ -358,6 +366,44 @@ class RacerAgent(Node):
             self.owned_cells, position
         )
 
+    def _current_plan_is_reusable(self, now: float) -> bool:
+        """Keep a safe trajectory long enough to make physical progress."""
+
+        if (
+            self.current_plan is None
+            or self.position is None
+            or not self.current_plan.trajectory
+        ):
+            return False
+        elapsed = now - self.plan_started
+        duration = float(self.current_plan.trajectory[-1][0])
+        if elapsed > min(12.0, max(3.0, duration + 1.5)):
+            return False
+        if math.hypot(
+            self.current_plan.goal[0] - self.position[0],
+            self.current_plan.goal[1] - self.position[1],
+        ) < 0.55:
+            return False
+
+        state = self.occupancy_map.states()
+        blocked = self.occupancy_map.inflated_blocked(
+            self.clearance, unknown_is_blocked=False
+        )
+        blocked |= state < 0
+        current = self.occupancy_map.world_to_grid(*self.position)
+        if current is not None:
+            blocked[current[1], current[0]] = False
+        # Only validate the unexecuted suffix. Newly observed occupancy must
+        # invalidate a stale path immediately; ordinary map/frontier updates
+        # should not reset the trajectory clock every planning cycle.
+        for timestamp, x, y in self.current_plan.trajectory:
+            if timestamp + 0.25 < elapsed:
+                continue
+            cell = self.occupancy_map.world_to_grid(x, y)
+            if cell is None or blocked[cell[1], cell[0]]:
+                return False
+        return True
+
     def _planning_timer(self) -> None:
         if self.position is None or self.latest_scan is None:
             return
@@ -377,6 +423,20 @@ class RacerAgent(Node):
                 String(data=json.dumps(status, separators=(",", ":")))
             )
             return
+        now = self._now()
+        if self._current_plan_is_reusable(now):
+            status = {
+                "drone_id": self.drone_id,
+                "coverage": round(self.occupancy_map.coverage(), 5),
+                "frontiers": len(self.occupancy_map.frontier_clusters()),
+                "owned_cells": len(self.owned_cells),
+                "planning": True,
+                "plan_reused": True,
+            }
+            self.status_publisher.publish(
+                String(data=json.dumps(status, separators=(",", ":")))
+            )
+            return
         plan = plan_exploration(
             self.occupancy_map,
             self.hgrid,
@@ -388,7 +448,6 @@ class RacerAgent(Node):
             max_speed=self.max_speed,
             max_acceleration=self.max_acceleration,
         )
-        now = self._now()
         if plan is not None:
             absolute_trajectory = [
                 (now + point[0], point[1], point[2])
@@ -459,6 +518,17 @@ class RacerAgent(Node):
             self.safe_distance,
             speed_limit=self.max_speed,
         )
+        safe = emergency_separation(
+            safe,
+            self.position,
+            peer_constraints,
+            activation_distance=self.emergency_distance,
+            max_speed=self.max_speed,
+            own_id=self.drone_id,
+        )
+        # Separation can point toward a nearby wall in a narrow passage.
+        # Apply physical lidar braking last so neither planner nor peer
+        # avoidance can reintroduce an obstacle-directed velocity.
         if self.latest_scan is not None:
             safe = obstacle_brake(
                 safe,
@@ -467,14 +537,8 @@ class RacerAgent(Node):
                 self.latest_scan.angle_increment,
                 self.yaw,
                 self.robot_radius,
+                braking_margin=self.obstacle_braking_margin,
             )
-        safe = emergency_separation(
-            safe,
-            self.position,
-            peer_constraints,
-            activation_distance=0.95,
-            max_speed=self.max_speed,
-        )
         safe = limit_norm(safe, self.max_speed)
         command.linear.x, command.linear.y = safe
         if math.hypot(*safe) > 0.05:

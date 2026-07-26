@@ -24,7 +24,7 @@ def obstacle_brake(
     angle_increment: float,
     yaw: float,
     robot_radius: float,
-    braking_margin: float = 0.25,
+    braking_margin: float = 0.45,
 ) -> Vector2:
     """Remove velocity components that approach a close lidar return."""
 
@@ -94,20 +94,23 @@ def emergency_separation(
     peers: Iterable[Tuple[int, Vector2, Vector2]],
     activation_distance: float,
     max_speed: float,
+    own_id: int = 0,
 ) -> Vector2:
     """Override task following when communication delay erodes separation."""
 
     own = np.asarray(own_position, dtype=float)
     correction = np.zeros(2, dtype=float)
     closest = math.inf
-    for _, peer_position, _ in peers:
+    for peer_id, peer_position, _ in peers:
         difference = own - np.asarray(peer_position, dtype=float)
         distance = float(np.linalg.norm(difference))
         closest = min(closest, distance)
         if distance >= activation_distance:
             continue
         if distance < 1.0e-6:
-            direction = np.asarray((1.0, 0.0))
+            direction = np.asarray(
+                (1.0, 0.0) if own_id < peer_id else (-1.0, 0.0)
+            )
         else:
             direction = difference / distance
         correction += (

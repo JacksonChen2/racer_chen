@@ -40,7 +40,7 @@ The Isaac adapter uses:
 
 The vehicle is velocity-controlled at a fixed altitude. It is not a
 motor/propeller/aerodynamic Crazyflie model. Obstacles are floor-to-ceiling,
-so the 20 m x 10 m x 2 m physical scene is mapped as a horizontal 2.5-D slice.
+so each physical scene is mapped as a horizontal 2.5-D slice.
 
 ## Build
 
@@ -72,6 +72,16 @@ cd RACER/ros2_ws
 RACER_SCENARIO=large \
 RACER_TEST_DURATION=60 \
 src/racer_ros2/scripts/run_isaac_test.sh /tmp/racer_large.json
+```
+
+Long 20 m x 50 m x 3 m scene with nine internal obstacles:
+
+```bash
+cd RACER/ros2_ws
+RACER_SCENARIO=long \
+RACER_TEST_DURATION=300 \
+RACER_MINIMUM_COVERAGE=0.95 \
+src/racer_ros2/scripts/run_isaac_test.sh /tmp/racer_long.json
 ```
 
 Isaac Sim 5.x and system ROS 2 Humble use different Python installations.

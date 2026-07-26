@@ -38,10 +38,20 @@ def _launch_setup(context):
         "map_origin": list(scenario.map_min),
         "map_size": list(scenario.map_size),
         "coarse_grid_size": 2.0 if scenario_name == "small" else 5.0,
-        "planning_clearance": 0.32,
-        "swarm_safe_distance": 0.70,
+        "planning_clearance": (
+            0.60 if scenario_name == "long" else
+            0.50 if scenario_name == "small" else 0.45
+        ),
+        "swarm_safe_distance": 1.20 if scenario_name == "long" else 0.70,
+        "emergency_distance": 1.65 if scenario_name == "long" else 0.95,
         "robot_radius": DRONE_RADIUS,
+        "obstacle_braking_margin": (
+            0.45 if scenario_name == "long" else 0.65
+        ),
         "flight_z": scenario.flight_z,
+        "max_speed": (
+            0.75 if scenario_name in ("small", "long") else 0.90
+        ),
         # A single 6 m scan sees most of the 8 x 6 m scene. Keep the small
         # integration case active long enough to verify multi-UAV motion.
         "completion_coverage": 0.995 if scenario_name == "small" else 0.98,

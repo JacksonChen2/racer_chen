@@ -20,7 +20,9 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--duration", type=float, default=45.0)
     parser.add_argument("--drone-count", type=int, default=3)
-    parser.add_argument("--scenario", choices=("small", "large"), default="small")
+    parser.add_argument(
+        "--scenario", choices=("small", "large", "long"), default="small"
+    )
     parser.add_argument(
         "--contact-probe",
         action="store_true",

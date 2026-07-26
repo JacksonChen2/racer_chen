@@ -1,0 +1,67 @@
+{
+  "backend": "isaac_sim_physx",
+  "scenario": "long",
+  "vehicle_model": "Crazyflie 2.x rigid-body proxy",
+  "motion_source": "Isaac PhysX rigid body",
+  "sensor_source": "Isaac RotatingLidarPhysX",
+  "drone_count": 3,
+  "completion_target": 0.95,
+  "completion_time": 199.4000000000111,
+  "completion_coverage": 0.95025,
+  "completion_path_distances": {
+    "0": 89.93971292445903,
+    "1": 107.80111811762906,
+    "2": 112.86345629313385
+  },
+  "elapsed": 300.032491859,
+  "coverage": 0.9788125,
+  "per_drone_coverage": {
+    "0": 0.978375,
+    "1": 0.9788125,
+    "2": 0.9775625
+  },
+  "path_distances": {
+    "0": 103.90255720975469,
+    "1": 124.92254950904076,
+    "2": 126.60076978110052
+  },
+  "moving_uavs": 3,
+  "max_displacements": {
+    "0": 21.553562946716923,
+    "1": 8.519623266651935,
+    "2": 14.053567800859739
+  },
+  "pairwise_proposals": 127,
+  "pairwise_acceptances": 106,
+  "lidar_frames": 8961,
+  "collision_events": 0,
+  "physics_contact_events": 0,
+  "max_contact_force": 0.0,
+  "safety_interventions": 0,
+  "min_inter_drone": 4.639483197810757,
+  "min_obstacle_clearance": 0.2528437423706055,
+  "map_quality": {
+    "false_free_cells": 0,
+    "false_free_details": [],
+    "false_free_rate": 0.0,
+    "known_free_cells": 12969,
+    "occupied_cells": 2692,
+    "occupied_precision": 0.8443536404160475
+  },
+  "positions": {
+    "0": [
+      -4.535510063171387,
+      -13.27895736694336
+    ],
+    "1": [
+      0.8460060358047485,
+      6.236717700958252
+    ],
+    "2": [
+      7.6766743659973145,
+      10.353530883789062
+    ]
+  },
+  "failures": [],
+  "passed": true
+}

@@ -11,7 +11,9 @@
     hgrid_minimum_unknown: 4
     planning_clearance: 0.32
     swarm_safe_distance: 0.70
+    emergency_distance: 0.95
     robot_radius: 0.12
+    obstacle_braking_margin: 0.55
     flight_z: 1.0
     max_speed: 1.20
     max_acceleration: 1.50

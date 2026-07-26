@@ -6,7 +6,13 @@ import numpy as np
 from racer_ros2.allocation import capacity_partition
 from racer_ros2.hgrid import HGridCell, HierarchicalGrid
 from racer_ros2.mapping import FREE, OCCUPIED, OccupancyMap
-from racer_ros2.planning import astar, plan_exploration
+from racer_ros2.planning import (
+    _cluster_candidates,
+    _safe_viewpoint_candidates,
+    astar,
+    plan_exploration,
+    reachable_mask,
+)
 
 
 def make_cell(index, x, y, demand):
@@ -62,6 +68,56 @@ class AllocationPlanningTest(unittest.TestCase):
         self.assertTrue(path)
         self.assertTrue(all(not blocked[y, x] for x, y in path))
         self.assertGreater(len(path), 5)
+
+    def test_frontier_candidates_come_from_reachable_component(self):
+        blocked = np.zeros((9, 12), dtype=bool)
+        blocked[:, 5] = True
+        start = (1, 4)
+        cluster = [
+            (x, 4)
+            for x in (7, 8, 9, 10, 11, 6, 1, 2)
+        ]
+        reachable = reachable_mask(blocked, start)
+        candidates = _cluster_candidates(cluster, blocked, reachable)
+        self.assertEqual(set(candidates), {(1, 4), (2, 4)})
+
+    def test_inflation_uses_requested_metric_clearance(self):
+        occupancy = OccupancyMap(0.25, (0.0, 0.0), (3.0, 3.0))
+        values = np.full((12, 12), FREE, dtype=np.int8)
+        values[6, 6] = OCCUPIED
+        occupancy.set_states(values)
+        blocked = occupancy.inflated_blocked(
+            0.60, unknown_is_blocked=False
+        )
+        self.assertTrue(blocked[6, 8])
+        self.assertFalse(blocked[6, 9])
+        self.assertFalse(blocked[8, 8])
+
+    def test_safe_viewpoint_recovers_inflated_wall_frontier(self):
+        occupancy = OccupancyMap(0.25, (0.0, 0.0), (3.0, 3.0))
+        values = np.full((12, 12), -1, dtype=np.int8)
+        values[3:10, 2:9] = FREE
+        values[3:10, 9] = OCCUPIED
+        occupancy.set_states(values)
+        blocked = occupancy.inflated_blocked(
+            0.60, unknown_is_blocked=False
+        )
+        blocked |= occupancy.states() < 0
+        start = (3, 6)
+        reachable = reachable_mask(blocked, start)
+        cluster = [(8, y) for y in range(4, 9)]
+        self.assertFalse(_cluster_candidates(cluster, blocked, reachable))
+        viewpoints = _safe_viewpoint_candidates(
+            occupancy,
+            cluster,
+            blocked,
+            reachable,
+            start,
+        )
+        self.assertTrue(viewpoints)
+        self.assertTrue(
+            all(reachable[y, x] and not blocked[y, x] for x, y in viewpoints)
+        )
 
     def test_cp_guided_frontier_plan_is_collision_free(self):
         occupancy = OccupancyMap(0.5, (-5.0, -5.0), (10.0, 10.0))

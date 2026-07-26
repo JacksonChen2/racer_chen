@@ -51,6 +51,12 @@ class ExplorationMonitor(Node):
         self.positions: Dict[int, tuple] = {}
         self.initial_positions: Dict[int, tuple] = {}
         self.max_displacements: Dict[int, float] = {}
+        self.path_distances: Dict[int, float] = {}
+        self.last_path_positions: Dict[int, tuple] = {}
+        self.last_odom_stamps: Dict[int, int] = {}
+        self.completion_time: Optional[float] = None
+        self.completion_coverage: Optional[float] = None
+        self.completion_path_distances: Dict[int, float] = {}
         self.maps: Dict[int, dict] = {}
         self.metrics = {
             "backend": "unknown",
@@ -118,6 +124,7 @@ class ExplorationMonitor(Node):
                 (message.info.height, message.info.width)
             ),
         }
+        self._capture_completion()
 
     def _status(self, drone_id: int, message: String) -> None:
         try:
@@ -132,6 +139,35 @@ class ExplorationMonitor(Node):
             message.pose.pose.position.x,
             message.pose.pose.position.y,
         )
+        position_3d = (
+            message.pose.pose.position.x,
+            message.pose.pose.position.y,
+            message.pose.pose.position.z,
+        )
+        stamp = (
+            int(message.header.stamp.sec) * 1_000_000_000
+            + int(message.header.stamp.nanosec)
+        )
+        previous_stamp = self.last_odom_stamps.get(drone_id)
+        previous_position = self.last_path_positions.get(drone_id)
+        if (
+            previous_position is not None
+            and previous_stamp is not None
+            and stamp > previous_stamp
+        ):
+            self.path_distances[drone_id] = self.path_distances.get(
+                drone_id, 0.0
+            ) + math.sqrt(
+                sum(
+                    (position_3d[axis] - previous_position[axis]) ** 2
+                    for axis in range(3)
+                )
+            )
+        else:
+            self.path_distances.setdefault(drone_id, 0.0)
+        if previous_stamp is None or stamp > previous_stamp:
+            self.last_odom_stamps[drone_id] = stamp
+            self.last_path_positions[drone_id] = position_3d
         self.positions[drone_id] = position
         if drone_id not in self.initial_positions:
             self.initial_positions[drone_id] = position
@@ -150,6 +186,29 @@ class ExplorationMonitor(Node):
         if self.started is None:
             self.started = self.get_clock().now()
         self.metrics.update(incoming)
+        self._capture_completion()
+
+    def _capture_completion(self) -> None:
+        if self.completion_time is not None:
+            return
+        if len(self.coverage) < self.drone_count:
+            return
+        fleet_coverage = min(self.coverage.values())
+        if fleet_coverage < self.minimum_coverage:
+            return
+        elapsed = self.metrics.get("elapsed")
+        if not isinstance(elapsed, (int, float)) or elapsed <= 0.0:
+            if self.started is None:
+                return
+            elapsed = (
+                self.get_clock().now() - self.started
+            ).nanoseconds * 1.0e-9
+        self.completion_time = float(elapsed)
+        self.completion_coverage = float(fleet_coverage)
+        self.completion_path_distances = {
+            drone_id: self.path_distances.get(drone_id, 0.0)
+            for drone_id in range(self.drone_count)
+        }
 
     def _pairwise(self, message: String) -> None:
         try:
@@ -237,6 +296,10 @@ class ExplorationMonitor(Node):
             failures.append(
                 f"coverage {coverage:.3f} < {self.minimum_coverage:.3f}"
             )
+        if self.completion_time is None:
+            failures.append(
+                "not all UAV maps reached the completion coverage"
+            )
         collisions = int(self.metrics.get("collision_events", 0))
         if collisions != 0:
             failures.append(f"{collisions} collision events")
@@ -288,6 +351,9 @@ class ExplorationMonitor(Node):
         result = {
             "passed": not failures,
             "elapsed": elapsed,
+            "completion_target": self.minimum_coverage,
+            "completion_time": self.completion_time,
+            "completion_coverage": self.completion_coverage,
             "drone_count": self.drone_count,
             "coverage": coverage,
             "per_drone_coverage": self.coverage,
@@ -312,6 +378,8 @@ class ExplorationMonitor(Node):
             "failures": failures,
             "positions": self.positions,
             "max_displacements": self.max_displacements,
+            "path_distances": self.path_distances,
+            "completion_path_distances": self.completion_path_distances,
             "moving_uavs": sum(
                 distance >= 0.50
                 for distance in self.max_displacements.values()

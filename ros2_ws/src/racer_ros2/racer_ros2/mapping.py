@@ -216,7 +216,8 @@ class OccupancyMap:
     ) -> np.ndarray:
         state = self.states()
         source = state != FREE if unknown_is_blocked else state == OCCUPIED
-        radius = int(math.ceil(clearance / self.resolution))
+        radius_cells = max(0.0, clearance / self.resolution)
+        radius = int(math.ceil(radius_cells))
         blocked = source.copy()
         occupied_cells = np.argwhere(source)
         for y, x in occupied_cells:
@@ -224,7 +225,13 @@ class OccupancyMap:
             x0, x1 = max(0, x - radius), min(self.width, x + radius + 1)
             for yy in range(y0, y1):
                 for xx in range(x0, x1):
-                    if (xx - x) ** 2 + (yy - y) ** 2 <= radius**2:
+                    # ``radius`` only bounds the loop. Testing against the
+                    # requested floating-point radius avoids silently turning
+                    # 0.60 m into 0.75 m on a 0.25 m grid.
+                    if (
+                        (xx - x) ** 2 + (yy - y) ** 2
+                        <= radius_cells**2 + 1.0e-9
+                    ):
                         blocked[yy, xx] = True
         return blocked
 

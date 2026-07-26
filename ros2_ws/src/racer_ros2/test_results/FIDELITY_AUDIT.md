@@ -47,6 +47,15 @@ the original 3-D C++ system.
 7. Acceptance was extended to reject mock backends, synthetic sensor sources,
    stationary “multi-UAV” runs, poor obstacle maps, physical contact and hidden
    simulator safety corrections.
+8. Metric obstacle inflation no longer rounds 0.60 m up to 0.75 m at 0.25 m
+   map resolution. Frontier candidates are filtered by the UAV's reachable
+   known-free component and use safe stand-off viewpoints at wall corners.
+9. Safe trajectories are retained across planning cycles until completion,
+   invalidation or timeout. This restores receding-horizon continuity instead
+   of resetting progress every 0.8 s.
+10. Lidar braking now includes the acceleration-limited PhysX stopping margin.
+    The 20 m x 50 m x 3 m three-UAV run reached 95% at 199.4 s with zero
+    contacts.
 
 ## Remaining gap to source-identical RACER
 

@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from .hgrid import HierarchicalGrid
-from .mapping import UNKNOWN, GridIndex, OccupancyMap
+from .mapping import FREE, UNKNOWN, GridIndex, OccupancyMap
 
 
 WorldPoint = Tuple[float, float]
@@ -222,6 +222,7 @@ def minimum_time_trajectory(
 def _cluster_candidates(
     cluster: Sequence[GridIndex],
     blocked: np.ndarray,
+    reachable: Optional[np.ndarray] = None,
     maximum: int = 6,
 ) -> List[GridIndex]:
     centroid_x = sum(item[0] for item in cluster) / len(cluster)
@@ -234,8 +235,118 @@ def _cluster_candidates(
         ),
     )
     return [
-        item for item in ordered if not blocked[item[1], item[0]]
+        item
+        for item in ordered
+        if (
+            not blocked[item[1], item[0]]
+            and (reachable is None or reachable[item[1], item[0]])
+        )
     ][:maximum]
+
+
+def reachable_mask(blocked: np.ndarray, start: GridIndex) -> np.ndarray:
+    """Return cells connected to ``start`` under the same rules as A*."""
+
+    height, width = blocked.shape
+    reachable = np.zeros_like(blocked, dtype=bool)
+    if not (0 <= start[0] < width and 0 <= start[1] < height):
+        return reachable
+    effective = blocked.copy()
+    effective[start[1], start[0]] = False
+    stack = [start]
+    reachable[start[1], start[0]] = True
+    moves = (
+        (-1, -1),
+        (0, -1),
+        (1, -1),
+        (-1, 0),
+        (1, 0),
+        (-1, 1),
+        (0, 1),
+        (1, 1),
+    )
+    while stack:
+        x, y = stack.pop()
+        for dx, dy in moves:
+            nx, ny = x + dx, y + dy
+            if (
+                not (0 <= nx < width and 0 <= ny < height)
+                or effective[ny, nx]
+                or reachable[ny, nx]
+            ):
+                continue
+            if dx and dy and (effective[y, nx] or effective[ny, x]):
+                continue
+            reachable[ny, nx] = True
+            stack.append((nx, ny))
+    return reachable
+
+
+def _safe_viewpoint_candidates(
+    occupancy_map: OccupancyMap,
+    cluster: Sequence[GridIndex],
+    blocked: np.ndarray,
+    reachable: np.ndarray,
+    start: GridIndex,
+    maximum: int = 6,
+) -> List[GridIndex]:
+    """Sample safe known-space viewpoints around a frontier cluster.
+
+    RACER plans to collision-free viewpoints that observe a frontier, not
+    necessarily to the boundary voxel itself. This matters at wall corners:
+    the boundary voxel can fall inside the inflated obstacle mask while a
+    stand-off viewpoint remains both reachable and informative.
+    """
+
+    if not cluster:
+        return []
+    state = occupancy_map.states()
+    raw_blocked = state != FREE
+    radius = max(2, int(math.ceil(1.75 / occupancy_map.resolution)))
+    min_x = max(0, min(cell[0] for cell in cluster) - radius)
+    max_x = min(
+        occupancy_map.width - 1,
+        max(cell[0] for cell in cluster) + radius,
+    )
+    min_y = max(0, min(cell[1] for cell in cluster) - radius)
+    max_y = min(
+        occupancy_map.height - 1,
+        max(cell[1] for cell in cluster) + radius,
+    )
+    scored = []
+    for y in range(min_y, max_y + 1):
+        for x in range(min_x, max_x + 1):
+            candidate = (x, y)
+            if blocked[y, x] or not reachable[y, x]:
+                continue
+            nearest = min(
+                cluster,
+                key=lambda item: (
+                    (item[0] - x) ** 2 + (item[1] - y) ** 2
+                ),
+            )
+            stand_off = math.hypot(nearest[0] - x, nearest[1] - y)
+            if stand_off > radius or not _line_free(
+                candidate, nearest, raw_blocked
+            ):
+                continue
+            gain = occupancy_map.information_gain(candidate)
+            start_distance = math.hypot(start[0] - x, start[1] - y)
+            # Avoid repeatedly selecting the current voxel when a moving
+            # viewpoint with comparable gain exists.
+            stationary_penalty = 1000.0 if start_distance < 2.0 else 0.0
+            scored.append(
+                (
+                    stationary_penalty - float(gain),
+                    stand_off,
+                    start_distance,
+                    candidate,
+                )
+            )
+    return [
+        item[3]
+        for item in sorted(scored)[:maximum]
+    ]
 
 
 def plan_exploration(
@@ -260,6 +371,7 @@ def plan_exploration(
     )
     blocked |= state == UNKNOWN
     blocked[start[1], start[0]] = False
+    reachable = reachable_mask(blocked, start)
     clusters = occupancy_map.frontier_clusters(minimum_size=2)
     if not clusters:
         return None
@@ -277,7 +389,20 @@ def plan_exploration(
         grid_cell = hgrid.containing(world_centroid)
         owner_match = grid_cell is not None and grid_cell.id in owned
         rank = route_rank.get(grid_cell.id, len(route_rank) + 5) if grid_cell else 999
-        for candidate in _cluster_candidates(cluster, blocked):
+        # Shared maps can contain several disconnected known-free islands.
+        # Select candidates from this vehicle's component before applying the
+        # six-viewpoint cap; otherwise unreachable cells near a cluster
+        # centroid can hide a reachable end of the same frontier.
+        candidates = _cluster_candidates(cluster, blocked, reachable)
+        if not candidates:
+            candidates = _safe_viewpoint_candidates(
+                occupancy_map,
+                cluster,
+                blocked,
+                reachable,
+                start,
+            )
+        for candidate in candidates:
             path = astar(blocked, start, candidate)
             if not path:
                 continue

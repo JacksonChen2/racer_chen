@@ -1,8 +1,8 @@
 """Deterministic exploration scenes shared by the test backends.
 
 The ``small`` scene is intentionally cheap enough for rapid integration tests.
-The ``large`` scene is the requested 20 m x 10 m x 2 m acceptance volume.
-Obstacles are floor-to-ceiling because the current ROS 2 mapper is planar.
+``large`` is 20 m x 10 m x 2 m, while ``long`` is the 20 m x 50 m x 3 m
+endurance scene. Obstacles are floor-to-ceiling because the mapper is planar.
 """
 
 from dataclasses import dataclass
@@ -111,8 +111,40 @@ def _large_scene() -> Scenario:
     )
 
 
+def _long_scene() -> Scenario:
+    """Open 20 m x 50 m x 3 m arena with staggered obstacles."""
+
+    height = 3.0
+    obstacles = _boundary(10.0, 25.0, height) + (
+        # Four offset barriers require detours but leave broad routes around
+        # both ends, keeping the requested obstacle field fully connected.
+        Box2D(-3.0, -15.0, 8.00, 0.50, height),
+        Box2D(3.5, -5.0, 8.00, 0.50, height),
+        Box2D(-3.5, 5.0, 8.00, 0.50, height),
+        Box2D(3.0, 15.0, 8.00, 0.50, height),
+        # Compact clutter distributed over the entire venue.
+        Box2D(-6.0, -20.0, 1.00, 1.00, height),
+        Box2D(5.5, -10.0, 1.20, 1.20, height),
+        Box2D(-5.2, 0.0, 1.10, 1.10, height),
+        Box2D(5.8, 10.0, 1.20, 1.20, height),
+        Box2D(-5.8, 20.0, 1.00, 1.00, height),
+    )
+    return Scenario(
+        name="long",
+        map_min=(-10.0, -25.0),
+        map_max=(10.0, 25.0),
+        height=height,
+        flight_z=1.5,
+        # Three separated safe launch pads let the distributed allocation
+        # begin in the south, centre, and north thirds of the long venue.
+        starts=((-6.5, -22.0), (0.0, 0.0), (5.0, 22.0)),
+        obstacles=obstacles,
+    )
+
+
 SCENARIOS: Dict[str, Scenario] = {
-    item.name: item for item in (_small_scene(), _large_scene())
+    item.name: item
+    for item in (_small_scene(), _large_scene(), _long_scene())
 }
 
 
