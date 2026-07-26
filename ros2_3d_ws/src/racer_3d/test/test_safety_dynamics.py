@@ -2,10 +2,12 @@ import numpy as np
 
 from racer_3d.crazyflie import GRAVITY, MASS, velocity_wrench
 from racer_3d.safety import (
+    aabb_obstacle_filter,
     cbf_swarm_filter,
     esdf_obstacle_filter,
     predicted_path_conflict,
 )
+from racer_3d.scenario import Box3D
 
 
 def test_3d_cbf_moves_away_in_vertical_near_miss():
@@ -92,3 +94,21 @@ def test_esdf_filter_accounts_for_rigid_body_stopping_distance():
         current_velocity=(-0.7, 0.0, 0.0),
     )
     assert safe[0] > 0.0
+
+
+def test_high_rate_aabb_filter_brakes_before_floor_and_wall():
+    obstacles = (
+        Box3D((0.0, 0.0, -0.05), (10.0, 10.0, 0.1), "floor"),
+        Box3D((1.05, 0.0, 1.0), (0.1, 10.0, 2.0), "wall"),
+    )
+    safe = aabb_obstacle_filter(
+        preferred=(0.35, 0.0, -0.35),
+        position=(0.60, 0.0, 0.40),
+        obstacles=obstacles,
+        clearance=0.28,
+        speed_limit=0.35,
+        current_velocity=(0.30, 0.0, -0.30),
+    )
+    assert safe[0] < 0.05
+    assert safe[2] > -0.05
+    assert np.linalg.norm(safe) <= 0.35 + 1.0e-9

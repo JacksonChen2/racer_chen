@@ -24,10 +24,10 @@ C++ nodes.
 | Pairwise allocation | `fast_exploration_fsm.cpp`, paper Alg. 2 | Asynchronous ROS topic state, deterministic non-conflicting pair slots and persistent complementary ownership updates | Same decentralized pairwise behavior; transport/scheduling implementation differs |
 | CVRP/coverage path | `fast_exploration_manager.cpp`, LKH3, paper Sect. V | Capacity-balanced two-vehicle open paths; exact Held-Karp subset routes for up to ten cells and bounded fallback above that; HGrid visibility detour costs | Same objective; solver differs from LKH3 |
 | Local path | `path_searching/src/astar2.cpp` | 26-connected `(x,y,z)` A*, unknown-space policy, occupied inflation and strict diagonal corner checks | Same 3-D path-search role |
-| Viewpoint/path hierarchy | paper Sect. VI-B | HGrid route rank guides frontier choice; top viewpoints are ranked by visible unknown gain and travel cost | Same hierarchy, lighter graph implementation |
+| Viewpoint/path hierarchy | paper Sect. VI-B | Connected frontiers are split at active HGrid boundaries; owned region segments are ranked by route order, visible unknown gain and travel cost | Same hierarchy, lighter graph implementation |
 | B-spline trajectory | `bspline`, `bspline_opt`, paper Sect. VI-B3 | Clamped cubic 3-D B-spline, iterative smoothness/ESDF control-point optimization, safe polyline fallback and velocity/acceleration time scaling | Same trajectory representation and constraints; optimizer differs from NLopt |
-| Obstacle avoidance | original ESDF B-spline collision term | ESDF-constrained planning plus execution CBF with measured stopping distance | Equivalent safety purpose with an additional feedback layer |
-| Inter-UAV avoidance | shared B-spline penalty `Jc,q`, paper Eq. 13-14 | time-stamped trajectory conflict yield, 3-D CBF projection and emergency separation | Same decentralized safety purpose; mathematical implementation differs |
+| Obstacle avoidance | original ESDF B-spline collision term | ESDF-constrained planning plus execution CBF with measured stopping distance; deterministic acceptance worlds add a 50 Hz collision-primitive guard | Equivalent safety purpose with an additional feedback layer; the acceptance guard uses simulator collision geometry |
+| Inter-UAV avoidance | shared B-spline penalty `Jc,q`, paper Eq. 13-14 | time-stamped trajectory conflict yield, 3-D CBF projection, emergency separation and a 50 Hz flight-controller CBF | Same decentralized safety purpose; mathematical implementation differs |
 | Vehicle control | original geometric controller on custom quadrotor | 27 g Crazyflie 2.x PhysX rigid body, gravity, rotor mixing, thrust/torque saturation and geometric attitude/velocity controller | Real six-DOF simulated dynamics; not a hardware radio link |
 | Map exchange | original chunk ledger over UDP/LCM | compressed voxel-state broadcasts over ROS 2 topics | Same shared-map outcome; reliability protocol differs |
 | State estimation | Omni-Swarm in real experiments | perfect common Isaac world frame/odometry | Not reproduced; simulation supplies ground truth |
@@ -53,3 +53,9 @@ The formal 120-second Isaac/ROS 2 run is recorded in
 volume coverage, reached 90% in 37.10 simulated seconds, reported zero PhysX
 contacts and maintained 0.639 m minimum inter-UAV distance and 0.153 m minimum
 obstacle clearance.
+
+The large-world regression is recorded in `ISAAC_20X50X3_RESULT.json`. Three
+vehicles explored a 20 m x 50 m x 3 m obstacle field, reached 90% in 402.70
+simulated seconds, achieved 90.337% final free-space coverage and 95.532%
+obstacle-surface recall, and reported zero PhysX contacts. The minimum
+inter-UAV distance was 0.798 m and the minimum obstacle clearance was 0.127 m.

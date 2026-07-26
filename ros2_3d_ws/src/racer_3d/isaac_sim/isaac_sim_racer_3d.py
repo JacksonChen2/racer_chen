@@ -15,6 +15,9 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--duration", type=float, default=120.0)
     parser.add_argument("--drone-count", type=int, default=3)
+    parser.add_argument(
+        "--scenario", default="acceptance_15x9x2"
+    )
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--render-every", type=int, default=5)
     parser.add_argument("--diagnostics", action="store_true")
@@ -86,16 +89,21 @@ from std_msgs.msg import String  # noqa: E402
 from racer_3d.crazyflie import MASS, velocity_wrench  # noqa: E402
 from racer_3d.pointcloud import create_xyzi_cloud  # noqa: E402
 from racer_3d.scenario import (  # noqa: E402
-    DEFAULT_SCENARIO,
     DRONE_RADIUS,
+    get_scenario,
     obstacle_clearance,
     pairwise_distances,
     point_box_signed_clearance,
 )
+from racer_3d.safety import (  # noqa: E402
+    aabb_obstacle_filter,
+    cbf_swarm_filter,
+)
 
 
+SCENARIO = get_scenario(ARGS.scenario)
 if ARGS.starts is None:
-    STARTS = DEFAULT_SCENARIO.starts[:ARGS.drone_count]
+    STARTS = SCENARIO.starts[:ARGS.drone_count]
 else:
     if len(ARGS.starts) != 3 * ARGS.drone_count:
         raise SystemExit(
@@ -233,7 +241,7 @@ def build_world():
         (0.38, 0.31, 0.28),
     )
     if ARGS.scene_usd is None:
-        for index, obstacle in enumerate(DEFAULT_SCENARIO.obstacles):
+        for index, obstacle in enumerate(SCENARIO.obstacles):
             _add_fixed_cube(
                 world,
                 f"/World/Obstacles/{obstacle.name}_{index}",
@@ -290,6 +298,7 @@ class IsaacRacer3DBridge(Node):
         self.contacts = contacts
         self.drone_count = len(bodies)
         self.commands = [np.zeros(3) for _ in bodies]
+        self.applied_commands = [np.zeros(3) for _ in bodies]
         self.yaw_commands = [0.0 for _ in bodies]
         self.yaw_targets = [0.0 for _ in bodies]
         self.positions = [np.zeros(3) for _ in bodies]
@@ -307,6 +316,8 @@ class IsaacRacer3DBridge(Node):
         self.cloud_frames = 0
         self.raw_diagnostics_printed = False
         self.control_steps = 0
+        self.safety_interventions = 0
+        self.mission_complete = False
         qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
         self.odom_publishers = []
         self.cloud_publishers = []
@@ -327,6 +338,12 @@ class IsaacRacer3DBridge(Node):
         self.metrics_publisher = self.create_publisher(
             String, "/racer_3d/sim_metrics", qos
         )
+        self.create_subscription(
+            String,
+            "/racer_3d/mission_complete",
+            self._mission_complete,
+            qos,
+        )
         self._read_physics(count_distance=False)
 
     def _command(self, drone_id: int, message: Twist) -> None:
@@ -335,8 +352,21 @@ class IsaacRacer3DBridge(Node):
         )
         self.yaw_targets[drone_id] = float(message.angular.z)
 
+    def _mission_complete(self, message: String) -> None:
+        self.mission_complete = message.data.strip().lower() == "true"
+
     def apply_motor_wrenches(self) -> None:
         self.control_steps += 1
+        states = []
+        for body in self.bodies:
+            position, orientation = body.get_world_pose()
+            states.append(
+                (
+                    np.asarray(position, dtype=float),
+                    orientation,
+                    np.asarray(body.get_linear_velocity(), dtype=float),
+                )
+            )
         for drone_id, body in enumerate(self.bodies):
             yaw_error = (
                 self.yaw_targets[drone_id]
@@ -346,10 +376,60 @@ class IsaacRacer3DBridge(Node):
             self.yaw_commands[drone_id] += float(
                 np.clip(yaw_error, -0.15 * PHYSICS_DT, 0.15 * PHYSICS_DT)
             )
-            _, orientation = body.get_world_pose()
+            position, orientation, velocity = states[drone_id]
+            applied_command = self.commands[drone_id]
+            if ARGS.scene_usd is None:
+                applied_command = np.asarray(
+                    aabb_obstacle_filter(
+                        applied_command,
+                        position,
+                        SCENARIO.obstacles,
+                        clearance=0.28,
+                        speed_limit=0.35,
+                        current_velocity=velocity,
+                    ),
+                    dtype=float,
+                )
+            applied_command = np.asarray(
+                cbf_swarm_filter(
+                    applied_command,
+                    position,
+                    [
+                        (peer_id, peer_position, peer_velocity)
+                        for peer_id, (
+                            peer_position,
+                            _,
+                            peer_velocity,
+                        ) in enumerate(states)
+                        if peer_id != drone_id
+                    ],
+                    safe_distance=0.55,
+                    speed_limit=0.35,
+                ),
+                dtype=float,
+            )
+            # Pairwise projection can point toward a nearby wall; make the
+            # obstacle barrier the final authority on the combined command.
+            if ARGS.scene_usd is None:
+                applied_command = np.asarray(
+                    aabb_obstacle_filter(
+                        applied_command,
+                        position,
+                        SCENARIO.obstacles,
+                        clearance=0.28,
+                        speed_limit=0.35,
+                        current_velocity=velocity,
+                    ),
+                    dtype=float,
+                )
+            if float(
+                np.linalg.norm(applied_command - self.commands[drone_id])
+            ) > 1.0e-3:
+                self.safety_interventions += 1
+            self.applied_commands[drone_id] = applied_command
             wrench = velocity_wrench(
-                self.commands[drone_id],
-                body.get_linear_velocity(),
+                applied_command,
+                velocity,
                 orientation,
                 body.get_angular_velocity(),
                 self.yaw_commands[drone_id],
@@ -384,8 +464,12 @@ class IsaacRacer3DBridge(Node):
                                 diag_orientation
                             ).tolist(),
                             "velocity": np.asarray(
-                                body.get_linear_velocity()
+                                velocity
                             ).tolist(),
+                            "requested_command": self.commands[
+                                drone_id
+                            ].tolist(),
+                            "applied_command": applied_command.tolist(),
                             "angular_velocity": np.asarray(
                                 body.get_angular_velocity()
                             ).tolist(),
@@ -426,7 +510,7 @@ class IsaacRacer3DBridge(Node):
                 self.min_obstacle_clearance = min(
                     self.min_obstacle_clearance,
                     obstacle_clearance(
-                        position, DEFAULT_SCENARIO.obstacles
+                        position, SCENARIO.obstacles
                     )
                     - DRONE_RADIUS,
                 )
@@ -444,10 +528,10 @@ class IsaacRacer3DBridge(Node):
                         point_box_signed_clearance(
                             self.positions[drone_id], obstacle
                         )
-                        for obstacle in DEFAULT_SCENARIO.obstacles
+                        for obstacle in SCENARIO.obstacles
                     ]
                     nearest_index = int(np.argmin(clearances))
-                    nearest_name = DEFAULT_SCENARIO.obstacles[
+                    nearest_name = SCENARIO.obstacles[
                         nearest_index
                     ].name
                     center_clearance = clearances[nearest_index]
@@ -461,6 +545,9 @@ class IsaacRacer3DBridge(Node):
                             "position": self.positions[drone_id].tolist(),
                             "velocity": self.velocities[drone_id].tolist(),
                             "command": self.commands[drone_id].tolist(),
+                            "applied_command": self.applied_commands[
+                                drone_id
+                            ].tolist(),
                             "force": force,
                             "nearest_obstacle": nearest_name,
                             "center_clearance": center_clearance,
@@ -548,7 +635,7 @@ class IsaacRacer3DBridge(Node):
                     clearances = [
                         abs(
                             obstacle_clearance(
-                                point, DEFAULT_SCENARIO.obstacles
+                                point, SCENARIO.obstacles
                             )
                         )
                         for point in points[::max(1, len(points) // 500)]
@@ -578,7 +665,7 @@ class IsaacRacer3DBridge(Node):
         payload = {
             "backend": "isaac_sim_physx_3d",
             "scenario": (
-                DEFAULT_SCENARIO.name
+                SCENARIO.name
                 if ARGS.scene_usd is None
                 else str(ARGS.scene_usd)
             ),
@@ -597,6 +684,12 @@ class IsaacRacer3DBridge(Node):
                 values.tolist() for values in self.motor_thrusts
             ],
             "point_cloud_frames": self.cloud_frames,
+            "safety_interventions": self.safety_interventions,
+            "low_level_safety": (
+                "AABB stopping-distance velocity barrier"
+                if ARGS.scene_usd is None
+                else "none"
+            ),
         }
         self.metrics_publisher.publish(
             String(data=json.dumps(payload, separators=(",", ":")))
@@ -631,6 +724,8 @@ def main() -> None:
     bridge.last_cloud = -math.inf
     bridge.cloud_frames = 0
     bridge.control_steps = 0
+    bridge.safety_interventions = 0
+    bridge.applied_commands = [np.zeros(3) for _ in bodies]
     bridge.positions = [
         np.asarray(point, dtype=float) for point in STARTS
     ]
@@ -641,20 +736,20 @@ def main() -> None:
     if ARGS.control_probe:
         bridge.commands[0] = np.asarray((0.30, 0.20, 0.10), dtype=float)
         bridge.yaw_targets[0] = 2.0
-    wall_started = time.monotonic()
     frame = 0
     last_metrics = -math.inf
     print(
         f"RACER_3D_ISAAC_READY drones={len(bodies)} "
         f"duration={ARGS.duration:.1f} motion=rotor_wrench "
         "sensor=RotatingLidarPhysX "
-        f"scene={ARGS.scene_usd or DEFAULT_SCENARIO.name}",
+        f"scene={ARGS.scene_usd or SCENARIO.name}",
         flush=True,
     )
     try:
         while (
             simulation_app.is_running()
-            and time.monotonic() - wall_started < ARGS.duration
+            and bridge.elapsed < ARGS.duration
+            and not bridge.mission_complete
         ):
             step_started = time.monotonic()
             rclpy.spin_once(bridge, timeout_sec=0.0)
@@ -691,6 +786,12 @@ def main() -> None:
                         point.tolist() for point in bridge.positions
                     ],
                     "point_cloud_frames": bridge.cloud_frames,
+                    "safety_interventions": bridge.safety_interventions,
+                    "low_level_safety": (
+                        "AABB stopping-distance velocity barrier"
+                        if ARGS.scene_usd is None
+                        else "none"
+                    ),
                 },
                 sort_keys=True,
             ),

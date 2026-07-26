@@ -102,6 +102,71 @@ def esdf_obstacle_filter(
     return limit_norm(result, speed_limit)
 
 
+def aabb_obstacle_filter(
+    preferred: Sequence[float],
+    position: Sequence[float],
+    obstacles: Iterable[object],
+    clearance: float,
+    speed_limit: float,
+    current_velocity: Sequence[float] = (0.0, 0.0, 0.0),
+    alpha: float = 1.2,
+    guaranteed_deceleration: float = 0.7,
+    response_time: float = 0.08,
+    activation_distance: float = 1.0,
+    iterations: int = 4,
+) -> Vector3:
+    """High-rate rigid-body velocity barrier for axis-aligned collision boxes.
+
+    RACER's local trajectory planner runs at a much lower rate than a flight
+    controller.  This projection is intended for that flight-controller layer:
+    it adds stopping distance to the configured body clearance and enforces
+    all nearby collision-shape half-space constraints every physics step.
+    ``obstacles`` need only expose three-element ``minimum`` and ``maximum``
+    properties, so this routine is independent of the acceptance scenario.
+    """
+
+    own = np.asarray(position, dtype=float)
+    velocity = np.asarray(current_velocity, dtype=float)
+    constraints = []
+    for obstacle in obstacles:
+        minimum = np.asarray(obstacle.minimum, dtype=float)
+        maximum = np.asarray(obstacle.maximum, dtype=float)
+        closest = np.clip(own, minimum, maximum)
+        delta = own - closest
+        distance = float(np.linalg.norm(delta))
+        if distance > 1.0e-9:
+            normal = delta / distance
+            signed_distance = distance
+        else:
+            # Inside a box, choose the closest face and point out of it.
+            face_distances = np.concatenate((own - minimum, maximum - own))
+            face = int(np.argmin(face_distances))
+            normal = np.zeros(3)
+            normal[face % 3] = -1.0 if face < 3 else 1.0
+            signed_distance = -float(face_distances[face])
+        if signed_distance > activation_distance:
+            continue
+        approach_speed = max(0.0, -float(np.dot(normal, velocity)))
+        stopping_allowance = (
+            approach_speed * approach_speed
+            / (2.0 * max(0.1, guaranteed_deceleration))
+            + response_time * approach_speed
+        )
+        dynamic_clearance = clearance + stopping_allowance
+        lower_bound = -alpha * (signed_distance - dynamic_clearance)
+        constraints.append((signed_distance, normal, lower_bound))
+
+    result = np.asarray(limit_norm(preferred, speed_limit), dtype=float)
+    constraints.sort(key=lambda item: item[0])
+    for _ in range(iterations):
+        for _, normal, lower_bound in constraints:
+            violation = lower_bound - float(np.dot(normal, result))
+            if violation > 0.0:
+                result += violation * normal
+        result = np.asarray(limit_norm(result, speed_limit), dtype=float)
+    return tuple(float(value) for value in result)
+
+
 def emergency_separation(
     velocity: Sequence[float],
     position: Sequence[float],

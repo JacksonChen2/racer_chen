@@ -8,6 +8,8 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
+from racer_3d.scenario import get_scenario
+
 
 def _setup(context):
     share = Path(get_package_share_directory("racer_3d"))
@@ -16,6 +18,18 @@ def _setup(context):
     drone_count = int(LaunchConfiguration("drone_count").perform(context))
     duration = float(LaunchConfiguration("duration").perform(context))
     result_file = LaunchConfiguration("result_file").perform(context)
+    scenario = get_scenario(
+        LaunchConfiguration("scenario").perform(context)
+    )
+    scenario_parameters = {
+        "scenario_name": scenario.name,
+        "map_origin": list(scenario.map_min),
+        "map_size": list(scenario.map_size),
+        "start_positions": [
+            value for point in scenario.starts for value in point
+        ],
+        "coarse_grid_size": list(scenario.coarse_grid_size),
+    }
     run_monitor = (
         LaunchConfiguration("run_monitor").perform(context).lower()
         in ("1", "true", "yes")
@@ -28,7 +42,11 @@ def _setup(context):
                 executable="racer_3d_mock_sim",
                 name="racer_3d_mock_sim",
                 output="screen",
-                parameters=[config, {"drone_count": drone_count}],
+                parameters=[
+                    config,
+                    scenario_parameters,
+                    {"drone_count": drone_count},
+                ],
             )
         )
     for drone_id in range(drone_count):
@@ -40,6 +58,7 @@ def _setup(context):
                 output="screen",
                 parameters=[
                     config,
+                    scenario_parameters,
                     {"drone_id": drone_id, "drone_count": drone_count},
                 ],
             )
@@ -53,6 +72,7 @@ def _setup(context):
                 output="screen",
                 parameters=[
                     config,
+                    scenario_parameters,
                     {
                         "drone_count": drone_count,
                         "duration": duration,
@@ -70,6 +90,9 @@ def generate_launch_description():
         [
             DeclareLaunchArgument("backend", default_value="mock"),
             DeclareLaunchArgument("drone_count", default_value="3"),
+            DeclareLaunchArgument(
+                "scenario", default_value="acceptance_15x9x2"
+            ),
             DeclareLaunchArgument("duration", default_value="120.0"),
             DeclareLaunchArgument("run_monitor", default_value="true"),
             DeclareLaunchArgument(

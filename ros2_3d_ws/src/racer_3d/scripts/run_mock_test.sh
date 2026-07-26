@@ -2,7 +2,9 @@
 set -eo pipefail
 
 workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-result_file="${1:-${workspace_dir}/src/racer_3d/test_results/MOCK_15X9X2_RESULT.json}"
+scenario="${RACER_3D_SCENARIO:-acceptance_15x9x2}"
+result_name="MOCK_${scenario#acceptance_}_RESULT.json"
+result_file="${1:-${workspace_dir}/src/racer_3d/test_results/${result_name^^}}"
 duration="${RACER_3D_DURATION:-120}"
 duration_seconds="${duration%%.*}"
 
@@ -17,6 +19,7 @@ fi
 
 ros2 launch racer_3d swarm_3d.launch.py \
   backend:=mock \
+  scenario:="${scenario}" \
   drone_count:=3 \
   duration:="${duration}" \
   result_file:="${result_file}" &

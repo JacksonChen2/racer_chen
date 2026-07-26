@@ -26,7 +26,7 @@ from .safety import (
     limit_norm,
     predicted_path_conflict,
 )
-from .scenario import DEFAULT_SCENARIO
+from .scenario import DEFAULT_SCENARIO, get_scenario
 from .voxel_map import OCCUPIED, VoxelMap
 
 
@@ -38,7 +38,10 @@ class Racer3DAgent(Node):
 
     def __init__(self) -> None:
         super().__init__("racer_3d_agent")
-        scenario = DEFAULT_SCENARIO
+        self.declare_parameter("scenario_name", DEFAULT_SCENARIO.name)
+        scenario = get_scenario(
+            str(self.get_parameter("scenario_name").value)
+        )
         self.declare_parameter("drone_id", 0)
         self.declare_parameter("drone_count", 3)
         self.declare_parameter(
@@ -59,7 +62,9 @@ class Racer3DAgent(Node):
         self.declare_parameter("pairwise_period", 3.0)
         self.declare_parameter("peer_timeout", 3.0)
         self.declare_parameter("completion_coverage", 0.90)
-        self.declare_parameter("coarse_grid_size", [5.0, 4.5, 2.0])
+        self.declare_parameter(
+            "coarse_grid_size", list(scenario.coarse_grid_size)
+        )
         self.declare_parameter("hgrid_levels", 2)
 
         self.drone_id = int(self.get_parameter("drone_id").value)

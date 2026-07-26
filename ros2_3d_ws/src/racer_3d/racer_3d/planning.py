@@ -391,8 +391,32 @@ def plan_exploration(
         return None
     route_rank = {cell_id: index for index, cell_id in enumerate(coverage_route)}
     owned = set(owned_cells)
+    # A single connected frontier can span most of a large room.  Treating it
+    # as one auction item makes every vehicle chase the same centroid and
+    # reduces HGrid ownership to a weak score bonus.  Split each connected
+    # frontier at active HGrid boundaries so that region allocation remains
+    # effective in long three-dimensional environments.
+    segments = []
+    for cluster in clusters:
+        grouped: Dict[Optional[str], List[GridIndex3]] = {}
+        for cell in cluster:
+            hcell = hgrid.containing(voxel_map.grid_to_world(cell))
+            grouped.setdefault(hcell.id if hcell is not None else None, []).append(
+                cell
+            )
+        retained = [values for values in grouped.values() if len(values) >= 4]
+        segments.extend(retained if retained else [cluster])
+    owned_segments = []
+    for segment in segments:
+        centroid = np.mean(
+            [voxel_map.grid_to_world(cell) for cell in segment], axis=0
+        )
+        hcell = hgrid.containing(centroid)
+        if hcell is not None and hcell.id in owned:
+            owned_segments.append(segment)
+    candidate_segments = owned_segments if owned_segments else segments
     best = None
-    for cluster in sorted(clusters, key=len, reverse=True)[:6]:
+    for cluster in sorted(candidate_segments, key=len, reverse=True)[:12]:
         centroid = tuple(
             float(value)
             for value in np.mean(
@@ -400,12 +424,11 @@ def plan_exploration(
             )
         )
         hcell = hgrid.containing(centroid)
-        owner_bonus = 0.0
-        if owned:
-            if hcell is None or hcell.id not in owned:
-                owner_bonus = -40.0
-            else:
-                owner_bonus = 12.0 - route_rank.get(hcell.id, 8)
+        owner_bonus = (
+            12.0 - route_rank.get(hcell.id, 8)
+            if hcell is not None and hcell.id in owned
+            else 0.0
+        )
         candidates = _viewpoint_candidates(
             voxel_map, cluster, blocked, search_clearance
         )

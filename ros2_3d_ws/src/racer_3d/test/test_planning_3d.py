@@ -5,6 +5,11 @@ from racer_3d.planning import (
     minimum_time_bspline_trajectory,
     shorten_path3d,
 )
+from racer_3d.scenario import (
+    DRONE_RADIUS,
+    get_scenario,
+    obstacle_clearance,
+)
 from racer_3d.voxel_map import FREE, OCCUPIED, VoxelMap
 
 
@@ -39,3 +44,28 @@ def test_bspline_is_xyz_and_clear():
     assert len(trajectory) > 2
     assert minimum >= 0.25 - 1.0e-6
     assert any(abs(sample[3] - trajectory[0][3]) > 0.1 for sample in trajectory)
+
+
+def test_large_acceptance_scene_geometry_and_starts():
+    scenario = get_scenario("acceptance_20x50x3")
+    assert scenario.map_size == (20.0, 50.0, 3.0)
+    assert scenario.coarse_grid_size == (5.0, 10.0, 3.0)
+    assert len(scenario.starts) == 3
+    assert all(
+        obstacle_clearance(start, scenario.obstacles) > DRONE_RADIUS
+        for start in scenario.starts
+    )
+    assert any(
+        obstacle.name == "south_low_overflight_wall"
+        and obstacle.minimum[0] <= -10.0
+        and obstacle.maximum[0] >= 10.0
+        and obstacle.maximum[2] < scenario.map_max[2]
+        for obstacle in scenario.obstacles
+    )
+    assert any(
+        obstacle.name == "south_high_underflight_wall"
+        and obstacle.minimum[2] > scenario.map_min[2]
+        and obstacle.minimum[0] <= -10.0
+        and obstacle.maximum[0] >= 10.0
+        for obstacle in scenario.obstacles
+    )

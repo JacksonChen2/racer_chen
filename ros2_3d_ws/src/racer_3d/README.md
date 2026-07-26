@@ -24,9 +24,11 @@ planar compatibility package in `RACER/ros2_ws`.
   recall, flight distance, inter-UAV distance, obstacle clearance and raw
   PhysX contact events.
 
-The deterministic acceptance world is 15 m × 9 m × 2 m. It includes a low
-partition that must be crossed above and a suspended partition that must be
-crossed below, so a planar solution cannot pass the test.
+Two deterministic acceptance worlds are included. The 15 m × 9 m × 2 m
+baseline contains a low partition and a suspended partition. The
+20 m × 50 m × 3 m long-range world adds full-width overflight/underflight
+walls, a central gate, mixed-height barriers, columns and hanging/low blocks.
+Both require genuine vertical motion, so a planar solution cannot pass.
 
 ## Tested platform
 
@@ -70,6 +72,20 @@ RACER_3D_DURATION=120 ROS_DOMAIN_ID=63 \
 The script exits nonzero unless all acceptance thresholds pass, including zero
 reported contacts and zero collision events.
 
+Large-scene three-Crazyflie Isaac test:
+
+```bash
+RACER_3D_SCENARIO=acceptance_20x50x3 \
+RACER_3D_DURATION=600 ROS_DOMAIN_ID=77 \
+  src/racer_3d/scripts/run_isaac_test.sh \
+  src/racer_3d/test_results/ISAAC_20X50X3_RESULT.json
+```
+
+`RACER_3D_DURATION` is simulated mission time. A successful test stops as soon
+as the truth evaluator first reaches 90% free-space volume coverage. The
+recorded large-scene pass reached 90% in 402.70 simulated seconds with zero
+PhysX contacts.
+
 ## Using a custom Isaac USD scene
 
 The USD must contain collision-enabled geometry. First update
@@ -103,6 +119,14 @@ env -u AMENT_PREFIX_PATH -u CMAKE_PREFIX_PATH -u COLCON_PREFIX_PATH \
 The supplied truth-based monitor is specific to the deterministic acceptance
 world. A custom scene should provide its own ground-truth evaluator or use
 PhysX contact events and the published map topics.
+
+The deterministic worlds also expose their AABB collision primitives to the
+50 Hz Isaac flight-controller safety barrier. This is the final
+stopping-distance guard used by their formal contact test. It is not available
+for an arbitrary `--scene-usd`; custom scenes retain the agent's point-cloud
+occupancy/ESDF planning and execution barriers, and should add a collision
+geometry or local-sensor guard at the chosen flight-controller interface when
+the same formal no-contact guarantee is required.
 
 ## ROS interfaces
 

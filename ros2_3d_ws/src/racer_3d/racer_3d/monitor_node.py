@@ -14,14 +14,23 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 
-from .scenario import DEFAULT_SCENARIO, DRONE_RADIUS, obstacle_clearance
+from .scenario import (
+    DEFAULT_SCENARIO,
+    DRONE_RADIUS,
+    get_scenario,
+    obstacle_clearance,
+)
 from .voxel_map import FREE, OCCUPIED, UNKNOWN, VoxelMap
 
 
 class Racer3DMonitor(Node):
     def __init__(self) -> None:
         super().__init__("racer_3d_monitor")
-        scenario = DEFAULT_SCENARIO
+        self.declare_parameter("scenario_name", DEFAULT_SCENARIO.name)
+        scenario = get_scenario(
+            str(self.get_parameter("scenario_name").value)
+        )
+        self.scenario = scenario
         self.declare_parameter("drone_count", 3)
         self.declare_parameter("duration", 120.0)
         self.declare_parameter("result_file", "/tmp/racer_3d_result.json")
@@ -88,6 +97,9 @@ class Racer3DMonitor(Node):
         self.status: Dict[int, dict] = {}
         self.finished = False
         qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
+        self.completion_publisher = self.create_publisher(
+            String, "/racer_3d/mission_complete", qos
+        )
         self.create_subscription(
             String, "/racer_3d/map_share", self._map_callback, qos
         )
@@ -174,7 +186,7 @@ class Racer3DMonitor(Node):
         self.positions[drone_id] = position
         self.min_obstacle_clearance = min(
             self.min_obstacle_clearance,
-            obstacle_clearance(position, DEFAULT_SCENARIO.obstacles)
+            obstacle_clearance(position, self.scenario.obstacles)
             - DRONE_RADIUS,
         )
         values = list(self.positions.values())
@@ -235,7 +247,17 @@ class Racer3DMonitor(Node):
                 f"{self.completion_time:.2f}s simulated "
                 f"({elapsed:.2f}s wall)"
             )
-        if elapsed >= self.duration:
+            self.completion_publisher.publish(String(data="true"))
+        deadline_elapsed = (
+            float(self.sim_metrics.get("elapsed", 0.0))
+            if self.require_physics_backend and self.backend_seen
+            else elapsed
+        )
+        completion_settled = (
+            self.completion_wall_time is not None
+            and elapsed >= self.completion_wall_time + 2.0
+        )
+        if completion_settled or deadline_elapsed >= self.duration:
             self._finish(elapsed, quality)
 
     def _finish(self, elapsed: float, quality: dict) -> None:
@@ -279,8 +301,8 @@ class Racer3DMonitor(Node):
         result = {
             "passed": passed,
             "backend": backend,
-            "scenario": DEFAULT_SCENARIO.name,
-            "dimensions_m": list(DEFAULT_SCENARIO.map_size),
+            "scenario": self.scenario.name,
+            "dimensions_m": list(self.scenario.map_size),
             "drone_count": self.drone_count,
             "elapsed_s": mission_elapsed,
             "wall_elapsed_s": elapsed,
@@ -291,6 +313,12 @@ class Racer3DMonitor(Node):
             **quality,
             "collision_events": collisions,
             "physics_contact_events": physics_contacts,
+            "safety_interventions": int(
+                self.sim_metrics.get("safety_interventions", 0)
+            ),
+            "low_level_safety": self.sim_metrics.get(
+                "low_level_safety", "not_reported"
+            ),
             "minimum_inter_drone_m": min_inter,
             "minimum_obstacle_clearance_m": min_obstacle,
             "all_agents_reporting": len(self.status) == self.drone_count,

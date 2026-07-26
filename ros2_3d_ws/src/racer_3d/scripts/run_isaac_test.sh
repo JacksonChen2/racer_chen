@@ -5,10 +5,12 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 package_dir="$(cd "${script_dir}/.." && pwd)"
 workspace_dir="$(cd "${package_dir}/../.." && pwd)"
 isaac_root="${ISAAC_SIM_ROOT:-/home/jackson/isaacsim}"
-result_file="${1:-${package_dir}/test_results/ISAAC_15X9X2_RESULT.json}"
+scenario="${RACER_3D_SCENARIO:-acceptance_15x9x2}"
+result_name="ISAAC_${scenario#acceptance_}_RESULT.json"
+result_file="${1:-${package_dir}/test_results/${result_name^^}}"
 duration="${RACER_3D_DURATION:-120}"
 duration_seconds="${duration%%.*}"
-monitor_duration="$((duration_seconds + 15))"
+timeout_seconds="$((duration_seconds * 2 + 180))"
 drone_count="${RACER_3D_DRONE_COUNT:-3}"
 ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-63}"
 export ROS_DOMAIN_ID
@@ -26,8 +28,9 @@ fi
 
 ros2 launch racer_3d swarm_3d.launch.py \
   backend:=isaac \
+  scenario:="${scenario}" \
   drone_count:="${drone_count}" \
-  duration:="${monitor_duration}" \
+  duration:="${duration}" \
   result_file:="${result_file}" &
 launch_pid=$!
 cleanup() {
@@ -46,10 +49,11 @@ env \
   ROS_DISTRO=humble \
   RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
   LD_LIBRARY_PATH="${isaac_root}/exts/isaacsim.ros2.bridge/humble/lib" \
-  timeout "$((duration_seconds + 120))" \
+  timeout "${timeout_seconds}" \
   "${isaac_root}/python.sh" \
   "${package_dir}/isaac_sim/isaac_sim_racer_3d.py" \
   --headless \
+  --scenario "${scenario}" \
   --duration "${duration}" \
   --drone-count "${drone_count}" \
   --diagnostics

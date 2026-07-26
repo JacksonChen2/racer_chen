@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 import math
-from typing import Iterable, Sequence, Tuple
+from typing import Dict, Iterable, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -44,6 +44,7 @@ class Scenario3D:
     map_max: Point3
     starts: Tuple[Point3, ...]
     obstacles: Tuple[Box3D, ...]
+    coarse_grid_size: Point3 = (5.0, 4.5, 2.0)
 
     @property
     def map_size(self) -> Point3:
@@ -98,7 +99,70 @@ def acceptance_scene() -> Scenario3D:
     )
 
 
+def large_acceptance_scene() -> Scenario3D:
+    """20 x 50 x 3 m long-range scene with height-dependent passages."""
+
+    height = 3.0
+    obstacles = _room_boundaries(10.0, 25.0, height) + (
+        # Full-width barriers require genuinely vertical route choices.
+        Box3D(
+            (0.0, -15.0, 0.65),
+            (20.0, 0.45, 1.30),
+            "south_low_overflight_wall",
+        ),
+        Box3D(
+            (0.0, -5.0, 2.20),
+            (20.0, 0.45, 1.60),
+            "south_high_underflight_wall",
+        ),
+        # A conventional narrow central gate.
+        Box3D((-5.5, 5.0, 1.50), (9.0, 0.45, 3.0), "center_gate_left"),
+        Box3D((5.5, 5.0, 1.50), (9.0, 0.45, 3.0), "center_gate_right"),
+        # The north barrier offers a high route on the west and a low route
+        # on the east, encouraging the fleet to use distinct 3-D passages.
+        Box3D((-5.0, 15.0, 0.70), (10.0, 0.45, 1.40), "north_low_half"),
+        Box3D((5.0, 15.0, 2.25), (10.0, 0.45, 1.50), "north_high_half"),
+        # Distributed full-height and partial-height clutter.
+        Box3D((-6.2, -20.0, 1.50), (1.20, 1.20, 3.0), "column_south_west"),
+        Box3D((6.0, -10.0, 1.50), (1.10, 1.10, 3.0), "column_south_east"),
+        Box3D((-5.8, 0.0, 1.50), (1.20, 1.20, 3.0), "column_center_west"),
+        Box3D((5.8, 10.0, 1.50), (1.20, 1.20, 3.0), "column_north_east"),
+        Box3D((-6.0, 20.0, 1.50), (1.10, 1.10, 3.0), "column_north_west"),
+        Box3D((3.0, -20.0, 0.60), (1.8, 1.6, 1.20), "south_low_block"),
+        Box3D((-2.5, -10.0, 2.20), (1.8, 1.6, 1.60), "south_hanging_block"),
+        Box3D((3.0, 0.0, 0.75), (1.8, 1.8, 1.50), "center_low_block"),
+        Box3D((-3.0, 10.0, 2.15), (1.8, 1.8, 1.70), "north_hanging_block"),
+        Box3D((3.5, 21.0, 0.70), (2.0, 1.6, 1.40), "north_low_block"),
+    )
+    return Scenario3D(
+        name="acceptance_20x50x3",
+        map_min=(-10.0, -25.0, 0.0),
+        map_max=(10.0, 25.0, 3.0),
+        starts=(
+            (-6.0, -23.0, 0.60),
+            (0.0, -23.0, 1.50),
+            (6.0, -23.0, 2.40),
+        ),
+        obstacles=obstacles,
+        coarse_grid_size=(5.0, 10.0, 3.0),
+    )
+
+
 DEFAULT_SCENARIO = acceptance_scene()
+LARGE_SCENARIO = large_acceptance_scene()
+SCENARIOS: Dict[str, Scenario3D] = {
+    DEFAULT_SCENARIO.name: DEFAULT_SCENARIO,
+    LARGE_SCENARIO.name: LARGE_SCENARIO,
+}
+
+
+def get_scenario(name: str) -> Scenario3D:
+    try:
+        return SCENARIOS[str(name)]
+    except KeyError as error:
+        raise ValueError(
+            f"unknown scenario {name!r}; choose one of {sorted(SCENARIOS)}"
+        ) from error
 
 
 def point_box_signed_clearance(point: Sequence[float], box: Box3D) -> float:
@@ -151,10 +215,12 @@ def simulate_point_cloud(
     elevation_count: int = 15,
     vertical_fov: float = math.radians(100.0),
     maximum_range: float = 7.0,
-    obstacles: Sequence[Box3D] = DEFAULT_SCENARIO.obstacles,
+    obstacles: Optional[Sequence[Box3D]] = None,
 ) -> np.ndarray:
     """Ray-cast a dense local-frame 3-D cloud for the ROS-only backend."""
 
+    if obstacles is None:
+        obstacles = DEFAULT_SCENARIO.obstacles
     points = []
     for elevation in np.linspace(-0.5 * vertical_fov, 0.5 * vertical_fov,
                                  elevation_count):

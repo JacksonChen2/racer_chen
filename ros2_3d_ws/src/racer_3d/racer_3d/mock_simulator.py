@@ -17,6 +17,7 @@ from .pointcloud import create_xyzi_cloud
 from .scenario import (
     DEFAULT_SCENARIO,
     DRONE_RADIUS,
+    get_scenario,
     obstacle_clearance,
     pairwise_distances,
     simulate_point_cloud,
@@ -28,6 +29,7 @@ class Racer3DMockSimulator(Node):
 
     def __init__(self) -> None:
         super().__init__("racer_3d_mock_sim")
+        self.declare_parameter("scenario_name", DEFAULT_SCENARIO.name)
         self.declare_parameter("drone_count", 3)
         self.declare_parameter("lidar_range", 7.0)
         self.declare_parameter("max_speed", 0.35)
@@ -38,7 +40,10 @@ class Racer3DMockSimulator(Node):
         self.max_acceleration = float(
             self.get_parameter("max_acceleration").value
         )
-        starts = list(DEFAULT_SCENARIO.starts[:self.drone_count])
+        self.scenario = get_scenario(
+            str(self.get_parameter("scenario_name").value)
+        )
+        starts = list(self.scenario.starts[:self.drone_count])
         self.positions = [np.asarray(point, dtype=float) for point in starts]
         self.velocities = [np.zeros(3) for _ in starts]
         self.commands = [np.zeros(3) for _ in starts]
@@ -98,7 +103,7 @@ class Racer3DMockSimulator(Node):
             velocity = self.velocities[drone_id] + delta
             proposed = self.positions[drone_id] + velocity * dt
             clearance = obstacle_clearance(
-                proposed, DEFAULT_SCENARIO.obstacles
+                proposed, self.scenario.obstacles
             )
             contact = clearance <= DRONE_RADIUS
             if contact and not self.contact_active[drone_id]:
@@ -130,7 +135,7 @@ class Racer3DMockSimulator(Node):
         for position in self.positions:
             self.min_obstacle_clearance = min(
                 self.min_obstacle_clearance,
-                obstacle_clearance(position, DEFAULT_SCENARIO.obstacles)
+                obstacle_clearance(position, self.scenario.obstacles)
                 - DRONE_RADIUS,
             )
         stamp = self.get_clock().now().to_msg()
@@ -170,6 +175,7 @@ class Racer3DMockSimulator(Node):
                 azimuth_count=120,
                 elevation_count=21,
                 maximum_range=self.maximum_range,
+                obstacles=self.scenario.obstacles,
             )
             ranges = np.linalg.norm(local, axis=1)
             points_world = local + position
@@ -184,6 +190,7 @@ class Racer3DMockSimulator(Node):
                 data=json.dumps(
                     {
                         "backend": "ros_3d_mock",
+                        "scenario": self.scenario.name,
                         "elapsed": self.elapsed,
                         "collision_events": self.collision_events,
                         "physics_contact_events": self.collision_events,
