@@ -98,6 +98,8 @@ from racer_3d.scenario import (  # noqa: E402
 from racer_3d.safety import (  # noqa: E402
     aabb_obstacle_filter,
     cbf_swarm_filter,
+    flight_volume_filter,
+    pointcloud_obstacle_filter,
 )
 
 
@@ -117,6 +119,7 @@ else:
 
 PHYSICS_DT = 0.02
 LIDAR_PERIOD = 0.50
+SAFETY_LIDAR_PERIOD = 0.10
 BODY_SIZE = (0.16, 0.16, 0.06)
 LIDAR_TRANSLATION = np.asarray((0.0, 0.0, 0.075))
 ISAAC_SIM_ROOT = Path(
@@ -127,6 +130,41 @@ CRAZYFLIE_ASSET = ISAAC_SIM_ROOT / (
     "omni.warp.core-1.8.2+lx64/warp/examples/assets/crazyflie.usd"
 )
 USE_REFERENCE_VISUAL = True
+
+
+def _low_level_safety_description() -> str:
+    if ARGS.scene_usd is None:
+        return "AABB stopping-distance velocity barrier"
+    if SCENARIO.safety_min is not None and SCENARIO.safety_max is not None:
+        return "lidar-point plus flight-volume stopping-distance barriers"
+    return "lidar-point stopping-distance velocity barrier"
+
+
+def _external_obstacle_filter(
+    preferred: Sequence[float],
+    position: Sequence[float],
+    points_world: Sequence[Sequence[float]],
+    current_velocity: Sequence[float],
+) -> np.ndarray:
+    result = pointcloud_obstacle_filter(
+        preferred,
+        position,
+        points_world,
+        clearance=0.30,
+        speed_limit=0.35,
+        current_velocity=current_velocity,
+    )
+    if SCENARIO.safety_min is not None and SCENARIO.safety_max is not None:
+        result = flight_volume_filter(
+            result,
+            position,
+            SCENARIO.safety_min,
+            SCENARIO.safety_max,
+            clearance=0.32,
+            speed_limit=0.35,
+            current_velocity=current_velocity,
+        )
+    return np.asarray(result, dtype=float)
 
 
 def _backend_array_to_numpy(value) -> np.ndarray:
@@ -299,6 +337,7 @@ class IsaacRacer3DBridge(Node):
         self.drone_count = len(bodies)
         self.commands = [np.zeros(3) for _ in bodies]
         self.applied_commands = [np.zeros(3) for _ in bodies]
+        self.safety_points = [np.empty((0, 3), dtype=float) for _ in bodies]
         self.yaw_commands = [0.0 for _ in bodies]
         self.yaw_targets = [0.0 for _ in bodies]
         self.positions = [np.zeros(3) for _ in bodies]
@@ -308,6 +347,7 @@ class IsaacRacer3DBridge(Node):
         self.motor_thrusts = [np.zeros(4) for _ in bodies]
         self.elapsed = 0.0
         self.last_cloud = -math.inf
+        self.last_safety_cloud = -math.inf
         self.collision_events = 0
         self.contact_active = [False for _ in bodies]
         self.max_contact_force = 0.0
@@ -390,6 +430,13 @@ class IsaacRacer3DBridge(Node):
                     ),
                     dtype=float,
                 )
+            else:
+                applied_command = _external_obstacle_filter(
+                    applied_command,
+                    position,
+                    self.safety_points[drone_id],
+                    velocity,
+                )
             applied_command = np.asarray(
                 cbf_swarm_filter(
                     applied_command,
@@ -421,6 +468,13 @@ class IsaacRacer3DBridge(Node):
                         current_velocity=velocity,
                     ),
                     dtype=float,
+                )
+            else:
+                applied_command = _external_obstacle_filter(
+                    applied_command,
+                    position,
+                    self.safety_points[drone_id],
+                    velocity,
                 )
             if float(
                 np.linalg.norm(applied_command - self.commands[drone_id])
@@ -514,6 +568,20 @@ class IsaacRacer3DBridge(Node):
                     )
                     - DRONE_RADIUS,
                 )
+        else:
+            for position, points in zip(
+                self.positions, self.safety_points
+            ):
+                if len(points):
+                    self.min_obstacle_clearance = min(
+                        self.min_obstacle_clearance,
+                        float(
+                            np.min(
+                                np.linalg.norm(points - position, axis=1)
+                            )
+                        )
+                        - DRONE_RADIUS,
+                    )
         for drone_id, sensor in enumerate(self.contacts):
             frame = sensor.get_current_frame()
             force = float(frame.get("force", 0.0))
@@ -563,6 +631,12 @@ class IsaacRacer3DBridge(Node):
     def step_observations(self) -> None:
         self.elapsed += PHYSICS_DT
         self._read_physics()
+        if (
+            self.elapsed - self.last_safety_cloud
+            >= SAFETY_LIDAR_PERIOD - 1.0e-9
+        ):
+            self.last_safety_cloud = self.elapsed
+            self._refresh_safety_points()
         self._update_metrics()
         stamp = self.get_clock().now().to_msg()
         self._publish_odometry(stamp)
@@ -615,6 +689,25 @@ class IsaacRacer3DBridge(Node):
         world = values @ rotation.T + sensor_origin
         return world.astype(np.float32), ranges < 6.97
 
+    def _refresh_safety_points(self) -> None:
+        """Refresh local collision returns independently of ROS map traffic."""
+
+        for drone_id, (body, lidar) in enumerate(
+            zip(self.bodies, self.lidars)
+        ):
+            raw = lidar.get_current_frame().get("point_cloud")
+            if raw is None:
+                continue
+            raw = _backend_array_to_numpy(raw)
+            if raw.size < 12:
+                continue
+            position, orientation = body.get_world_pose()
+            points, hit = self._world_points(raw, position, orientation)
+            if len(points) >= 12:
+                self.safety_points[drone_id] = np.asarray(
+                    points[hit], dtype=float
+                )
+
     def _publish_clouds(self, stamp) -> None:
         for drone_id, (body, lidar) in enumerate(
             zip(self.bodies, self.lidars)
@@ -629,6 +722,9 @@ class IsaacRacer3DBridge(Node):
             points, hit = self._world_points(raw, position, orientation)
             if len(points) < 12:
                 continue
+            self.safety_points[drone_id] = np.asarray(
+                points[hit], dtype=float
+            )
             if ARGS.diagnostics and not self.raw_diagnostics_printed:
                 median_error = None
                 if ARGS.scene_usd is None:
@@ -664,10 +760,9 @@ class IsaacRacer3DBridge(Node):
     def publish_metrics(self) -> None:
         payload = {
             "backend": "isaac_sim_physx_3d",
-            "scenario": (
-                SCENARIO.name
-                if ARGS.scene_usd is None
-                else str(ARGS.scene_usd)
+            "scenario": SCENARIO.name,
+            "scene_usd": (
+                None if ARGS.scene_usd is None else str(ARGS.scene_usd)
             ),
             "vehicle_model": "Crazyflie 2.x 27g six-DOF rigid body",
             "motion_source": "local rotor thrust and attitude torque",
@@ -684,12 +779,9 @@ class IsaacRacer3DBridge(Node):
                 values.tolist() for values in self.motor_thrusts
             ],
             "point_cloud_frames": self.cloud_frames,
+            "safety_point_refresh_hz": 1.0 / SAFETY_LIDAR_PERIOD,
             "safety_interventions": self.safety_interventions,
-            "low_level_safety": (
-                "AABB stopping-distance velocity barrier"
-                if ARGS.scene_usd is None
-                else "none"
-            ),
+            "low_level_safety": _low_level_safety_description(),
         }
         self.metrics_publisher.publish(
             String(data=json.dumps(payload, separators=(",", ":")))
@@ -722,6 +814,7 @@ def main() -> None:
     bridge.max_contact_force = 0.0
     bridge.elapsed = 0.0
     bridge.last_cloud = -math.inf
+    bridge.last_safety_cloud = -math.inf
     bridge.cloud_frames = 0
     bridge.control_steps = 0
     bridge.safety_interventions = 0
@@ -786,12 +879,11 @@ def main() -> None:
                         point.tolist() for point in bridge.positions
                     ],
                     "point_cloud_frames": bridge.cloud_frames,
-                    "safety_interventions": bridge.safety_interventions,
-                    "low_level_safety": (
-                        "AABB stopping-distance velocity barrier"
-                        if ARGS.scene_usd is None
-                        else "none"
+                    "safety_point_refresh_hz": (
+                        1.0 / SAFETY_LIDAR_PERIOD
                     ),
+                    "safety_interventions": bridge.safety_interventions,
+                    "low_level_safety": _low_level_safety_description(),
                 },
                 sort_keys=True,
             ),

@@ -6,6 +6,18 @@ package_dir="$(cd "${script_dir}/.." && pwd)"
 workspace_dir="$(cd "${package_dir}/../.." && pwd)"
 isaac_root="${ISAAC_SIM_ROOT:-/home/jackson/isaacsim}"
 scenario="${RACER_3D_SCENARIO:-acceptance_15x9x2}"
+scene_usd="${RACER_3D_SCENE_USD:-}"
+if [[ -z "${scene_usd}" && "${scenario}" == "warehouse_simple" ]]; then
+  scene_usd="${workspace_dir}/warehouse_simple.usd"
+fi
+scene_arguments=()
+if [[ -n "${scene_usd}" ]]; then
+  if [[ ! -f "${scene_usd}" ]]; then
+    printf 'External USD does not exist: %s\n' "${scene_usd}" >&2
+    exit 2
+  fi
+  scene_arguments=(--scene-usd "${scene_usd}")
+fi
 result_name="ISAAC_${scenario#acceptance_}_RESULT.json"
 result_file="${1:-${package_dir}/test_results/${result_name^^}}"
 duration="${RACER_3D_DURATION:-120}"
@@ -54,6 +66,7 @@ env \
   "${package_dir}/isaac_sim/isaac_sim_racer_3d.py" \
   --headless \
   --scenario "${scenario}" \
+  "${scene_arguments[@]}" \
   --duration "${duration}" \
   --drone-count "${drone_count}" \
   --diagnostics

@@ -483,7 +483,11 @@ class Racer3DAgent(Node):
                 self.current_plan = plan
                 self.plan_started = self._now()
                 self._publish_path(plan)
-            elif self.map.coverage() > 0.75:
+            else:
+                # The previous plan is already expired, reached, outside the
+                # map, or invalidated by new occupancy. Retaining it after a
+                # failed replan can leave a vehicle commanding an unreachable
+                # old endpoint indefinitely.
                 self.current_plan = None
         self.status_publisher.publish(
             String(

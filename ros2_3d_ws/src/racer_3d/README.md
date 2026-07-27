@@ -29,6 +29,9 @@ baseline contains a low partition and a suspended partition. The
 20 m × 50 m × 3 m long-range world adds full-width overflight/underflight
 walls, a central gate, mixed-height barriers, columns and hanging/low blocks.
 Both require genuine vertical motion, so a planar solution cannot pass.
+The supplied `warehouse_simple.usd` is also registered as an external-scene
+test profile with measured flight bounds and three collision-free launch
+poses.
 
 ## Tested platform
 
@@ -86,12 +89,27 @@ as the truth evaluator first reaches 90% free-space volume coverage. The
 recorded large-scene pass reached 90% in 402.70 simulated seconds with zero
 PhysX contacts.
 
+Supplied Warehouse test:
+
+```bash
+RACER_3D_SCENARIO=warehouse_simple \
+RACER_3D_DURATION=900 ROS_DOMAIN_ID=53 \
+  src/racer_3d/scripts/run_isaac_test.sh \
+  src/racer_3d/test_results/ISAAC_WAREHOUSE_SIMPLE_RESULT.json
+```
+
+The recorded Warehouse pass reached 90.0025% bounded observed-volume coverage
+in 842.62 simulated seconds with three vehicles and zero PhysX contacts.
+
 ## Using a custom Isaac USD scene
 
-The USD must contain collision-enabled geometry. First update
-`config/racer_3d.yaml` so `map_origin`, `map_size` and `start_positions`
-describe the new world, then rebuild. Launch the ROS agents without the
-acceptance monitor:
+The USD must contain collision-enabled geometry. Add a profile to
+`racer_3d/scenario.py` so its map bounds, launch positions, HGrid scale and
+configured safety bounds describe the new world, then rebuild. Use
+`isaac_sim/audit_usd_scene.py` to check dependencies, collision prims, world
+bounds and candidate launch poses before flight.
+
+Launch the ROS agents without the acceptance monitor:
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -116,17 +134,18 @@ env -u AMENT_PREFIX_PATH -u CMAKE_PREFIX_PATH -u COLCON_PREFIX_PATH \
   --starts -6.4 -3.2 0.45 -6.4 0.0 1.0 -6.4 3.2 1.55
 ```
 
-The supplied truth-based monitor is specific to the deterministic acceptance
-world. A custom scene should provide its own ground-truth evaluator or use
-PhysX contact events and the published map topics.
+For a custom mesh profile, use `truth_mode="observed_volume"` unless an
+independent ground-truth voxel map is available. This measures bounded known
+volume and PhysX safety but intentionally leaves free/occupied accuracy and
+surface-recall fields unset.
 
 The deterministic worlds also expose their AABB collision primitives to the
 50 Hz Isaac flight-controller safety barrier. This is the final
-stopping-distance guard used by their formal contact test. It is not available
-for an arbitrary `--scene-usd`; custom scenes retain the agent's point-cloud
-occupancy/ESDF planning and execution barriers, and should add a collision
-geometry or local-sensor guard at the chosen flight-controller interface when
-the same formal no-contact guarantee is required.
+stopping-distance guard used by their formal contact test. External USD
+profiles use 10 Hz local lidar returns plus configured six-face flight-volume
+barriers, in addition to the agent's point-cloud occupancy/ESDF planning and
+execution barriers. Safety bounds must be measured for each new scene rather
+than copied from the Warehouse profile.
 
 ## ROS interfaces
 

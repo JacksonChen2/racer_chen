@@ -42,6 +42,7 @@ class Racer3DMonitor(Node):
         self.declare_parameter("minimum_obstacle_clearance", 0.02)
         self.declare_parameter("require_physics_backend", False)
         self.declare_parameter("map_resolution", 0.20)
+        self.declare_parameter("truth_mode", scenario.truth_mode)
         self.drone_count = int(self.get_parameter("drone_count").value)
         self.duration = float(self.get_parameter("duration").value)
         self.result_file = str(self.get_parameter("result_file").value)
@@ -66,25 +67,37 @@ class Racer3DMonitor(Node):
         self.require_physics_backend = bool(
             self.get_parameter("require_physics_backend").value
         )
+        self.truth_mode = str(self.get_parameter("truth_mode").value)
         self.map = VoxelMap(
             float(self.get_parameter("map_resolution").value),
             scenario.map_min,
             scenario.map_size,
         )
         self.truth_occupied = np.zeros(self.map.shape, dtype=bool)
-        for z in range(self.map.nz):
-            for y in range(self.map.ny):
-                for x in range(self.map.nx):
-                    point = self.map.grid_to_world((x, y, z))
-                    self.truth_occupied[z, y, x] = any(
-                        # A voxel is occupied when its cube intersects a
-                        # physical obstacle, not only when its centre is inside.
-                        obstacle.contains(point, 0.5 * self.map.resolution)
-                        for obstacle in scenario.obstacles
-                    )
+        if self.truth_mode == "analytic_boxes":
+            for z in range(self.map.nz):
+                for y in range(self.map.ny):
+                    for x in range(self.map.nx):
+                        point = self.map.grid_to_world((x, y, z))
+                        self.truth_occupied[z, y, x] = any(
+                            # A voxel is occupied when its cube intersects a
+                            # physical obstacle, not only when its centre is
+                            # inside.
+                            obstacle.contains(
+                                point, 0.5 * self.map.resolution
+                            )
+                            for obstacle in scenario.obstacles
+                        )
+        elif self.truth_mode != "observed_volume":
+            raise ValueError(f"unsupported truth mode: {self.truth_mode}")
         self.truth_free = ~self.truth_occupied
         self.truth_surface = self._surface_mask(self.truth_occupied)
-        self.started = self._now()
+        # Isaac Sim can take tens of seconds to initialize a referenced USD.
+        # Start an Isaac acceptance window on its first metrics frame, rather
+        # than charging application startup time against simulated flight.
+        self.started: Optional[float] = (
+            None if self.require_physics_backend else self._now()
+        )
         self.completion_time: Optional[float] = None
         self.completion_wall_time: Optional[float] = None
         self.path_lengths = [0.0] * self.drone_count
@@ -127,7 +140,7 @@ class Racer3DMonitor(Node):
         self.create_timer(0.5, self._check)
         self.get_logger().info(
             f"3-D acceptance monitor: {self.duration:.1f}s, "
-            f"target={self.minimum_coverage:.0%}"
+            f"target={self.minimum_coverage:.0%}, truth={self.truth_mode}"
         )
 
     def _now(self) -> float:
@@ -162,6 +175,8 @@ class Racer3DMonitor(Node):
             return
         self.sim_metrics = metrics
         self.backend_seen = True
+        if self.started is None:
+            self.started = self._now()
 
     def _status_callback(self, drone_id: int, message: String) -> None:
         try:
@@ -199,6 +214,20 @@ class Racer3DMonitor(Node):
 
     def _quality(self) -> dict:
         states = self.map.states()
+        if self.truth_mode == "observed_volume":
+            return {
+                "volume_coverage": float(
+                    np.count_nonzero(states != UNKNOWN)
+                ) / max(1, states.size),
+                "free_space_accuracy": None,
+                "occupied_precision": None,
+                "obstacle_surface_recall": None,
+                "known_voxels": int(np.count_nonzero(states != UNKNOWN)),
+                "total_voxels": int(states.size),
+                "truth_free_voxels": None,
+                "truth_surface_voxels": None,
+                "map_quality_ground_truth_available": False,
+            }
         known_free_truth = self.truth_free & (states != UNKNOWN)
         predicted_occupied = states == OCCUPIED
         free_coverage = float(np.count_nonzero(known_free_truth)) / max(
@@ -227,10 +256,13 @@ class Racer3DMonitor(Node):
             "total_voxels": int(states.size),
             "truth_free_voxels": int(np.count_nonzero(self.truth_free)),
             "truth_surface_voxels": int(np.count_nonzero(self.truth_surface)),
+            "map_quality_ground_truth_available": True,
         }
 
     def _check(self) -> None:
         if self.finished:
+            return
+        if self.started is None:
             return
         elapsed = self._now() - self.started
         quality = self._quality()
@@ -283,15 +315,22 @@ class Racer3DMonitor(Node):
         mission_elapsed = float(
             self.sim_metrics.get("elapsed", elapsed)
         )
+        map_quality_ok = (
+            self.truth_mode == "observed_volume"
+            or (
+                quality["free_space_accuracy"]
+                >= self.minimum_free_accuracy
+                and quality["occupied_precision"]
+                >= self.minimum_occupied_precision
+                and quality["obstacle_surface_recall"]
+                >= self.minimum_surface_recall
+            )
+        )
         passed = bool(
             self.backend_seen
             and physics_ok
             and self.completion_time is not None
-            and quality["free_space_accuracy"] >= self.minimum_free_accuracy
-            and quality["occupied_precision"]
-            >= self.minimum_occupied_precision
-            and quality["obstacle_surface_recall"]
-            >= self.minimum_surface_recall
+            and map_quality_ok
             and collisions == 0
             and physics_contacts == 0
             and min_inter >= self.minimum_inter_drone
@@ -335,6 +374,9 @@ class Racer3DMonitor(Node):
                 "minimum_inter_drone": self.minimum_inter_drone,
                 "minimum_obstacle_clearance": self.minimum_obstacle_clearance,
                 "require_physics_backend": self.require_physics_backend,
+                "ground_truth_quality_required": (
+                    self.truth_mode == "analytic_boxes"
+                ),
             },
         }
         target = Path(self.result_file)

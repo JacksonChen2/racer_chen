@@ -72,7 +72,10 @@ def _setup(context):
                 output="screen",
                 parameters=[
                     config,
-                    scenario_parameters,
+                    {
+                        **scenario_parameters,
+                        "truth_mode": scenario.truth_mode,
+                    },
                     {
                         "drone_count": drone_count,
                         "duration": duration,

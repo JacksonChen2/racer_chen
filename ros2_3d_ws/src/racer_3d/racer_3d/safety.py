@@ -167,6 +167,121 @@ def aabb_obstacle_filter(
     return tuple(float(value) for value in result)
 
 
+def pointcloud_obstacle_filter(
+    preferred: Sequence[float],
+    position: Sequence[float],
+    points_world: Sequence[Sequence[float]],
+    clearance: float,
+    speed_limit: float,
+    current_velocity: Sequence[float] = (0.0, 0.0, 0.0),
+    alpha: float = 1.2,
+    guaranteed_deceleration: float = 0.7,
+    response_time: float = 0.10,
+    activation_distance: float = 1.0,
+    maximum_constraints: int = 64,
+    iterations: int = 4,
+) -> Vector3:
+    """Project velocity away from recently observed 3-D obstacle returns.
+
+    This is the external-USD counterpart to :func:`aabb_obstacle_filter`.
+    It uses only hit points produced by the vehicle's simulated lidar, so it
+    does not require privileged knowledge of an arbitrary scene's geometry.
+    Points are kept in the shared world frame by the Isaac bridge.
+    """
+
+    result = np.asarray(limit_norm(preferred, speed_limit), dtype=float)
+    points = np.asarray(points_world, dtype=float).reshape((-1, 3))
+    if not len(points):
+        return tuple(float(value) for value in result)
+    own = np.asarray(position, dtype=float)
+    velocity = np.asarray(current_velocity, dtype=float)
+    delta = own - points
+    distances = np.linalg.norm(delta, axis=1)
+    valid = (
+        np.all(np.isfinite(points), axis=1)
+        & (distances > 1.0e-4)
+        & (distances <= activation_distance)
+    )
+    indices = np.flatnonzero(valid)
+    if not len(indices):
+        return tuple(float(value) for value in result)
+    indices = indices[np.argsort(distances[indices])[:maximum_constraints]]
+    constraints = []
+    for index in indices:
+        distance = float(distances[index])
+        normal = delta[index] / distance
+        approach_speed = max(0.0, -float(np.dot(normal, velocity)))
+        stopping_allowance = (
+            approach_speed * approach_speed
+            / (2.0 * max(0.1, guaranteed_deceleration))
+            + response_time * approach_speed
+        )
+        dynamic_clearance = clearance + stopping_allowance
+        lower_bound = -alpha * (distance - dynamic_clearance)
+        constraints.append((distance, normal, lower_bound))
+
+    constraints.sort(key=lambda item: item[0])
+    for _ in range(iterations):
+        for _, normal, lower_bound in constraints:
+            violation = lower_bound - float(np.dot(normal, result))
+            if violation > 0.0:
+                result += violation * normal
+        result = np.asarray(limit_norm(result, speed_limit), dtype=float)
+    return tuple(float(value) for value in result)
+
+
+def flight_volume_filter(
+    preferred: Sequence[float],
+    position: Sequence[float],
+    minimum: Sequence[float],
+    maximum: Sequence[float],
+    clearance: float,
+    speed_limit: float,
+    current_velocity: Sequence[float] = (0.0, 0.0, 0.0),
+    alpha: float = 1.2,
+    guaranteed_deceleration: float = 0.7,
+    response_time: float = 0.10,
+    iterations: int = 3,
+) -> Vector3:
+    """Keep a vehicle inside a configured 3-D flight volume.
+
+    Lidar alone can have a blind cone directly above/below the sensor. A
+    configured room geofence therefore remains authoritative for floor,
+    ceiling, and outer walls while lidar handles arbitrary interior meshes.
+    """
+
+    result = np.asarray(limit_norm(preferred, speed_limit), dtype=float)
+    own = np.asarray(position, dtype=float)
+    lower = np.asarray(minimum, dtype=float)
+    upper = np.asarray(maximum, dtype=float)
+    velocity = np.asarray(current_velocity, dtype=float)
+    constraints = []
+    for axis in range(3):
+        for distance, direction in (
+            (float(own[axis] - lower[axis]), 1.0),
+            (float(upper[axis] - own[axis]), -1.0),
+        ):
+            normal = np.zeros(3, dtype=float)
+            normal[axis] = direction
+            approach_speed = max(0.0, -float(np.dot(normal, velocity)))
+            stopping_allowance = (
+                approach_speed * approach_speed
+                / (2.0 * max(0.1, guaranteed_deceleration))
+                + response_time * approach_speed
+            )
+            dynamic_clearance = clearance + stopping_allowance
+            lower_bound = -alpha * (distance - dynamic_clearance)
+            constraints.append((distance, normal, lower_bound))
+    constraints.sort(key=lambda item: item[0])
+    for _ in range(iterations):
+        for _, normal, lower_bound in constraints:
+            violation = lower_bound - float(np.dot(normal, result))
+            if violation > 0.0:
+                result += violation * normal
+        result = np.asarray(limit_norm(result, speed_limit), dtype=float)
+    return tuple(float(value) for value in result)
+
+
 def emergency_separation(
     velocity: Sequence[float],
     position: Sequence[float],

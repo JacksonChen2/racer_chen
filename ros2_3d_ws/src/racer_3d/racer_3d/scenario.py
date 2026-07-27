@@ -45,6 +45,9 @@ class Scenario3D:
     starts: Tuple[Point3, ...]
     obstacles: Tuple[Box3D, ...]
     coarse_grid_size: Point3 = (5.0, 4.5, 2.0)
+    truth_mode: str = "analytic_boxes"
+    safety_min: Optional[Point3] = None
+    safety_max: Optional[Point3] = None
 
     @property
     def map_size(self) -> Point3:
@@ -148,11 +151,43 @@ def large_acceptance_scene() -> Scenario3D:
     )
 
 
+def warehouse_simple_scene() -> Scenario3D:
+    """Flight volume inside the supplied multi-shelf Isaac warehouse USD."""
+
+    return Scenario3D(
+        name="warehouse_simple",
+        # The rendered asset extends farther because of exterior floor tiles.
+        # These limits select the enclosed warehouse flight volume bounded by
+        # its inner collision walls and ceiling.
+        # Keep the voxel centres inside the measured inner wall safety faces.
+        # The west/east wall faces are approximately -10.37/+9.37 m. With the
+        # 0.28 m flight barrier, centres at -10.10/+9.10 m remain valid and
+        # must not fall outside the planner map due to normal tracking error.
+        map_min=(-10.2, -12.0, 0.0),
+        map_max=(9.2, 17.8, 9.0),
+        starts=(
+            (-6.0, -10.0, 0.60),
+            (0.0, -10.0, 1.50),
+            (6.0, -10.0, 2.40),
+        ),
+        # Geometry is supplied by the external USD and discovered by lidar.
+        obstacles=(),
+        coarse_grid_size=(4.85, 7.45, 4.50),
+        truth_mode="observed_volume",
+        # Collision-face bounds measured from the supplied USD. They form a
+        # configured geofence in addition to obstacle returns from lidar.
+        safety_min=(-10.37, -12.24, 0.0),
+        safety_max=(9.37, 17.96, 9.0),
+    )
+
+
 DEFAULT_SCENARIO = acceptance_scene()
 LARGE_SCENARIO = large_acceptance_scene()
+WAREHOUSE_SCENARIO = warehouse_simple_scene()
 SCENARIOS: Dict[str, Scenario3D] = {
     DEFAULT_SCENARIO.name: DEFAULT_SCENARIO,
     LARGE_SCENARIO.name: LARGE_SCENARIO,
+    WAREHOUSE_SCENARIO.name: WAREHOUSE_SCENARIO,
 }
 
 
@@ -185,6 +220,8 @@ def point_box_signed_clearance(point: Sequence[float], box: Box3D) -> float:
 def obstacle_clearance(
     point: Sequence[float], obstacles: Sequence[Box3D]
 ) -> float:
+    if not obstacles:
+        return math.inf
     return min(point_box_signed_clearance(point, box) for box in obstacles)
 
 

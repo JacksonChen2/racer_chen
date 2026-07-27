@@ -1,5 +1,74 @@
 # RACER 3-D Isaac Sim / ROS 2 test report
 
+## `warehouse_simple.usd` external-scene acceptance
+
+- Date: 2026-07-27
+- Platform: Ubuntu 22.04.5, ROS 2 Humble, Isaac Sim 5.1
+- GPU: NVIDIA GeForce RTX 4060 Laptop GPU
+- Scene: supplied multi-shelf warehouse USD
+- Configured exploration volume: 19.4 m × 29.8 m × 9.0 m
+- USD audit: Z-up, 1 metre per unit, 1,878 collision prims, 103 resolved
+  asset dependencies, no unresolved dependencies
+- Vehicles: three 27 g Crazyflie 2.x six-DOF PhysX rigid bodies
+- Sensor: one 360° × 120° PhysX rotating 3-D lidar per vehicle
+- Safety: 10 Hz local lidar-point stopping-distance barrier, configured
+  six-face flight-volume barrier and inter-UAV CBF
+- Verdict: **PASS**
+
+| Metric | Requirement | Measured |
+|---|---:|---:|
+| Bounded observed-volume coverage | ≥ 90% | 90.0025% |
+| Time to 90% coverage | report | 842.62 s simulated |
+| Physics contacts | 0 | 0 |
+| Collision events | 0 | 0 |
+| Maximum contact force | 0 N | 0 N |
+| Minimum inter-UAV distance | ≥ 0.35 m | 0.599 m |
+| Minimum obstacle clearance | ≥ 0.02 m | 0.0939 m |
+
+| Vehicle | Distance | Final position `(x,y,z)` |
+|---|---:|---|
+| drone_0 | 272.911 m | (2.264, 5.594, 4.623) m |
+| drone_1 | 273.860 m | (-8.302, -11.875, 8.541) m |
+| drone_2 | 255.638 m | (-9.204, 10.172, 5.287) m |
+| Total | 802.409 m | — |
+
+The shared monitor reached 90% at 842.62 simulator seconds and finalized at
+90.0025% after its settling interval. Wall-clock time to threshold was
+869.19 s. The final map contains 585,363 known cells out of 650,385 configured
+voxels and the Isaac bridge published 5,055 three-dimensional point-cloud
+frames. The machine-readable source of truth is
+`ISAAC_WAREHOUSE_SIMPLE_RESULT.json`.
+
+The arbitrary mesh scene has no independent voxel ground-truth file, so this
+test does not claim free/occupied classification accuracy or obstacle-surface
+recall; those fields are explicitly `null` in the result. It validates bounded
+observed-volume coverage, real ROS 2 map exchange, six-DOF motion, separation,
+clearance and raw PhysX contacts. The deterministic acceptance worlds below
+remain the ground-truth map-quality tests.
+
+The first long Warehouse run exposed a map-boundary mismatch that left one
+vehicle just outside the planning grid. The second exposed the 120° lidar's
+vertical blind cone at a wall/ceiling corner. The third exposed the 0.5 s
+latency of reusing ROS mapping clouds for low-level safety near a roof beam.
+The final version expands the valid planning grid to the measured wall safety
+faces, clears expired plans after a failed replan, adds a configured
+flight-volume barrier and refreshes its local collision returns at 10 Hz while
+retaining 2 Hz ROS mapping publication. The fourth formal run above is the
+first full Warehouse pass.
+
+Reproduction command:
+
+```bash
+cd RACER/ros2_3d_ws
+RACER_3D_SCENARIO=warehouse_simple \
+RACER_3D_DURATION=900 ROS_DOMAIN_ID=53 \
+  src/racer_3d/scripts/run_isaac_test.sh \
+  src/racer_3d/test_results/ISAAC_WAREHOUSE_SIMPLE_RESULT.json
+```
+
+The mission stops and hovers when the shared coverage threshold is reached;
+it does not return to the three launch poses.
+
 ## 20 m x 50 m x 3 m large-scene acceptance
 
 - Date: 2026-07-26
@@ -116,9 +185,7 @@ RACER_3D_DURATION=120 ROS_DOMAIN_ID=94 \
   src/racer_3d/test_results/ISAAC_15X9X2_RESULT.json
 ```
 
-Unit/algorithm result after the large-scene changes: 14 tests passed. Static
-Python style result:
-18 files checked, no errors.
+Unit/algorithm result after the Warehouse changes: 17 tests passed.
 
 The final 60-second ROS-only integration regression also passed:
 92.82% volume coverage, 28.50 simulated seconds to 90%, zero collisions,

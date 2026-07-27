@@ -5,6 +5,8 @@ from racer_3d.safety import (
     aabb_obstacle_filter,
     cbf_swarm_filter,
     esdf_obstacle_filter,
+    flight_volume_filter,
+    pointcloud_obstacle_filter,
     predicted_path_conflict,
 )
 from racer_3d.scenario import Box3D
@@ -111,4 +113,43 @@ def test_high_rate_aabb_filter_brakes_before_floor_and_wall():
     )
     assert safe[0] < 0.05
     assert safe[2] > -0.05
+    assert np.linalg.norm(safe) <= 0.35 + 1.0e-9
+
+
+def test_pointcloud_filter_brakes_without_scene_ground_truth():
+    floor = [
+        (x, y, 0.0)
+        for x in (0.5, 0.6, 0.7)
+        for y in (-0.1, 0.0, 0.1)
+    ]
+    wall = [
+        (1.0, y, z)
+        for y in (-0.1, 0.0, 0.1)
+        for z in (0.3, 0.4, 0.5)
+    ]
+    safe = pointcloud_obstacle_filter(
+        preferred=(0.35, 0.0, -0.35),
+        position=(0.60, 0.0, 0.40),
+        points_world=floor + wall,
+        clearance=0.28,
+        speed_limit=0.35,
+        current_velocity=(0.30, 0.0, -0.30),
+    )
+    assert safe[0] < 0.08
+    assert safe[2] > -0.08
+    assert np.linalg.norm(safe) <= 0.35 + 1.0e-9
+
+
+def test_flight_volume_filter_covers_lidar_vertical_blind_cone():
+    safe = flight_volume_filter(
+        preferred=(-0.30, 0.15, 0.20),
+        position=(-10.13, 14.45, 8.97),
+        minimum=(-10.37, -12.24, 0.0),
+        maximum=(9.37, 17.96, 9.0),
+        clearance=0.32,
+        speed_limit=0.35,
+        current_velocity=(0.21, 0.24, 0.10),
+    )
+    assert safe[0] > 0.0
+    assert safe[2] < -0.20
     assert np.linalg.norm(safe) <= 0.35 + 1.0e-9

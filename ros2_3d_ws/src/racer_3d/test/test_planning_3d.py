@@ -69,3 +69,20 @@ def test_large_acceptance_scene_geometry_and_starts():
         and obstacle.maximum[0] >= 10.0
         for obstacle in scenario.obstacles
     )
+
+
+def test_warehouse_external_usd_volume_and_starts():
+    scenario = get_scenario("warehouse_simple")
+    assert scenario.map_size == (19.4, 29.8, 9.0)
+    assert scenario.truth_mode == "observed_volume"
+    assert scenario.obstacles == ()
+    assert len(scenario.starts) == 3
+    assert all(
+        all(
+            lower < value < upper
+            for value, lower, upper in zip(
+                start, scenario.map_min, scenario.map_max
+            )
+        )
+        for start in scenario.starts
+    )
