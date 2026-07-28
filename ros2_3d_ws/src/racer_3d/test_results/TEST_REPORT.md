@@ -1,5 +1,63 @@
 # RACER 3-D Isaac Sim / ROS 2 test report
 
+## Five-UAV Warehouse scaling acceptance
+
+- Date: 2026-07-28
+- Scene and platform: same `warehouse_simple.usd`, Isaac Sim 5.1,
+  ROS 2 Humble and Ubuntu 22.04.5 as the three-UAV test below
+- Vehicles: five 27 g Crazyflie 2.x six-DOF PhysX rigid bodies
+- Launch-pose audit: all five 0.18 m PhysX overlap probes were clear
+- Verdict: **PASS**
+
+| Metric | Requirement | Five UAVs | Three UAVs |
+|---|---:|---:|---:|
+| Bounded observed-volume coverage | ≥ 90% | 90.1608% | 90.0025% |
+| Time to 90% coverage | report | 600.82 s | 842.62 s |
+| Wall time to 90% coverage | report | 650.90 s | 869.19 s |
+| Physics contacts | 0 | 0 | 0 |
+| Collision events | 0 | 0 | 0 |
+| Minimum inter-UAV distance | ≥ 0.35 m | 0.492 m | 0.599 m |
+| Minimum obstacle clearance | ≥ 0.02 m | 0.0755 m | 0.0939 m |
+| Fleet flight distance | report | 944.782 m | 802.409 m |
+
+| Vehicle | Distance | Final position `(x,y,z)` |
+|---|---:|---|
+| drone_0 | 191.809 m | (2.162, 12.938, 6.773) m |
+| drone_1 | 175.302 m | (-5.002, 12.895, 1.229) m |
+| drone_2 | 184.998 m | (-4.021, 8.497, 4.614) m |
+| drone_3 | 191.711 m | (-3.154, 6.492, 5.619) m |
+| drone_4 | 200.962 m | (3.867, 12.670, 2.574) m |
+| Total | 944.782 m | — |
+
+Five vehicles reduced simulated completion time by 28.70% and produced a
+1.402× speedup over three vehicles. Relative to the ideal vehicle-count ratio
+of 5/3, the measured scaling efficiency was 84.1%. Wall-clock completion time
+fell by 25.11%; its smaller improvement reflects the extra ROS map sharing,
+frontier extraction and pairwise coordination load. Fleet distance increased
+17.74%, while mean distance per vehicle fell from 267.470 m to 188.956 m
+(29.35% lower).
+
+The first five-UAV long run exposed an allocation edge case: one vehicle owned
+only temporarily unreachable boundary frontiers and idled despite global
+frontiers remaining. The planner now treats HGrid ownership as a preference
+and falls back to any globally reachable frontier when its owned set has no
+feasible viewpoint/path. The final run kept all five path lengths growing,
+published 6,010 lidar map frames, reached the threshold at 600.82 simulated
+seconds and recorded zero contacts.
+
+The machine-readable source of truth is
+`ISAAC_WAREHOUSE_SIMPLE_5UAV_RESULT.json`.
+
+Reproduction command:
+
+```bash
+cd RACER/ros2_3d_ws
+RACER_3D_SCENARIO=warehouse_simple \
+RACER_3D_DRONE_COUNT=5 RACER_3D_DURATION=900 ROS_DOMAIN_ID=56 \
+  src/racer_3d/scripts/run_isaac_test.sh \
+  src/racer_3d/test_results/ISAAC_WAREHOUSE_SIMPLE_5UAV_RESULT.json
+```
+
 ## `warehouse_simple.usd` external-scene acceptance
 
 - Date: 2026-07-27
@@ -185,7 +243,7 @@ RACER_3D_DURATION=120 ROS_DOMAIN_ID=94 \
   src/racer_3d/test_results/ISAAC_15X9X2_RESULT.json
 ```
 
-Unit/algorithm result after the Warehouse changes: 17 tests passed.
+Unit/algorithm result after the five-UAV changes: 18 tests passed.
 
 The final 60-second ROS-only integration regression also passed:
 92.82% volume coverage, 28.50 simulated seconds to 90%, zero collisions,

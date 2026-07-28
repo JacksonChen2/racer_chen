@@ -414,54 +414,77 @@ def plan_exploration(
         hcell = hgrid.containing(centroid)
         if hcell is not None and hcell.id in owned:
             owned_segments.append(segment)
-    candidate_segments = owned_segments if owned_segments else segments
-    best = None
-    for cluster in sorted(candidate_segments, key=len, reverse=True)[:12]:
-        centroid = tuple(
-            float(value)
-            for value in np.mean(
-                [voxel_map.grid_to_world(cell) for cell in cluster], axis=0
-            )
-        )
-        hcell = hgrid.containing(centroid)
-        owner_bonus = (
-            12.0 - route_rank.get(hcell.id, 8)
-            if hcell is not None and hcell.id in owned
-            else 0.0
-        )
-        candidates = _viewpoint_candidates(
-            voxel_map, cluster, blocked, search_clearance
-        )
-        ranked_candidates = sorted(
-            candidates,
-            key=lambda point: (
-                voxel_map.visible_unknown_gain(point, cluster)
-                - 0.8 * float(
-                    np.linalg.norm(np.asarray(point) - np.asarray(position))
+    def best_candidate(candidate_segments):
+        best_local = None
+        for cluster in sorted(candidate_segments, key=len, reverse=True)[:12]:
+            centroid = tuple(
+                float(value)
+                for value in np.mean(
+                    [
+                        voxel_map.grid_to_world(cell)
+                        for cell in cluster
+                    ],
+                    axis=0,
                 )
-            ),
-            reverse=True,
-        )[:2]
-        for viewpoint in ranked_candidates:
-            goal = voxel_map.world_to_grid(viewpoint)
-            if goal is None:
-                continue
-            path = astar3d(blocked, start, goal, voxel_map.resolution)
-            if not path:
-                continue
-            path_distance = voxel_map.resolution * sum(
-                math.sqrt(
-                    (second[0] - first[0]) ** 2
-                    + (second[1] - first[1]) ** 2
-                    + (second[2] - first[2]) ** 2
-                )
-                for first, second in zip(path, path[1:])
             )
-            gain = voxel_map.visible_unknown_gain(viewpoint, cluster)
-            score = gain + 0.12 * len(cluster) + owner_bonus - 1.4 * path_distance
-            candidate = (score, gain, path, viewpoint, centroid)
-            if best is None or candidate[0] > best[0]:
-                best = candidate
+            hcell = hgrid.containing(centroid)
+            owner_bonus = (
+                12.0 - route_rank.get(hcell.id, 8)
+                if hcell is not None and hcell.id in owned
+                else 0.0
+            )
+            candidates = _viewpoint_candidates(
+                voxel_map, cluster, blocked, search_clearance
+            )
+            ranked_candidates = sorted(
+                candidates,
+                key=lambda point: (
+                    voxel_map.visible_unknown_gain(point, cluster)
+                    - 0.8
+                    * float(
+                        np.linalg.norm(
+                            np.asarray(point) - np.asarray(position)
+                        )
+                    )
+                ),
+                reverse=True,
+            )[:2]
+            for viewpoint in ranked_candidates:
+                goal = voxel_map.world_to_grid(viewpoint)
+                if goal is None:
+                    continue
+                path = astar3d(
+                    blocked, start, goal, voxel_map.resolution
+                )
+                if not path:
+                    continue
+                path_distance = voxel_map.resolution * sum(
+                    math.sqrt(
+                        (second[0] - first[0]) ** 2
+                        + (second[1] - first[1]) ** 2
+                        + (second[2] - first[2]) ** 2
+                    )
+                    for first, second in zip(path, path[1:])
+                )
+                gain = voxel_map.visible_unknown_gain(viewpoint, cluster)
+                score = (
+                    gain
+                    + 0.12 * len(cluster)
+                    + owner_bonus
+                    - 1.4 * path_distance
+                )
+                candidate = (score, gain, path, viewpoint, centroid)
+                if best_local is None or candidate[0] > best_local[0]:
+                    best_local = candidate
+        return best_local
+
+    best = best_candidate(owned_segments or segments)
+    if best is None and owned_segments:
+        # Pairwise HGrid ownership is an efficiency preference, not a reason
+        # to idle. With a larger fleet an agent can temporarily own only
+        # occluded or boundary frontiers. Fall back to any reachable segment;
+        # the trajectory-conflict and CBF layers still coordinate execution.
+        best = best_candidate(segments)
     if best is None:
         return None
     _, gain, path, viewpoint, centroid = best

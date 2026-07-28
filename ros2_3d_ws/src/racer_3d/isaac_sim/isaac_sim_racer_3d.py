@@ -105,6 +105,11 @@ from racer_3d.safety import (  # noqa: E402
 
 SCENARIO = get_scenario(ARGS.scenario)
 if ARGS.starts is None:
+    if len(SCENARIO.starts) < ARGS.drone_count:
+        raise SystemExit(
+            f"scenario {SCENARIO.name!r} provides {len(SCENARIO.starts)} "
+            f"starts, but {ARGS.drone_count} vehicles were requested"
+        )
     STARTS = SCENARIO.starts[:ARGS.drone_count]
 else:
     if len(ARGS.starts) != 3 * ARGS.drone_count:

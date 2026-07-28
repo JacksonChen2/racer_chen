@@ -169,6 +169,8 @@ def warehouse_simple_scene() -> Scenario3D:
             (-6.0, -10.0, 0.60),
             (0.0, -10.0, 1.50),
             (6.0, -10.0, 2.40),
+            (-3.0, -10.0, 1.05),
+            (3.0, -10.0, 1.95),
         ),
         # Geometry is supplied by the external USD and discovered by lidar.
         obstacles=(),

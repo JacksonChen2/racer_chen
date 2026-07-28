@@ -1,5 +1,8 @@
+from types import SimpleNamespace
+
 import numpy as np
 
+import racer_3d.planning as planning_module
 from racer_3d.planning import (
     astar3d,
     minimum_time_bspline_trajectory,
@@ -76,7 +79,12 @@ def test_warehouse_external_usd_volume_and_starts():
     assert scenario.map_size == (19.4, 29.8, 9.0)
     assert scenario.truth_mode == "observed_volume"
     assert scenario.obstacles == ()
-    assert len(scenario.starts) == 3
+    assert len(scenario.starts) == 5
+    assert scenario.starts[:3] == (
+        (-6.0, -10.0, 0.60),
+        (0.0, -10.0, 1.50),
+        (6.0, -10.0, 2.40),
+    )
     assert all(
         all(
             lower < value < upper
@@ -86,3 +94,67 @@ def test_warehouse_external_usd_volume_and_starts():
         )
         for start in scenario.starts
     )
+
+
+def test_planner_falls_back_when_owned_frontier_is_unreachable(monkeypatch):
+    voxel_map = VoxelMap(1.0, (0.0, 0.0, 0.0), (6.0, 4.0, 4.0))
+    voxel_map.set_states(np.full(voxel_map.shape, FREE, dtype=np.int8))
+    owned_cluster = [
+        (1, 1, 1),
+        (1, 2, 1),
+        (1, 1, 2),
+        (1, 2, 2),
+    ]
+    reachable_cluster = [
+        (4, 1, 1),
+        (4, 2, 1),
+        (4, 1, 2),
+        (4, 2, 2),
+    ]
+    monkeypatch.setattr(
+        voxel_map,
+        "frontier_clusters",
+        lambda: [owned_cluster, reachable_cluster],
+    )
+
+    class FakeHGrid:
+        @staticmethod
+        def containing(point):
+            return SimpleNamespace(
+                id="owned" if float(point[0]) < 3.0 else "other"
+            )
+
+    def candidates(_, cluster, __, ___):
+        if cluster == owned_cluster:
+            return []
+        return [voxel_map.grid_to_world(reachable_cluster[0])]
+
+    monkeypatch.setattr(
+        planning_module, "_viewpoint_candidates", candidates
+    )
+    monkeypatch.setattr(
+        planning_module,
+        "astar3d",
+        lambda _, start, goal, __: [start, goal],
+    )
+    monkeypatch.setattr(
+        planning_module,
+        "minimum_time_bspline_trajectory",
+        lambda points, *_: (
+            [(0.0, *points[0]), (1.0, *points[-1])],
+            1.0,
+        ),
+    )
+
+    plan = planning_module.plan_exploration(
+        voxel_map,
+        FakeHGrid(),
+        owned_cells=["owned"],
+        coverage_route=["owned"],
+        position=(0.5, 0.5, 0.5),
+        clearance=0.2,
+        max_speed=0.35,
+        max_acceleration=1.4,
+    )
+    assert plan is not None
+    assert plan.goal == voxel_map.grid_to_world(reachable_cluster[0])

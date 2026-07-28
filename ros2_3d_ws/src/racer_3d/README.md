@@ -30,8 +30,8 @@ baseline contains a low partition and a suspended partition. The
 walls, a central gate, mixed-height barriers, columns and hanging/low blocks.
 Both require genuine vertical motion, so a planar solution cannot pass.
 The supplied `warehouse_simple.usd` is also registered as an external-scene
-test profile with measured flight bounds and three collision-free launch
-poses.
+test profile with measured flight bounds and five collision-free launch
+poses. Selecting three vehicles preserves the original first three poses.
 
 ## Tested platform
 
@@ -100,6 +100,19 @@ RACER_3D_DURATION=900 ROS_DOMAIN_ID=53 \
 
 The recorded Warehouse pass reached 90.0025% bounded observed-volume coverage
 in 842.62 simulated seconds with three vehicles and zero PhysX contacts.
+
+Five-UAV Warehouse scaling test:
+
+```bash
+RACER_3D_SCENARIO=warehouse_simple \
+RACER_3D_DRONE_COUNT=5 RACER_3D_DURATION=900 ROS_DOMAIN_ID=56 \
+  src/racer_3d/scripts/run_isaac_test.sh \
+  src/racer_3d/test_results/ISAAC_WAREHOUSE_SIMPLE_5UAV_RESULT.json
+```
+
+The recorded five-UAV pass reached 90.1608% in 600.82 simulated seconds with
+zero contacts. This was 28.70% faster than the three-UAV run, at the cost of
+17.74% more total fleet travel and higher ROS/planning compute load.
 
 ## Using a custom Isaac USD scene
 
