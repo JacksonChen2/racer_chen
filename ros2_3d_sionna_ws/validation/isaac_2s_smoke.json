@@ -1,0 +1,30 @@
+{
+  "backend": "isaac_sim_physx_3d",
+  "communication": {
+    "attempted_bytes": 375788,
+    "attempted_packets": 194,
+    "delivered_bytes": 117582,
+    "delivered_packets": 62,
+    "delivery_ratio": 0.31958762886597936,
+    "dropped_no_link": 4,
+    "dropped_per": 0,
+    "dropped_queue": 0,
+    "dropped_ttl": 0,
+    "link_models": {
+      "sionna_exact": 2
+    },
+    "mean_current_snr_db": 59.87843132019043,
+    "mean_delivery_delay_ms": 297.93548583984375,
+    "retried_packets": 0
+  },
+  "duration_s": 2.0,
+  "minimum_inter_drone_m": 13.518135965557924,
+  "minimum_obstacle_clearance_m": 0.9305714100308684,
+  "odometry_rate_hz": 200.0,
+  "physics_contact_events": 0,
+  "physics_rate_hz": 1000.0,
+  "point_cloud_frames": 118,
+  "sensor_rate_hz": 30.0,
+  "total_flight_distance_m": 0.9324488884081725,
+  "volume_coverage": 0.006980759368648977
+}

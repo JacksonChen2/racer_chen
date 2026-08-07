@@ -1,0 +1,22 @@
+{
+  "bounds_max": [
+    5.6000000000000005,
+    26.200000000000003,
+    8.4
+  ],
+  "bounds_min": [
+    -26.400000000000002,
+    7.4,
+    0.2
+  ],
+  "capture_wall_time_s": 351.61105692600177,
+  "drone_count": 3,
+  "map_resolution_m": 0.2,
+  "messages_per_drone": {
+    "0": 339,
+    "1": 332,
+    "2": 331
+  },
+  "mission_complete_received": true,
+  "occupied_voxel_count": 38740
+}

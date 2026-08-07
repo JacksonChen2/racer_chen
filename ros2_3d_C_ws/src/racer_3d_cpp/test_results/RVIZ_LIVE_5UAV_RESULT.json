@@ -1,0 +1,125 @@
+{
+  "agent_status" : 
+  {
+    "0" : 
+    {
+      "completed" : true,
+      "coverage" : 0.90157829593240923,
+      "drone_id" : 0,
+      "frontier_clusters" : 45,
+      "implementation" : "racer_3d_cpp",
+      "owned_hgrid_cells" : 21,
+      "planning" : false
+    },
+    "1" : 
+    {
+      "completed" : true,
+      "coverage" : 0.90157829593240923,
+      "drone_id" : 1,
+      "frontier_clusters" : 45,
+      "implementation" : "racer_3d_cpp",
+      "owned_hgrid_cells" : 26,
+      "planning" : false
+    },
+    "2" : 
+    {
+      "completed" : true,
+      "coverage" : 0.90157829593240923,
+      "drone_id" : 2,
+      "frontier_clusters" : 45,
+      "implementation" : "racer_3d_cpp",
+      "owned_hgrid_cells" : 24,
+      "planning" : false
+    },
+    "3" : 
+    {
+      "completed" : true,
+      "coverage" : 0.90157829593240923,
+      "drone_id" : 3,
+      "frontier_clusters" : 45,
+      "implementation" : "racer_3d_cpp",
+      "owned_hgrid_cells" : 29,
+      "planning" : false
+    },
+    "4" : 
+    {
+      "completed" : true,
+      "coverage" : 0.90157829593240923,
+      "drone_id" : 4,
+      "frontier_clusters" : 45,
+      "implementation" : "racer_3d_cpp",
+      "owned_hgrid_cells" : 1,
+      "planning" : false
+    }
+  },
+  "all_agents_reporting" : true,
+  "backend" : "isaac_sim_physx_3d",
+  "collision_events" : 0,
+  "completion_time_s" : 394.8999999999308,
+  "completion_wall_time_s" : 408.56293821334839,
+  "drone_count" : 5,
+  "elapsed_s" : 395.17999999993054,
+  "final_positions" : 
+  {
+    "0" : 
+    [
+      -1.5430071353912354,
+      14.135702133178711,
+      6.7523837089538574
+    ],
+    "1" : 
+    [
+      -4.9304609298706055,
+      3.0590548515319824,
+      4.2467331886291504
+    ],
+    "2" : 
+    [
+      -2.1299991607666016,
+      13.91679573059082,
+      1.3019945621490479
+    ],
+    "3" : 
+    [
+      2.2324581146240234,
+      9.4738121032714844,
+      1.7667194604873657
+    ],
+    "4" : 
+    [
+      8.2009744644165039,
+      13.510149002075195,
+      2.4100339412689209
+    ]
+  },
+  "flight_distance_m" : 
+  [
+    132.47837471868726,
+    133.68434400819982,
+    133.1824399896951,
+    136.00431623908594,
+    134.29990971321942
+  ],
+  "free_space_accuracy" : null,
+  "implementation" : "racer_3d_cpp",
+  "known_voxels" : 586373,
+  "map_quality_ground_truth_available" : false,
+  "minimum_inter_drone_m" : 0.44910466950888073,
+  "minimum_obstacle_clearance_m" : 0.16584769278645162,
+  "obstacle_surface_recall" : null,
+  "occupied_precision" : null,
+  "passed" : true,
+  "physics_contact_events" : 0,
+  "requirements" : 
+  {
+    "minimum_coverage" : 0.90000000000000002,
+    "minimum_inter_drone" : 0.34999999999999998,
+    "minimum_obstacle_clearance" : 0.02,
+    "require_physics_backend" : true
+  },
+  "scenario" : "warehouse_simple",
+  "total_flight_distance_m" : 669.64938466888759,
+  "total_voxels" : 650385,
+  "volume_coverage" : 0.90157829593240923,
+  "wall_elapsed_s" : 410.5629506111145
+}

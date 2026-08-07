@@ -1,0 +1,28 @@
+/**:
+  ros__parameters:
+    # ROS1 RACER simulator sensing and dynamics profile migrated to Isaac Sim.
+    map_resolution: 0.10
+    minimum_sensor_range: 0.50
+    lidar_range: 4.50
+    maximum_sensor_rays: 2400
+    planning_clearance: 0.199
+    control_clearance: 0.42
+    swarm_safe_distance: 1.0
+    emergency_distance: 1.0
+    max_speed: 1.50
+    max_acceleration: 1.0
+    planning_period: 0.5
+    pairwise_period: 0.5
+    peer_timeout: 3.0
+    safety_peer_timeout: 6.0
+    completion_coverage: 0.90
+    hgrid_levels: 2
+
+    # Original RACER uses 200 newly observed voxels per map chunk.
+    map_chunk_voxels: 200
+    map_manifest_period: 2.0
+    map_repair_chunks_per_manifest: 32
+
+    # Pairwise allocation is now proposal/ack/commit instead of fire-and-forget.
+    allocation_retry_period: 1.0
+    allocation_proposal_timeout: 10.0

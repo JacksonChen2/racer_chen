@@ -1,0 +1,90 @@
+{
+  "agent_status": {
+    "0": {
+      "completed": false,
+      "coverage": 0.3884148148148148,
+      "drone_id": 0,
+      "frontier_clusters": 5,
+      "owned_hgrid_cells": 1,
+      "planning": true
+    },
+    "1": {
+      "completed": false,
+      "coverage": 0.3877037037037037,
+      "drone_id": 1,
+      "frontier_clusters": 8,
+      "owned_hgrid_cells": 2,
+      "planning": true
+    },
+    "2": {
+      "completed": false,
+      "coverage": 0.3875851851851852,
+      "drone_id": 2,
+      "frontier_clusters": 7,
+      "owned_hgrid_cells": 9,
+      "planning": true
+    }
+  },
+  "all_agents_reporting": true,
+  "backend": "ros_3d_mock",
+  "collision_events": 0,
+  "completion_time_s": null,
+  "completion_wall_time_s": null,
+  "dimensions_m": [
+    15.0,
+    9.0,
+    2.0
+  ],
+  "drone_count": 3,
+  "elapsed_s": 3.049999999999997,
+  "final_positions": {
+    "0": [
+      -5.973738119336131,
+      -2.9134311195616203,
+      0.7503399504847792
+    ],
+    "1": [
+      -5.890762453358387,
+      0.17037814927868525,
+      0.978332070462895
+    ],
+    "2": [
+      -6.212501342894117,
+      2.664378490326173,
+      1.3195437092240268
+    ]
+  },
+  "flight_distance_m": [
+    0.5950000000000039,
+    0.5412882571811232,
+    0.612499999999999
+  ],
+  "free_space_accuracy": 0.9996914215182061,
+  "known_voxels": 13807,
+  "low_level_safety": "not_reported",
+  "map_quality_ground_truth_available": true,
+  "minimum_inter_drone_m": 2.537711369839117,
+  "minimum_obstacle_clearance_m": 0.32999999999999996,
+  "obstacle_surface_recall": 0.4488073807380738,
+  "occupied_precision": 0.998828125,
+  "passed": false,
+  "physics_contact_events": 0,
+  "requirements": {
+    "ground_truth_quality_required": true,
+    "minimum_coverage": 0.9,
+    "minimum_free_accuracy": 0.95,
+    "minimum_inter_drone": 0.35,
+    "minimum_obstacle_clearance": 0.02,
+    "minimum_occupied_precision": 0.75,
+    "minimum_surface_recall": 0.35,
+    "require_physics_backend": false
+  },
+  "safety_interventions": 0,
+  "scenario": "acceptance_15x9x2",
+  "total_flight_distance_m": 1.748788257181126,
+  "total_voxels": 33750,
+  "truth_free_voxels": 23289,
+  "truth_surface_voxels": 8888,
+  "volume_coverage": 0.4174502984241487,
+  "wall_elapsed_s": 5.023717880249023
+}

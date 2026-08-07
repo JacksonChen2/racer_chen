@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SIONNA_RUNTIME_PYTHON="${SIONNA_PYTHON:-python3}"
+if [[ -n "${SIONNA_PYTHONPATH:-}" ]]; then
+  export PYTHONPATH="${SIONNA_PYTHONPATH}${PYTHONPATH:+:${PYTHONPATH}}"
+fi
+exec "${SIONNA_RUNTIME_PYTHON}" "${SCRIPT_DIR}/sionna_channel_node.py" "$@"

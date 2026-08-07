@@ -1,0 +1,1045 @@
+{
+  "existing_cargo_asset_count": 259,
+  "existing_occupied_slot_count": 179,
+  "final_occupancy": 0.6497175141242938,
+  "final_occupied_slot_count": 230,
+  "generated_cargo": [
+    {
+      "bay_id": 0,
+      "cargo_type": "cardboard",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7900964931276406,
+        0.8200270823277418,
+        0.9162253728346407
+      ],
+      "level_index": 1,
+      "path": "/World/AddedCargo/Cardboard/CardboardBox_001_B00_L01_P00",
+      "position_index": 0,
+      "position_m": [
+        -25.32213744573056,
+        9.501435248271495,
+        1.7701126864173204
+      ],
+      "slot_id": "B00_L01_P00",
+      "static": true
+    },
+    {
+      "bay_id": 0,
+      "cargo_type": "cardboard",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7960873242142306,
+        0.997526415746525,
+        0.5481182953783952
+      ],
+      "level_index": 2,
+      "path": "/World/AddedCargo/Cardboard/CardboardBox_002_B00_L02_P00",
+      "position_index": 0,
+      "position_m": [
+        -25.33000687500893,
+        9.526972092351498,
+        3.0860591476891974
+      ],
+      "slot_id": "B00_L02_P00",
+      "static": true
+    },
+    {
+      "bay_id": 0,
+      "cargo_type": "cardboard",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7330300056828812,
+        0.9951932413804451,
+        0.5903421741141301
+      ],
+      "level_index": 2,
+      "path": "/World/AddedCargo/Cardboard/CardboardBox_003_B00_L02_P01",
+      "position_index": 1,
+      "position_m": [
+        -25.354522213496796,
+        10.907947345767635,
+        3.107171087057065
+      ],
+      "slot_id": "B00_L02_P01",
+      "static": true
+    },
+    {
+      "bay_id": 0,
+      "cargo_type": "metal",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.803595981298275,
+        1.024864087104631,
+        0.8142256495183536
+      ],
+      "level_index": 2,
+      "path": "/World/AddedCargo/Metal/MetalBox_001_B00_L02_P02",
+      "position_index": 2,
+      "position_m": [
+        -25.377281234457,
+        12.19994203442543,
+        3.2191128247591765
+      ],
+      "slot_id": "B00_L02_P02",
+      "static": true
+    },
+    {
+      "bay_id": 0,
+      "cargo_type": "cardboard",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.680481762031341,
+        0.8430448892102662,
+        0.7782727474753268
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Cardboard/CardboardBox_004_B00_L03_P00",
+      "position_index": 0,
+      "position_m": [
+        -25.273755367319414,
+        9.598074576212518,
+        4.699536373737663
+      ],
+      "slot_id": "B00_L03_P00",
+      "static": true
+    },
+    {
+      "bay_id": 1,
+      "cargo_type": "metal",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.8496889759691783,
+        0.980336398512056,
+        0.6296418211596098
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Metal/MetalBox_002_B01_L03_P01",
+      "position_index": 1,
+      "position_m": [
+        -25.35820050090141,
+        14.838617090788484,
+        4.426820910579804
+      ],
+      "slot_id": "B01_L03_P01",
+      "static": true
+    },
+    {
+      "bay_id": 1,
+      "cargo_type": "wood",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.8356653916219682,
+        1.0082576286187233,
+        0.8344488674941857
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Wood/WoodBox_001_B01_L03_P02",
+      "position_index": 2,
+      "position_m": [
+        -25.345218646505984,
+        16.249391909649763,
+        4.529224433747092
+      ],
+      "slot_id": "B01_L03_P02",
+      "static": true
+    },
+    {
+      "bay_id": 2,
+      "cargo_type": "cardboard",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7570853100707153,
+        0.8408478209070658,
+        0.8928584255445775
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Cardboard/CardboardBox_005_B02_L03_P00",
+      "position_index": 0,
+      "position_m": [
+        -25.312278097072316,
+        17.55215253436803,
+        4.558429212772288
+      ],
+      "slot_id": "B02_L03_P00",
+      "static": true
+    },
+    {
+      "bay_id": 2,
+      "cargo_type": "wood",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7859985717114462,
+        0.9827099736822418,
+        0.9405538907592994
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Wood/WoodBox_002_B02_L03_P01",
+      "position_index": 1,
+      "position_m": [
+        -25.31673987197308,
+        18.87894281824545,
+        4.582276945379649
+      ],
+      "slot_id": "B02_L03_P01",
+      "static": true
+    },
+    {
+      "bay_id": 2,
+      "cargo_type": "wood",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7317832013473216,
+        0.9989919710044906,
+        0.7829680289517296
+      ],
+      "level_index": 4,
+      "path": "/World/AddedCargo/Wood/WoodBox_003_B02_L04_P00",
+      "position_index": 0,
+      "position_m": [
+        -25.33535250324428,
+        17.55666695843948,
+        6.365484014475864
+      ],
+      "slot_id": "B02_L04_P00",
+      "static": true
+    },
+    {
+      "bay_id": 3,
+      "cargo_type": "cardboard",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7531596046996569,
+        0.8616673332514073,
+        0.6874923022893693
+      ],
+      "level_index": 1,
+      "path": "/World/AddedCargo/Cardboard/CardboardBox_006_B03_L01_P01",
+      "position_index": 1,
+      "position_m": [
+        -25.37650298120827,
+        22.91948237580496,
+        1.6557461511446847
+      ],
+      "slot_id": "B03_L01_P01",
+      "static": true
+    },
+    {
+      "bay_id": 3,
+      "cargo_type": "cardboard",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.8005239403809739,
+        1.0226913569220208,
+        0.8320996572863462
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Cardboard/CardboardBox_007_B03_L03_P00",
+      "position_index": 0,
+      "position_m": [
+        -25.326435424113797,
+        21.557593073510898,
+        4.528049828643172
+      ],
+      "slot_id": "B03_L03_P00",
+      "static": true
+    },
+    {
+      "bay_id": 3,
+      "cargo_type": "metal",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7976614310124971,
+        1.0651092261245205,
+        0.6793308646648392
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Metal/MetalBox_003_B03_L03_P01",
+      "position_index": 1,
+      "position_m": [
+        -25.319729212969488,
+        22.8905492966425,
+        4.451665432332419
+      ],
+      "slot_id": "B03_L03_P01",
+      "static": true
+    },
+    {
+      "bay_id": 4,
+      "cargo_type": "cardboard",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.8141148644849805,
+        0.9769281780048821,
+        0.779918611746736
+      ],
+      "level_index": 1,
+      "path": "/World/AddedCargo/Cardboard/CardboardBox_008_B04_L01_P00",
+      "position_index": 0,
+      "position_m": [
+        -20.433906837085058,
+        21.52173802535298,
+        1.701959305873368
+      ],
+      "slot_id": "B04_L01_P00",
+      "static": true
+    },
+    {
+      "bay_id": 4,
+      "cargo_type": "wood",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7082445756660956,
+        1.0231526035679968,
+        0.6362243647751491
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Wood/WoodBox_004_B04_L03_P02",
+      "position_index": 2,
+      "position_m": [
+        -20.441654386733507,
+        24.18935628266617,
+        4.628512182387574
+      ],
+      "slot_id": "B04_L03_P02",
+      "static": true
+    },
+    {
+      "bay_id": 4,
+      "cargo_type": "cardboard",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.6896276981028387,
+        0.9718280533107747,
+        0.6822019582041825
+      ],
+      "level_index": 4,
+      "path": "/World/AddedCargo/Cardboard/CardboardBox_009_B04_L04_P00",
+      "position_index": 0,
+      "position_m": [
+        -20.32572305733308,
+        21.523448544023875,
+        6.31510097910209
+      ],
+      "slot_id": "B04_L04_P00",
+      "static": true
+    },
+    {
+      "bay_id": 5,
+      "cargo_type": "wood",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.8595640901663154,
+        1.033354425602504,
+        0.7511954845469462
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Wood/WoodBox_005_B05_L03_P02",
+      "position_index": 2,
+      "position_m": [
+        -20.385232221627255,
+        20.218174239296477,
+        4.487597742273472
+      ],
+      "slot_id": "B05_L03_P02",
+      "static": true
+    },
+    {
+      "bay_id": 7,
+      "cargo_type": "cardboard",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.8482039599754914,
+        0.9708315179732119,
+        0.6256661617283255
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Cardboard/CardboardBox_010_B07_L03_P01",
+      "position_index": 1,
+      "position_m": [
+        -20.40102900685476,
+        10.893557062776173,
+        4.424833080864162
+      ],
+      "slot_id": "B07_L03_P01",
+      "static": true
+    },
+    {
+      "bay_id": 8,
+      "cargo_type": "metal",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7909889036407981,
+        0.861045966920135,
+        0.6865458738989267
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Metal/MetalBox_004_B08_L03_P02",
+      "position_index": 2,
+      "position_m": [
+        -15.470809697445576,
+        12.285584143638825,
+        4.455272936949463
+      ],
+      "slot_id": "B08_L03_P02",
+      "static": true
+    },
+    {
+      "bay_id": 10,
+      "cargo_type": "cardboard",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.6964018573849708,
+        0.8852684008533104,
+        0.5675128402987709
+      ],
+      "level_index": 1,
+      "path": "/World/AddedCargo/Cardboard/CardboardBox_011_B10_L01_P02",
+      "position_index": 2,
+      "position_m": [
+        -15.432555435780728,
+        20.145042408007463,
+        1.5957564201493855
+      ],
+      "slot_id": "B10_L01_P02",
+      "static": true
+    },
+    {
+      "bay_id": 14,
+      "cargo_type": "wood",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7005995462625484,
+        0.9558793404946674,
+        0.6028926060225611
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Wood/WoodBox_006_B14_L03_P00",
+      "position_index": 0,
+      "position_m": [
+        -10.517319232519366,
+        17.588882768094237,
+        4.41344630301128
+      ],
+      "slot_id": "B14_L03_P00",
+      "static": true
+    },
+    {
+      "bay_id": 14,
+      "cargo_type": "cardboard",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.6939303279038362,
+        0.9523531042609842,
+        0.9191747595762875
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Cardboard/CardboardBox_012_B14_L03_P01",
+      "position_index": 1,
+      "position_m": [
+        -10.481788890111845,
+        18.85051280090194,
+        4.571587379788143
+      ],
+      "slot_id": "B14_L03_P01",
+      "static": true
+    },
+    {
+      "bay_id": 15,
+      "cargo_type": "cardboard",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7861221431421094,
+        0.8644636592929986,
+        0.7803391806584199
+      ],
+      "level_index": 1,
+      "path": "/World/AddedCargo/Cardboard/CardboardBox_013_B15_L01_P00",
+      "position_index": 0,
+      "position_m": [
+        -10.467135851225693,
+        21.475500115880376,
+        1.70216959032921
+      ],
+      "slot_id": "B15_L01_P00",
+      "static": true
+    },
+    {
+      "bay_id": 15,
+      "cargo_type": "wood",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.8573548414546619,
+        1.0102524890873756,
+        0.9313030404106959
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Wood/WoodBox_007_B15_L03_P02",
+      "position_index": 2,
+      "position_m": [
+        -10.48142175307788,
+        24.195405635257053,
+        4.577651520205347
+      ],
+      "slot_id": "B15_L03_P02",
+      "static": true
+    },
+    {
+      "bay_id": 16,
+      "cargo_type": "metal",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7050199453911661,
+        0.8132827757420817,
+        0.8462075175557258
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Metal/MetalBox_005_B16_L03_P01",
+      "position_index": 1,
+      "position_m": [
+        -5.570288629705238,
+        22.8842071944611,
+        4.733503758777863
+      ],
+      "slot_id": "B16_L03_P01",
+      "static": true
+    },
+    {
+      "bay_id": 16,
+      "cargo_type": "metal",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7012851749197232,
+        0.9490969592537575,
+        0.812705738860763
+      ],
+      "level_index": 4,
+      "path": "/World/AddedCargo/Metal/MetalBox_006_B16_L04_P01",
+      "position_index": 1,
+      "position_m": [
+        -5.535423433042418,
+        22.818778333922456,
+        6.38035286943038
+      ],
+      "slot_id": "B16_L04_P01",
+      "static": true
+    },
+    {
+      "bay_id": 19,
+      "cargo_type": "metal",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7457610011069504,
+        1.0071147934335223,
+        0.7685826321913278
+      ],
+      "level_index": 1,
+      "path": "/World/AddedCargo/Metal/MetalBox_007_B19_L01_P01",
+      "position_index": 1,
+      "position_m": [
+        -5.554856410076164,
+        10.74985157761066,
+        1.6962913160956639
+      ],
+      "slot_id": "B19_L01_P01",
+      "static": true
+    },
+    {
+      "bay_id": 19,
+      "cargo_type": "cardboard",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7776130545743996,
+        0.9805960097500479,
+        0.8350581173714757
+      ],
+      "level_index": 1,
+      "path": "/World/AddedCargo/Cardboard/CardboardBox_014_B19_L01_P02",
+      "position_index": 2,
+      "position_m": [
+        -5.542030221478281,
+        12.130260103442389,
+        1.729529058685738
+      ],
+      "slot_id": "B19_L01_P02",
+      "static": true
+    },
+    {
+      "bay_id": 19,
+      "cargo_type": "metal",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7619296728535191,
+        0.9106056769016815,
+        0.9410983178039674
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Metal/MetalBox_008_B19_L03_P00",
+      "position_index": 0,
+      "position_m": [
+        -5.551436706329302,
+        9.481621048471661,
+        4.582549158901983
+      ],
+      "slot_id": "B19_L03_P00",
+      "static": true
+    },
+    {
+      "bay_id": 20,
+      "cargo_type": "wood",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.6839821477926711,
+        0.9033762250943698,
+        0.8937902239026053
+      ],
+      "level_index": 1,
+      "path": "/World/AddedCargo/Wood/WoodBox_008_B20_L01_P01",
+      "position_index": 1,
+      "position_m": [
+        -0.6214917087179449,
+        10.932258286919243,
+        1.7588951119513028
+      ],
+      "slot_id": "B20_L01_P01",
+      "static": true
+    },
+    {
+      "bay_id": 20,
+      "cargo_type": "metal",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.6913185185177657,
+        0.856545723377919,
+        0.7117007145129195
+      ],
+      "level_index": 2,
+      "path": "/World/AddedCargo/Metal/MetalBox_009_B20_L02_P01",
+      "position_index": 1,
+      "position_m": [
+        -0.5101280756371475,
+        10.842059513677746,
+        3.1678503572564596
+      ],
+      "slot_id": "B20_L02_P01",
+      "static": true
+    },
+    {
+      "bay_id": 20,
+      "cargo_type": "cardboard",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.78218246927614,
+        0.8391452439523645,
+        0.5465514908350647
+      ],
+      "level_index": 2,
+      "path": "/World/AddedCargo/Cardboard/CardboardBox_015_B20_L02_P02",
+      "position_index": 2,
+      "position_m": [
+        -0.6145925998528051,
+        12.267727700003155,
+        3.0852757454175324
+      ],
+      "slot_id": "B20_L02_P02",
+      "static": true
+    },
+    {
+      "bay_id": 20,
+      "cargo_type": "wood",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7950949434234746,
+        0.8910674741494566,
+        0.9632878095710353
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Wood/WoodBox_009_B20_L03_P01",
+      "position_index": 1,
+      "position_m": [
+        -0.6254853964240987,
+        10.947525530607566,
+        4.792043904785517
+      ],
+      "slot_id": "B20_L03_P01",
+      "static": true
+    },
+    {
+      "bay_id": 21,
+      "cargo_type": "metal",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7273265701772336,
+        0.8331821676280715,
+        0.7299349509755806
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Metal/MetalBox_010_B21_L03_P01",
+      "position_index": 1,
+      "position_m": [
+        -0.6414148857784394,
+        14.853995325507512,
+        4.47696747548779
+      ],
+      "slot_id": "B21_L03_P01",
+      "static": true
+    },
+    {
+      "bay_id": 21,
+      "cargo_type": "metal",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.6776595998417801,
+        0.9932296744832646,
+        0.7211239105101206
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Metal/MetalBox_011_B21_L03_P02",
+      "position_index": 2,
+      "position_m": [
+        -0.5238423311295525,
+        16.224262497018,
+        4.47256195525506
+      ],
+      "slot_id": "B21_L03_P02",
+      "static": true
+    },
+    {
+      "bay_id": 22,
+      "cargo_type": "cardboard",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.8184312083957147,
+        0.87250612976845,
+        0.8731451158897511
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Cardboard/CardboardBox_016_B22_L03_P01",
+      "position_index": 1,
+      "position_m": [
+        -0.6171571957289429,
+        18.890158720628005,
+        4.548572557944874
+      ],
+      "slot_id": "B22_L03_P01",
+      "static": true
+    },
+    {
+      "bay_id": 22,
+      "cargo_type": "metal",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7242349861148973,
+        0.9203616308798036,
+        0.7102513545738176
+      ],
+      "level_index": 4,
+      "path": "/World/AddedCargo/Metal/MetalBox_012_B22_L04_P00",
+      "position_index": 0,
+      "position_m": [
+        -0.6126322530557131,
+        17.620209747524267,
+        6.329125677286908
+      ],
+      "slot_id": "B22_L04_P00",
+      "static": true
+    },
+    {
+      "bay_id": 23,
+      "cargo_type": "metal",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.6950315685223339,
+        0.8249117768750626,
+        0.7635915050917058
+      ],
+      "level_index": 1,
+      "path": "/World/AddedCargo/Metal/MetalBox_013_B23_L01_P01",
+      "position_index": 1,
+      "position_m": [
+        -0.6374885387248141,
+        22.965896010463943,
+        1.693795752545853
+      ],
+      "slot_id": "B23_L01_P01",
+      "static": true
+    },
+    {
+      "bay_id": 23,
+      "cargo_type": "wood",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.708508310821077,
+        0.9311230443206843,
+        0.635312481152175
+      ],
+      "level_index": 1,
+      "path": "/World/AddedCargo/Wood/WoodBox_010_B23_L01_P02",
+      "position_index": 2,
+      "position_m": [
+        -0.5298747675695845,
+        24.226426699529892,
+        1.6296562405760875
+      ],
+      "slot_id": "B23_L01_P02",
+      "static": true
+    },
+    {
+      "bay_id": 24,
+      "cargo_type": "metal",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.8097701437756092,
+        0.9455895804026953,
+        0.6727343469580919
+      ],
+      "level_index": 1,
+      "path": "/World/AddedCargo/Metal/MetalBox_014_B24_L01_P01",
+      "position_index": 1,
+      "position_m": [
+        4.392144483220937,
+        22.830520796298217,
+        1.648367173479046
+      ],
+      "slot_id": "B24_L01_P01",
+      "static": true
+    },
+    {
+      "bay_id": 24,
+      "cargo_type": "cardboard",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.8543488053674367,
+        0.908691074187623,
+        0.5927953421473708
+      ],
+      "level_index": 1,
+      "path": "/World/AddedCargo/Cardboard/CardboardBox_017_B24_L01_P02",
+      "position_index": 2,
+      "position_m": [
+        4.386393421096612,
+        24.172669605605595,
+        1.6083976710736856
+      ],
+      "slot_id": "B24_L01_P02",
+      "static": true
+    },
+    {
+      "bay_id": 24,
+      "cargo_type": "metal",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.8387342688270719,
+        0.8651710876153488,
+        0.8527535042758779
+      ],
+      "level_index": 2,
+      "path": "/World/AddedCargo/Metal/MetalBox_015_B24_L02_P00",
+      "position_index": 0,
+      "position_m": [
+        4.3726763227136365,
+        21.468599115699224,
+        3.2383767521379387
+      ],
+      "slot_id": "B24_L02_P00",
+      "static": true
+    },
+    {
+      "bay_id": 24,
+      "cargo_type": "wood",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7442999481186128,
+        0.9061624016151435,
+        0.6567054509947367
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Wood/WoodBox_011_B24_L03_P00",
+      "position_index": 0,
+      "position_m": [
+        4.3233417350678485,
+        21.54660521113016,
+        4.638752725497368
+      ],
+      "slot_id": "B24_L03_P00",
+      "static": true
+    },
+    {
+      "bay_id": 24,
+      "cargo_type": "metal",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7173605375665102,
+        0.819406797101041,
+        0.8748305737143967
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Metal/MetalBox_016_B24_L03_P02",
+      "position_index": 2,
+      "position_m": [
+        4.4217584957859035,
+        24.222173037145723,
+        4.747815286857198
+      ],
+      "slot_id": "B24_L03_P02",
+      "static": true
+    },
+    {
+      "bay_id": 24,
+      "cargo_type": "metal",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.8056791780918783,
+        0.9428784799947721,
+        0.7721311462739462
+      ],
+      "level_index": 4,
+      "path": "/World/AddedCargo/Metal/MetalBox_017_B24_L04_P00",
+      "position_index": 0,
+      "position_m": [
+        4.401928591914792,
+        21.586814761425774,
+        6.360065573136972
+      ],
+      "slot_id": "B24_L04_P00",
+      "static": true
+    },
+    {
+      "bay_id": 24,
+      "cargo_type": "wood",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7653320520608679,
+        1.0611971657475348,
+        0.9562633085898351
+      ],
+      "level_index": 4,
+      "path": "/World/AddedCargo/Wood/WoodBox_012_B24_L04_P02",
+      "position_index": 2,
+      "position_m": [
+        4.3383554345396504,
+        24.216446737998652,
+        6.4521316542949165
+      ],
+      "slot_id": "B24_L04_P02",
+      "static": true
+    },
+    {
+      "bay_id": 26,
+      "cargo_type": "wood",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7533109389650452,
+        0.9211066597191139,
+        0.7379142885540777
+      ],
+      "level_index": 1,
+      "path": "/World/AddedCargo/Wood/WoodBox_013_B26_L01_P02",
+      "position_index": 2,
+      "position_m": [
+        4.42284807316723,
+        16.19541466084642,
+        1.680957144277039
+      ],
+      "slot_id": "B26_L01_P02",
+      "static": true
+    },
+    {
+      "bay_id": 26,
+      "cargo_type": "cardboard",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.694488869201845,
+        0.8953236952543453,
+        0.7832944860306934
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Cardboard/CardboardBox_018_B26_L03_P01",
+      "position_index": 1,
+      "position_m": [
+        4.451031825309189,
+        14.92112600943473,
+        4.503647243015346
+      ],
+      "slot_id": "B26_L03_P01",
+      "static": true
+    },
+    {
+      "bay_id": 27,
+      "cargo_type": "metal",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.7152336586630117,
+        0.8265360307976427,
+        0.8305748245490047
+      ],
+      "level_index": 1,
+      "path": "/World/AddedCargo/Metal/MetalBox_018_B27_L01_P00",
+      "position_index": 0,
+      "position_m": [
+        4.3545603013002,
+        9.621541120457563,
+        1.7272874122745023
+      ],
+      "slot_id": "B27_L01_P00",
+      "static": true
+    },
+    {
+      "bay_id": 27,
+      "cargo_type": "wood",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.8608680964622384,
+        0.9678288120632951,
+        0.6281752822766722
+      ],
+      "level_index": 1,
+      "path": "/World/AddedCargo/Wood/WoodBox_014_B27_L01_P01",
+      "position_index": 1,
+      "position_m": [
+        4.368067943431823,
+        10.94450663956314,
+        1.6260876411383363
+      ],
+      "slot_id": "B27_L01_P01",
+      "static": true
+    },
+    {
+      "bay_id": 27,
+      "cargo_type": "metal",
+      "collision": "convexHull",
+      "dimensions_m": [
+        0.84267057516377,
+        0.9748305807187448,
+        0.7068714889796367
+      ],
+      "level_index": 3,
+      "path": "/World/AddedCargo/Metal/MetalBox_019_B27_L03_P02",
+      "position_index": 2,
+      "position_m": [
+        4.362554494592321,
+        12.206170328215409,
+        4.465435744489818
+      ],
+      "slot_id": "B27_L03_P02",
+      "static": true
+    }
+  ],
+  "generated_cargo_by_type": {
+    "cardboard": 18,
+    "metal": 19,
+    "wood": 14
+  },
+  "generated_cargo_count": 51,
+  "modeled_storage_slot_count": 354,
+  "output_usd": "/home/jackson/racer2/RACER/ros2_3d_py_ws/warehouse_loaded.usd",
+  "rack_bay_count": 28,
+  "random_seed": 20260729,
+  "shelf_surface_count": 90,
+  "slot_definition": "Three pallet positions per 4 m rack bay, at the floor level and every detected SM_RackShelf_* storage surface.",
+  "slots_per_bay_lengthwise": 3,
+  "source_usd": "/home/jackson/racer2/RACER/ros2_3d_py_ws/warehouse.usd",
+  "static_collision_shape_count": 51,
+  "target_occupancy": 0.65,
+  "target_occupied_slot_count": 230
+}

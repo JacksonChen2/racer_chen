@@ -1,0 +1,172 @@
+{
+  "agent_status" : 
+  {
+    "0" : 
+    {
+      "completed" : false,
+      "coverage" : 0.89908861674239104,
+      "drone_id" : 0,
+      "frontier_clusters" : 180,
+      "implementation" : "racer_3d_cpp",
+      "owned_hgrid_cells" : 30,
+      "planning" : true
+    },
+    "1" : 
+    {
+      "completed" : false,
+      "coverage" : 0.89824334817069884,
+      "drone_id" : 1,
+      "frontier_clusters" : 175,
+      "implementation" : "racer_3d_cpp",
+      "owned_hgrid_cells" : 28,
+      "planning" : false
+    },
+    "2" : 
+    {
+      "completed" : false,
+      "coverage" : 0.89824334817069884,
+      "drone_id" : 2,
+      "frontier_clusters" : 175,
+      "implementation" : "racer_3d_cpp",
+      "owned_hgrid_cells" : 27,
+      "planning" : false
+    },
+    "3" : 
+    {
+      "completed" : false,
+      "coverage" : 0.89826179878072221,
+      "drone_id" : 3,
+      "frontier_clusters" : 194,
+      "implementation" : "racer_3d_cpp",
+      "owned_hgrid_cells" : 30,
+      "planning" : true
+    },
+    "4" : 
+    {
+      "completed" : false,
+      "coverage" : 0.89921392713546588,
+      "drone_id" : 4,
+      "frontier_clusters" : 192,
+      "implementation" : "racer_3d_cpp",
+      "owned_hgrid_cells" : 34,
+      "planning" : true
+    }
+  },
+  "all_agents_reporting" : true,
+  "backend" : "isaac_sim_physx_3d",
+  "clock_source" : "Isaac physics /clock",
+  "collision_events" : 388,
+  "completion_time_s" : 252.08700000083962,
+  "completion_wall_time_s" : 3679.0498731136322,
+  "drone_count" : 5,
+  "elapsed_s" : 252.40000000084112,
+  "final_positions" : 
+  {
+    "0" : 
+    [
+      2.999467134475708,
+      13.849099159240723,
+      0.50680923461914062
+    ],
+    "1" : 
+    [
+      1.1261690855026245,
+      -9.2776966094970703,
+      1.5542044639587402
+    ],
+    "2" : 
+    [
+      0.060101874172687531,
+      11.914641380310059,
+      2.3700029850006104
+    ],
+    "3" : 
+    [
+      -5.3972434997558594,
+      1.5653413534164429,
+      6.8847384452819824
+    ],
+    "4" : 
+    [
+      -2.9373438358306885,
+      -1.5692058801651001,
+      1.303837776184082
+    ]
+  },
+  "flight_distance_m" : 
+  [
+    285.52306533679757,
+    8.4196337460781088,
+    170.47673960753221,
+    286.13742513834973,
+    278.19519554815497
+  ],
+  "free_space_accuracy" : null,
+  "implementation" : "racer_3d_cpp",
+  "imu_rate_hz" : 200.0,
+  "known_voxels" : 4686369,
+  "map_quality_ground_truth_available" : false,
+  "max_contact_force" : 3048.588623046875,
+  "minimum_inter_drone_m" : 0.96514630326841599,
+  "minimum_obstacle_clearance_m" : 0.0045691718556516436,
+  "motion_source" : "RACER kf/km mixer, first-order RPM, SO3 torque and drag",
+  "obstacle_surface_recall" : null,
+  "occupied_precision" : null,
+  "odometry_rate_hz" : 200.0,
+  "passed" : false,
+  "performance" : 
+  {
+    "expected_point_cloud_frames" : 37860.000000126172,
+    "point_cloud_delivery_ratio" : 0.98045430533217892,
+    "realtime_factor" : 0.068567394433342477,
+    "safety_intervention_fraction" : 0.073863708399119932
+  },
+  "physics_contact_events" : 388,
+  "physics_rate_hz" : 1000.0,
+  "point_cloud_frames" : 37120,
+  "requirements" : 
+  {
+    "minimum_coverage" : 0.90000000000000002,
+    "minimum_inter_drone" : 0.59999999999999998,
+    "minimum_obstacle_clearance" : 0.02,
+    "require_physics_backend" : true
+  },
+  "safety_interventions" : 93216,
+  "scenario" : "warehouse_simple",
+  "sensor_parameters" : 
+  {
+    "cx_px" : 321.04599999999999,
+    "cy_px" : 243.44900000000001,
+    "fx_px" : 387.22899999999998,
+    "fy_px" : 387.22899999999998,
+    "height_px" : 480,
+    "map_max_range_m" : 4.5999999999999996,
+    "map_min_range_m" : 0.20000000000000001,
+    "mapping_cx_px" : 324.08798217773438,
+    "mapping_cy_px" : 239.10362243652344,
+    "mapping_fx_px" : 385.69793701171875,
+    "mapping_fy_px" : 385.69793701171875,
+    "mapping_max_ray_length_m" : 4.5,
+    "mapping_min_ray_length_m" : 0.5,
+    "mount_translation_body_m" : 
+    [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "point_cloud_ray_budget" : 2400,
+    "rate_hz" : 30.0,
+    "render_horizon_m" : 5.0,
+    "self_return_filter_radius_m" : 0.33200000000000002,
+    "skip_pixel" : 2,
+    "width_px" : 640
+  },
+  "sensor_rate_hz" : 30.0,
+  "sensor_source" : "Isaac ideal pinhole depth camera using upstream ROS1 RACER simulator calibration",
+  "total_flight_distance_m" : 1028.7520593769127,
+  "total_voxels" : 5203080,
+  "vehicle_asset_usd" : "/home/jackson/racer2/RACER/isaac_assets/racer_so3_quadrotor/usd/racer_so3_quadrotor_flattened.usd",
+  "vehicle_model" : "RACER SO3 0.98kg plus-quadrotor",
+  "volume_coverage" : 0.90069132129431029,
+  "wall_elapsed_s" : 3681.0498938560486
+}
