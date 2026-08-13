@@ -1,0 +1,195 @@
+{
+  "acceptance": {
+    "all_agents_executed_original_fsm": true,
+    "communication_proxy_active": true,
+    "isaac_exit_ok": true,
+    "lkh_services_healthy": true,
+    "minimum_inter_drone_distance_ok": true,
+    "normal_completion": false,
+    "original_algorithm_pipeline_observed": true,
+    "physical_return_within_original_1m_threshold": false,
+    "positive_obstacle_clearance": true,
+    "sionna_rt_active": true,
+    "zero_collisions": true
+  },
+  "algorithm": "original_racer_ros1_source_faithful_ros2_cpp_sionna_rt",
+  "algorithm_evidence": {
+    "frontier_updates": 4657,
+    "hgrid_tours": 5745,
+    "kinodynamic_mid_goals": 3325,
+    "lkh_acvrp_solutions": 10040,
+    "lkh_atsp_solutions": 10067,
+    "lkh_call_failures": 0,
+    "nlopt_trajectory_runs": 10193,
+    "pair_requests": 204,
+    "pair_responses": 97,
+    "process_crashes": 0,
+    "tracking_recoveries": 104,
+    "yaw_plans": 10193
+  },
+  "communication": {
+    "exact_link_samples": 179600,
+    "mode": "sionna",
+    "sionna_ready": true,
+    "statistics": {
+      "attempted_bytes": 2339359520,
+      "attempted_packets": 2689912,
+      "delivered_bytes": 32341796,
+      "delivered_packets": 74464,
+      "dropped_no_link": 1440,
+      "dropped_per": 87223,
+      "dropped_queue": 2177287,
+      "dropped_ttl": 320345,
+      "mean_delivery_delay_ms": 123.657,
+      "queued_bytes": 4203120,
+      "queued_packets": 29153,
+      "radio_map_cache_samples": 0,
+      "retried_packets": 200827,
+      "sionna_cache_corrected_samples": 0,
+      "sionna_exact_samples": 179600
+    }
+  },
+  "drone_count": 5,
+  "executed_drone_ids": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "finished_drone_ids": [
+    3
+  ],
+  "metrics": {
+    "backend": "isaac_sim_physx_3d",
+    "camera_ray_budget": 76800,
+    "collision_events": 0,
+    "elapsed": 900.004999999254,
+    "low_level_safety": "depth plus 360-degree safety-lidar, PhysX rigid-body sweep, and flight-volume stopping-distance barriers",
+    "mapping_coverage_counts_per_agent": [
+      {
+        "known_voxels": 2359729,
+        "total_voxels": 4596100
+      },
+      {
+        "known_voxels": 2447326,
+        "total_voxels": 4596100
+      },
+      {
+        "known_voxels": 3056971,
+        "total_voxels": 4596100
+      },
+      {
+        "known_voxels": 3375199,
+        "total_voxels": 4596100
+      },
+      {
+        "known_voxels": 359646,
+        "total_voxels": 4596100
+      }
+    ],
+    "mapping_coverage_definition": "known SDF voxels / configured planning-box voxels; joint value is the maximum over peer-fused agent maps",
+    "mapping_coverage_joint": 0.734361523901,
+    "mapping_coverage_per_agent": [
+      0.513419855965,
+      0.532478840756,
+      0.665122821523,
+      0.734361523901,
+      0.0782502556515
+    ],
+    "mapping_coverage_target": 0.0,
+    "mapping_coverage_target_reached": false,
+    "max_contact_force": 0.0,
+    "min_inter_drone": 1.6558229938645974,
+    "min_obstacle_clearance": 0.025725209200155197,
+    "min_sweep_free_travel": 0.026201963424682617,
+    "odometry_rate_hz": 200.0,
+    "path_lengths": [
+      416.3326893385065,
+      554.7699037473824,
+      458.049811329612,
+      800.0319042720802,
+      56.282145191456294
+    ],
+    "physics_contact_events": 0,
+    "physics_rate_hz": 200.0,
+    "point_cloud_frames": 45005,
+    "positions": [
+      [
+        2.5152230262756348,
+        5.666627883911133,
+        0.5249665379524231
+      ],
+      [
+        -7.54011344909668,
+        2.0126025676727295,
+        4.881961345672607
+      ],
+      [
+        6.006784439086914,
+        -9.58961296081543,
+        2.409430503845215
+      ],
+      [
+        7.246545791625977,
+        13.00076961517334,
+        2.8893308639526367
+      ],
+      [
+        8.726424217224121,
+        -8.66774845123291,
+        5.290912628173828
+      ]
+    ],
+    "safety_interventions": 404493,
+    "safety_point_refresh_hz": 10.0,
+    "scene_query_hits": 1260679,
+    "scene_query_updates": 225005,
+    "sensor_rate_hz": 10.0,
+    "sensor_source": "upstream_depth_plus_360_safety_lidar",
+    "start_positions": [
+      [
+        -6.0,
+        -10.0,
+        0.6
+      ],
+      [
+        0.0,
+        -10.0,
+        1.5
+      ],
+      [
+        6.0,
+        -10.0,
+        2.4
+      ],
+      [
+        -3.0,
+        -10.0,
+        1.05
+      ],
+      [
+        3.0,
+        -10.0,
+        1.95
+      ]
+    ],
+    "stop_reason": "duration",
+    "vehicle_asset_usd": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/isaac_assets/racer_so3_quadrotor/usd/crazyflie_with_racer_dynamics.usd",
+    "vehicle_model": "racer_so3"
+  },
+  "passed": false,
+  "require_completion": true,
+  "return_position_errors_m": [
+    17.831373543857563,
+    14.580589625173934,
+    0.4105514400744159,
+    25.246984801699746,
+    6.762287016527363
+  ],
+  "returned_drone_ids": [
+    3
+  ],
+  "scene": "warehouse_simple.usd",
+  "vehicle": "crazyflie_with_racer_dynamics.usd"
+}

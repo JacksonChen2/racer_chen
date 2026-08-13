@@ -1,0 +1,41 @@
+racer_sionna_communication_proxy:
+  ros__parameters:
+    mode: sionna
+    bandwidth_hz: 20000000.0
+    mac_efficiency: 0.55
+    base_latency_ms: 20.0
+    jitter_ms: 10.0
+    queue_capacity_bytes: 262144
+    mtu_bytes: 1200
+    snr_midpoint_db: 7.0
+    snr_slope_db: 1.8
+    max_retries: 3
+    retry_backoff_ms: 8.0
+    random_seed: 42
+    network_topology: distributed
+
+racer_sionna_channel:
+  ros__parameters:
+    require_sionna: true
+    allow_analytic_fallback: false
+    carrier_frequency_hz: 2437000000.0
+    bandwidth_hz: 20000000.0
+    tx_power_dbm: 20.0
+    uav_antenna_gain_dbi: 0.0
+    ap_tx_power_dbm: 20.0
+    ap_antenna_gain_dbi: 4.0
+    ap_position: [-0.5, 2.85, 8.10]
+    network_topology: distributed
+    receiver_noise_figure_db: 7.0
+    temperature_k: 290.0
+    solver_rate_hz: 0.5
+    publish_rate_hz: 10.0
+    link_validity_s: 0.5
+    max_exact_age_s: 5.0
+    recompute_distance_m: 0.4
+    max_depth: 2
+    samples_per_source: 100000
+    diffuse_reflection: false
+    refraction: true
+    random_seed: 42
+    fallback_path_loss_exponent: 2.2

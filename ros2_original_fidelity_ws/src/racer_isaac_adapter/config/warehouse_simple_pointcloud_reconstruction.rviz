@@ -1,0 +1,202 @@
+Panels:
+  - Class: rviz_common/Displays
+    Help Height: 100
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Global Options1
+        - /3-D point-cloud mapping1
+      Splitter Ratio: 0.55
+    Tree Height: 900
+  - Class: rviz_common/Views
+    Name: Views
+    Splitter Ratio: 0.5
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.35
+      Cell Size: 1
+      Class: rviz_default_plugins/Grid
+      Color: 120; 125; 135
+      Enabled: true
+      Line Style:
+        Line Width: 0.02
+        Value: Lines
+      Name: Ground grid
+      Normal Cell Count: 0
+      Offset: {X: 0, Y: 0, Z: 0}
+      Plane: XY
+      Plane Cell Count: 40
+      Reference Frame: <Fixed Frame>
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds: {Max Value: 4, Min Value: 0, Value: true}
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 255; 255; 255
+      Color Transformer: Intensity
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 40; 40
+      Max Intensity: 4
+      Min Color: 40; 120; 255
+      Min Intensity: 0
+      Name: Growing 3-D point-cloud map
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.08
+      Style: Boxes
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /racer_pointcloud_reconstruction/map
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Alpha: 0.9
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds: {Max Value: 4, Min Value: 0, Value: true}
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 255; 255; 255
+      Color Transformer: Intensity
+      Decay Time: 0.25
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 4
+      Min Color: 255; 255; 255
+      Min Intensity: 0
+      Name: Current depth hits
+      Position Transformer: XYZ
+      Selectable: false
+      Size (Pixels): 2
+      Size (m): 0.03
+      Style: Points
+      Topic:
+        Depth: 3
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /racer_pointcloud_reconstruction/current_hits
+      Use Fixed Frame: true
+      Use rainbow: false
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Reconstruction status
+      Namespaces: {pointcloud_reconstruction: true}
+      Queue Size: 10
+      Topic:
+        Depth: 3
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /racer_pointcloud_reconstruction/status
+      Value: true
+    - Class: rviz_common/Group
+      Displays:
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 242; 51; 46
+          Enabled: true
+          Line Style: Lines
+          Line Width: 0.04
+          Name: D0
+          Pose Style: None
+          Topic: {Depth: 3, Durability Policy: Volatile, History Policy: Keep Last, Reliability Policy: Reliable, Value: /racer_pointcloud_reconstruction/drone_0/path}
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 51; 217; 77
+          Enabled: true
+          Line Style: Lines
+          Line Width: 0.04
+          Name: D1
+          Pose Style: None
+          Topic: {Depth: 3, Durability Policy: Volatile, History Policy: Keep Last, Reliability Policy: Reliable, Value: /racer_pointcloud_reconstruction/drone_1/path}
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 46; 122; 255
+          Enabled: true
+          Line Style: Lines
+          Line Width: 0.04
+          Name: D2
+          Pose Style: None
+          Topic: {Depth: 3, Durability Policy: Volatile, History Policy: Keep Last, Reliability Policy: Reliable, Value: /racer_pointcloud_reconstruction/drone_2/path}
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 255; 199; 31
+          Enabled: true
+          Line Style: Lines
+          Line Width: 0.04
+          Name: D3
+          Pose Style: None
+          Topic: {Depth: 3, Durability Policy: Volatile, History Policy: Keep Last, Reliability Policy: Reliable, Value: /racer_pointcloud_reconstruction/drone_3/path}
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 235; 64; 235
+          Enabled: true
+          Line Style: Lines
+          Line Width: 0.04
+          Name: D4
+          Pose Style: None
+          Topic: {Depth: 3, Durability Policy: Volatile, History Policy: Keep Last, Reliability Policy: Reliable, Value: /racer_pointcloud_reconstruction/drone_4/path}
+          Value: true
+      Enabled: true
+      Name: Recorded flight paths
+  Enabled: true
+  Global Options:
+    Background Color: 28; 31; 38
+    Fixed Frame: world
+    Frame Rate: 30
+  Name: 3-D point-cloud mapping
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+  Transformation:
+    Current: {Class: rviz_default_plugins/TF}
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 42
+      Enable Stereo Rendering: {Stereo Eye Separation: 0.06, Stereo Focal Distance: 1, Swap Stereo Eyes: false, Value: false}
+      Focal Point: {X: -0.5, Y: 2.5, Z: 3.6}
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.01
+      Pitch: 0.62
+      Target Frame: <Fixed Frame>
+      Value: Orbit (rviz)
+      Yaw: 0.0
+    Saved: ~
+Window Geometry:
+  Height: 1376
+  Width: 2490
+  X: 70
+  Y: 64

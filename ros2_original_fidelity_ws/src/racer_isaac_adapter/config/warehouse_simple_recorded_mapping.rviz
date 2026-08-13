@@ -1,0 +1,278 @@
+Panels:
+  - Class: rviz_common/Displays
+    Help Height: 90
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Global Options1
+        - /Recorded RACER mapping1
+      Splitter Ratio: 0.55
+    Tree Height: 850
+  - Class: rviz_common/Views
+    Name: Views
+    Splitter Ratio: 0.5
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.35
+      Cell Size: 1
+      Class: rviz_default_plugins/Grid
+      Color: 120; 125; 135
+      Enabled: true
+      Line Style:
+        Line Width: 0.02
+        Value: Lines
+      Name: Ground grid
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Plane: XY
+      Plane Cell Count: 40
+      Reference Frame: <Fixed Frame>
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /racer_replay/mapping_progress
+      Name: Recorded coverage process
+      Namespaces:
+        coverage_chart: true
+        coverage_cursor: true
+        coverage_graph: true
+        planning_box: true
+        sensor_range: true
+        status: true
+      Queue Size: 10
+      Value: true
+    - Class: rviz_common/Group
+      Displays:
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 242; 51; 46
+          Enabled: true
+          Head Diameter: 0.25
+          Head Length: 0.2
+          Length: 0.3
+          Line Style: Lines
+          Line Width: 0.055
+          Name: D0 exact path
+          Pose Color: 242; 51; 46
+          Pose Style: None
+          Radius: 0.03
+          Shaft Diameter: 0.08
+          Shaft Length: 0.1
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /racer_replay/drone_0/path
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 51; 217; 77
+          Enabled: true
+          Line Style: Lines
+          Line Width: 0.055
+          Name: D1 exact path
+          Pose Style: None
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /racer_replay/drone_1/path
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 46; 122; 255
+          Enabled: true
+          Line Style: Lines
+          Line Width: 0.055
+          Name: D2 exact path
+          Pose Style: None
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /racer_replay/drone_2/path
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 255; 199; 31
+          Enabled: true
+          Line Style: Lines
+          Line Width: 0.055
+          Name: D3 exact path
+          Pose Style: None
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /racer_replay/drone_3/path
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 235; 64; 235
+          Enabled: true
+          Line Style: Lines
+          Line Width: 0.055
+          Name: D4 exact path
+          Pose Style: None
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /racer_replay/drone_4/path
+          Value: true
+      Enabled: true
+      Name: Exact traversed paths
+    - Alpha: 1
+      Class: rviz_default_plugins/RobotModel
+      Collision Enabled: false
+      Description Source: Topic
+      Description Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /racer_replay/drone_0/robot_description
+      Enabled: true
+      Links:
+        All Links Enabled: true
+        Expand Joint Details: false
+        Expand Link Details: false
+        Expand Tree: false
+        Link Tree Style: Links in Alphabetic Order
+      Mass Properties:
+        Inertia: false
+        Mass: false
+      Name: D0 Crazyflie model
+      TF Prefix: ""
+      Update Interval: 0
+      Value: true
+      Visual Enabled: true
+    - Alpha: 1
+      Class: rviz_default_plugins/RobotModel
+      Collision Enabled: false
+      Description Source: Topic
+      Description Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /racer_replay/drone_1/robot_description
+      Enabled: true
+      Name: D1 Crazyflie model
+      TF Prefix: ""
+      Update Interval: 0
+      Value: true
+      Visual Enabled: true
+    - Alpha: 1
+      Class: rviz_default_plugins/RobotModel
+      Collision Enabled: false
+      Description Source: Topic
+      Description Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /racer_replay/drone_2/robot_description
+      Enabled: true
+      Name: D2 Crazyflie model
+      TF Prefix: ""
+      Update Interval: 0
+      Value: true
+      Visual Enabled: true
+    - Alpha: 1
+      Class: rviz_default_plugins/RobotModel
+      Collision Enabled: false
+      Description Source: Topic
+      Description Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /racer_replay/drone_3/robot_description
+      Enabled: true
+      Name: D3 Crazyflie model
+      TF Prefix: ""
+      Update Interval: 0
+      Value: true
+      Visual Enabled: true
+    - Alpha: 1
+      Class: rviz_default_plugins/RobotModel
+      Collision Enabled: false
+      Description Source: Topic
+      Description Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /racer_replay/drone_4/robot_description
+      Enabled: true
+      Name: D4 Crazyflie model
+      TF Prefix: ""
+      Update Interval: 0
+      Value: true
+      Visual Enabled: true
+  Enabled: true
+  Global Options:
+    Background Color: 28; 31; 38
+    Fixed Frame: world
+    Frame Rate: 30
+  Name: Recorded RACER mapping
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 46
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.06
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
+      Focal Point:
+        X: -0.5
+        Y: 2.0
+        Z: 4.2
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.01
+      Pitch: 0.66
+      Target Frame: <Fixed Frame>
+      Value: Orbit (rviz)
+      Yaw: 0.0
+    Saved: ~
+Window Geometry:
+  Height: 1340
+  Width: 2440
+  X: 90
+  Y: 70

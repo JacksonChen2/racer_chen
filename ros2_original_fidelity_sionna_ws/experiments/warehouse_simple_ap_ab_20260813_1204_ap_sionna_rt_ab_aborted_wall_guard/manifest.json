@@ -1,0 +1,16 @@
+{
+  "bandwidth_hz": 20000000.0,
+  "carrier_frequency_hz": 2437000000.0,
+  "communication_mode": "sionna",
+  "deadline_rule": "stop at original RACER task completion or simulation deadline",
+  "deadline_seconds": 1800.0,
+  "drone_count": 5,
+  "random_seed": 42,
+  "scene_usd": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/ros2_3d_py_ws/warehouse_simple_with_industrial_ap.usda",
+  "sionna_scene_xml": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_simple_with_ap_sionna/warehouse.xml",
+  "topologies": [
+    "distributed",
+    "ap_assisted"
+  ],
+  "vehicle": "crazyflie_with_racer_dynamics.usd"
+}

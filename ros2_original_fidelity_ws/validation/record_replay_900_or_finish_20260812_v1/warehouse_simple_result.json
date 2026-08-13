@@ -1,0 +1,179 @@
+{
+  "acceptance": {
+    "all_agents_executed_original_fsm": true,
+    "isaac_exit_ok": true,
+    "lkh_services_healthy": true,
+    "minimum_inter_drone_distance_ok": true,
+    "normal_completion": true,
+    "original_algorithm_pipeline_observed": true,
+    "physical_return_within_original_1m_threshold": true,
+    "positive_obstacle_clearance": true,
+    "zero_collisions": true
+  },
+  "algorithm": "original_racer_ros1_source_faithful_ros2_cpp",
+  "algorithm_evidence": {
+    "frontier_updates": 3168,
+    "hgrid_tours": 3483,
+    "kinodynamic_mid_goals": 1700,
+    "lkh_acvrp_solutions": 26977,
+    "lkh_atsp_solutions": 6510,
+    "lkh_call_failures": 0,
+    "nlopt_trajectory_runs": 3232,
+    "pair_requests": 432,
+    "pair_responses": 432,
+    "process_crashes": 0,
+    "tracking_recoveries": 9,
+    "yaw_plans": 3232
+  },
+  "drone_count": 5,
+  "executed_drone_ids": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "finished_drone_ids": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "metrics": {
+    "backend": "isaac_sim_physx_3d",
+    "camera_ray_budget": 76800,
+    "collision_events": 0,
+    "elapsed": 502.5309999950286,
+    "low_level_safety": "depth plus 360-degree safety-lidar, PhysX rigid-body sweep, and flight-volume stopping-distance barriers",
+    "mapping_coverage_counts_per_agent": [
+      {
+        "known_voxels": 4562190,
+        "total_voxels": 4596100
+      },
+      {
+        "known_voxels": 4562163,
+        "total_voxels": 4596100
+      },
+      {
+        "known_voxels": 4562477,
+        "total_voxels": 4596100
+      },
+      {
+        "known_voxels": 4562155,
+        "total_voxels": 4596100
+      },
+      {
+        "known_voxels": 4570018,
+        "total_voxels": 4596100
+      }
+    ],
+    "mapping_coverage_definition": "known SDF voxels / configured planning-box voxels; joint value is the maximum over peer-fused agent maps",
+    "mapping_coverage_joint": 0.994325188747,
+    "mapping_coverage_per_agent": [
+      0.992622005613,
+      0.992616131068,
+      0.99268444986,
+      0.992614390461,
+      0.994325188747
+    ],
+    "mapping_coverage_target": 0.0,
+    "mapping_coverage_target_reached": false,
+    "max_contact_force": 0.0,
+    "min_inter_drone": 1.2942804899827651,
+    "min_obstacle_clearance": 0.13289066968046237,
+    "min_sweep_free_travel": 0.13289092481136322,
+    "odometry_rate_hz": 200.0,
+    "path_lengths": [
+      270.24435449907946,
+      284.01147412251373,
+      365.10895958313733,
+      311.18926323885313,
+      311.2061552837459
+    ],
+    "physics_contact_events": 0,
+    "physics_rate_hz": 1000.0,
+    "point_cloud_frames": 73905,
+    "positions": [
+      [
+        -6.039156436920166,
+        -9.345763206481934,
+        0.6000813841819763
+      ],
+      [
+        -0.011962027288973331,
+        -9.621954917907715,
+        1.4806972742080688
+      ],
+      [
+        5.982150077819824,
+        -9.072619438171387,
+        2.4120421409606934
+      ],
+      [
+        -2.959359645843506,
+        -9.664179801940918,
+        0.9621810913085938
+      ],
+      [
+        2.992539882659912,
+        -9.58306884765625,
+        1.9076955318450928
+      ]
+    ],
+    "safety_interventions": 897729,
+    "safety_point_refresh_hz": 30.0,
+    "scene_query_hits": 536743,
+    "scene_query_updates": 125635,
+    "sensor_rate_hz": 30.0,
+    "sensor_source": "upstream_depth_plus_360_safety_lidar",
+    "start_positions": [
+      [
+        -6.0,
+        -10.0,
+        0.6
+      ],
+      [
+        0.0,
+        -10.0,
+        1.5
+      ],
+      [
+        6.0,
+        -10.0,
+        2.4
+      ],
+      [
+        -3.0,
+        -10.0,
+        1.05
+      ],
+      [
+        3.0,
+        -10.0,
+        1.95
+      ]
+    ],
+    "stop_reason": "original_fsm_completion",
+    "vehicle_asset_usd": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/isaac_assets/racer_so3_quadrotor/usd/crazyflie_with_racer_dynamics.usd",
+    "vehicle_model": "racer_so3"
+  },
+  "passed": true,
+  "require_completion": false,
+  "return_position_errors_m": [
+    0.6554075183948297,
+    0.3787265100491689,
+    0.9276304972015043,
+    0.34948391169574017,
+    0.41913829122532426
+  ],
+  "returned_drone_ids": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "scene": "warehouse_simple.usd",
+  "vehicle": "crazyflie_with_racer_dynamics.usd"
+}

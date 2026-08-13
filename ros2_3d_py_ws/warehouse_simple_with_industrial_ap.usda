@@ -1,0 +1,22 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 1
+    subLayers = [
+        @warehouse_simple.usd@
+    ]
+    upAxis = "Z"
+)
+
+over "World"
+{
+    def Xform "IndustrialWifiAccessPoint" (
+        prepend references = @../isaac_assets/industrial_wifi_ap/industrial_wifi_ap.usda@
+    )
+    {
+        custom string experiment:role = "visible_and_rf_access_point"
+        custom double3 radio:phaseCenter = (-0.5, 2.85, 8.10)
+        double3 xformOp:translate = (-0.5, 2.85, 8.55)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}

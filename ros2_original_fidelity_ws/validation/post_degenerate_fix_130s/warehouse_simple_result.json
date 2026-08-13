@@ -1,0 +1,95 @@
+{
+  "acceptance": {
+    "all_agents_executed_original_fsm": true,
+    "isaac_exit_ok": true,
+    "lkh_services_healthy": true,
+    "minimum_inter_drone_distance_ok": true,
+    "normal_completion": false,
+    "original_algorithm_pipeline_observed": true,
+    "positive_obstacle_clearance": true,
+    "zero_collisions": true
+  },
+  "algorithm": "original_racer_ros1_source_faithful_ros2_cpp",
+  "algorithm_evidence": {
+    "frontier_updates": 1492,
+    "hgrid_tours": 1633,
+    "kinodynamic_mid_goals": 747,
+    "lkh_acvrp_solutions": 7843,
+    "lkh_atsp_solutions": 2976,
+    "lkh_call_failures": 0,
+    "nlopt_trajectory_runs": 1483,
+    "pair_requests": 594,
+    "pair_responses": 594,
+    "process_crashes": 0,
+    "yaw_plans": 1483
+  },
+  "drone_count": 5,
+  "executed_drone_ids": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "finished_drone_ids": [],
+  "metrics": {
+    "backend": "isaac_sim_physx_3d",
+    "camera_ray_budget": 800,
+    "collision_events": 0,
+    "low_level_safety": "depth plus 360-degree safety-lidar, PhysX rigid-body sweep, and flight-volume stopping-distance barriers",
+    "max_contact_force": 0.0,
+    "min_inter_drone": 1.2267258331882758,
+    "min_obstacle_clearance": 0.13294477598203513,
+    "odometry_rate_hz": 200.0,
+    "path_lengths": [
+      83.89700113100326,
+      65.52082907822172,
+      83.92802524598218,
+      77.81068732614644,
+      77.83395584868855
+    ],
+    "physics_contact_events": 0,
+    "physics_rate_hz": 200.0,
+    "point_cloud_frames": 3255,
+    "positions": [
+      [
+        -8.05420970916748,
+        -0.7675880193710327,
+        6.116178512573242
+      ],
+      [
+        1.163809061050415,
+        -3.3993842601776123,
+        6.763247013092041
+      ],
+      [
+        6.731278896331787,
+        -4.736887454986572,
+        5.231512546539307
+      ],
+      [
+        -6.553418159484863,
+        -3.9947781562805176,
+        8.070931434631348
+      ],
+      [
+        -1.4649803638458252,
+        -3.697538375854492,
+        0.8486831188201904
+      ]
+    ],
+    "safety_interventions": 65665,
+    "safety_point_refresh_hz": 5.0,
+    "scene_query_hits": 105071,
+    "scene_query_updates": 32505,
+    "sensor_rate_hz": 5.0,
+    "sensor_source": "upstream_depth_plus_360_safety_lidar",
+    "vehicle_asset_usd": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/isaac_assets/racer_so3_quadrotor/usd/crazyflie_with_racer_dynamics.usd",
+    "vehicle_model": "racer_so3"
+  },
+  "passed": true,
+  "require_completion": false,
+  "returned_drone_ids": [],
+  "scene": "warehouse_simple.usd",
+  "vehicle": "crazyflie_with_racer_dynamics.usd"
+}

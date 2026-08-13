@@ -1,0 +1,111 @@
+{
+  "agent_status" : 
+  {
+    "0" : 
+    {
+      "completed" : false,
+      "coverage" : 0.41224074074074074,
+      "drone_id" : 0,
+      "frontier_clusters" : 35,
+      "implementation" : "racer_3d_cpp",
+      "owned_hgrid_cells" : 2,
+      "planning" : true
+    },
+    "1" : 
+    {
+      "completed" : false,
+      "coverage" : 0.44363703703703705,
+      "drone_id" : 1,
+      "frontier_clusters" : 43,
+      "implementation" : "racer_3d_cpp",
+      "owned_hgrid_cells" : 9,
+      "planning" : true
+    },
+    "2" : 
+    {
+      "completed" : false,
+      "coverage" : 0.46186666666666665,
+      "drone_id" : 2,
+      "frontier_clusters" : 32,
+      "implementation" : "racer_3d_cpp",
+      "owned_hgrid_cells" : 10,
+      "planning" : true
+    }
+  },
+  "all_agents_reporting" : true,
+  "backend" : "ros_3d_cpp_mock",
+  "clock_source" : "wall clock",
+  "collision_events" : 0,
+  "completion_time_s" : null,
+  "completion_wall_time_s" : null,
+  "drone_count" : 3,
+  "elapsed_s" : 6.0499999999999865,
+  "final_positions" : 
+  {
+    "0" : 
+    [
+      -3.3972559592716687,
+      -2.5998655907055634,
+      0.87789158690140212
+    ],
+    "1" : 
+    [
+      -2.550634160616787,
+      1.0134012205375105,
+      0.75145902093334016
+    ],
+    "2" : 
+    [
+      -2.5773289544310765,
+      2.949090668022023,
+      1.3311072212731967
+    ]
+  },
+  "flight_distance_m" : 
+  [
+    2.4352674477609737,
+    4.1584715152326233,
+    3.1206042507063971
+  ],
+  "free_space_accuracy" : 0.99982602962990097,
+  "implementation" : "racer_3d_cpp",
+  "imu_rate_hz" : null,
+  "known_voxels" : 128449,
+  "map_quality_ground_truth_available" : true,
+  "max_contact_force" : 0.0,
+  "minimum_inter_drone_m" : 2.020791499704242,
+  "minimum_obstacle_clearance_m" : 0.065878034368045513,
+  "motion_source" : "C++ acceleration-limited 3-D point mass",
+  "obstacle_surface_recall" : 0.4667714884696017,
+  "occupied_precision" : 0.99866347777152509,
+  "odometry_rate_hz" : null,
+  "passed" : false,
+  "performance" : 
+  {
+    "expected_point_cloud_frames" : 0.0,
+    "point_cloud_delivery_ratio" : null,
+    "realtime_factor" : 1.2089208122955779,
+    "safety_intervention_fraction" : null
+  },
+  "physics_contact_events" : 0,
+  "physics_rate_hz" : null,
+  "point_cloud_frames" : 0,
+  "requirements" : 
+  {
+    "minimum_coverage" : 0.90000000000000002,
+    "minimum_inter_drone" : 0.59999999999999998,
+    "minimum_obstacle_clearance" : 0.02,
+    "require_physics_backend" : false
+  },
+  "safety_interventions" : 0,
+  "scenario" : "acceptance_15x9x2",
+  "sensor_parameters" : null,
+  "sensor_rate_hz" : null,
+  "sensor_source" : "C++ analytic 3-D lidar",
+  "total_flight_distance_m" : 9.7143432136999941,
+  "total_voxels" : 270000,
+  "vehicle_asset_usd" : null,
+  "vehicle_model" : "not_received",
+  "volume_coverage" : 0.49139936378239019,
+  "wall_elapsed_s" : 5.0044634342193604
+}

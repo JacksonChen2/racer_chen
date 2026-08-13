@@ -1,0 +1,19 @@
+/**:
+  ros__parameters:
+    map_resolution: 0.20
+    map_origin: [-7.5, -4.5, 0.0]
+    map_size: [15.0, 9.0, 2.0]
+    start_positions: [-6.4, -3.2, 0.45, -6.4, 0.0, 1.0, -6.4, 3.2, 1.55]
+    lidar_range: 7.0
+    planning_clearance: 0.22
+    control_clearance: 0.45
+    swarm_safe_distance: 0.65
+    emergency_distance: 0.80
+    max_speed: 0.35
+    max_acceleration: 1.40
+    planning_period: 1.0
+    pairwise_period: 3.0
+    peer_timeout: 3.0
+    completion_coverage: 0.90
+    coarse_grid_size: [5.0, 4.5, 2.0]
+    hgrid_levels: 2

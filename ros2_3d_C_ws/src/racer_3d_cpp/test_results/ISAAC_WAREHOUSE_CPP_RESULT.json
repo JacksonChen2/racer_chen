@@ -1,0 +1,91 @@
+{
+  "agent_status" : 
+  {
+    "0" : 
+    {
+      "completed" : true,
+      "coverage" : 0.90102631518254572,
+      "drone_id" : 0,
+      "frontier_clusters" : 48,
+      "implementation" : "racer_3d_cpp",
+      "owned_hgrid_cells" : 35,
+      "planning" : false
+    },
+    "1" : 
+    {
+      "completed" : true,
+      "coverage" : 0.90102631518254572,
+      "drone_id" : 1,
+      "frontier_clusters" : 48,
+      "implementation" : "racer_3d_cpp",
+      "owned_hgrid_cells" : 33,
+      "planning" : false
+    },
+    "2" : 
+    {
+      "completed" : true,
+      "coverage" : 0.90102631518254572,
+      "drone_id" : 2,
+      "frontier_clusters" : 48,
+      "implementation" : "racer_3d_cpp",
+      "owned_hgrid_cells" : 37,
+      "planning" : false
+    }
+  },
+  "all_agents_reporting" : true,
+  "backend" : "isaac_sim_physx_3d",
+  "collision_events" : 0,
+  "completion_time_s" : 458.85999999987263,
+  "completion_wall_time_s" : 463.69974637031555,
+  "drone_count" : 3,
+  "elapsed_s" : 459.17999999987234,
+  "final_positions" : 
+  {
+    "0" : 
+    [
+      1.9191617965698242,
+      7.8162755966186523,
+      3.0998325347900391
+    ],
+    "1" : 
+    [
+      2.2273588180541992,
+      7.1695947647094727,
+      3.4541902542114258
+    ],
+    "2" : 
+    [
+      6.1024951934814453,
+      14.350342750549316,
+      4.1365714073181152
+    ]
+  },
+  "flight_distance_m" : 
+  [
+    156.68388801117487,
+    156.37660667229,
+    157.622252972555
+  ],
+  "free_space_accuracy" : null,
+  "implementation" : "racer_3d_cpp",
+  "known_voxels" : 586014,
+  "map_quality_ground_truth_available" : false,
+  "minimum_inter_drone_m" : 0.50468156174524581,
+  "minimum_obstacle_clearance_m" : 0.24938484673099953,
+  "obstacle_surface_recall" : null,
+  "occupied_precision" : null,
+  "passed" : true,
+  "physics_contact_events" : 0,
+  "requirements" : 
+  {
+    "minimum_coverage" : 0.90000000000000002,
+    "minimum_inter_drone" : 0.34999999999999998,
+    "minimum_obstacle_clearance" : 0.02,
+    "require_physics_backend" : true
+  },
+  "scenario" : "warehouse_simple",
+  "total_flight_distance_m" : 470.68274765601984,
+  "total_voxels" : 650385,
+  "volume_coverage" : 0.90102631518254572,
+  "wall_elapsed_s" : 466.19974517822266
+}

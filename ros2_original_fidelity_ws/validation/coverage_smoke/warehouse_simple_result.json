@@ -1,0 +1,161 @@
+{
+  "acceptance": {
+    "all_agents_executed_original_fsm": false,
+    "isaac_exit_ok": true,
+    "lkh_services_healthy": true,
+    "minimum_inter_drone_distance_ok": true,
+    "normal_completion": false,
+    "original_algorithm_pipeline_observed": false,
+    "physical_return_within_original_1m_threshold": true,
+    "positive_obstacle_clearance": false,
+    "zero_collisions": true
+  },
+  "algorithm": "original_racer_ros1_source_faithful_ros2_cpp",
+  "algorithm_evidence": {
+    "frontier_updates": 6,
+    "hgrid_tours": 1,
+    "kinodynamic_mid_goals": 0,
+    "lkh_acvrp_solutions": 1,
+    "lkh_atsp_solutions": 1,
+    "lkh_call_failures": 0,
+    "nlopt_trajectory_runs": 0,
+    "pair_requests": 1,
+    "pair_responses": 1,
+    "process_crashes": 0,
+    "tracking_recoveries": 0,
+    "yaw_plans": 0
+  },
+  "drone_count": 5,
+  "executed_drone_ids": [],
+  "finished_drone_ids": [],
+  "metrics": {
+    "backend": "isaac_sim_physx_3d",
+    "camera_ray_budget": 2000,
+    "collision_events": 0,
+    "elapsed": 3.000000000000002,
+    "low_level_safety": "depth plus 360-degree safety-lidar, PhysX rigid-body sweep, and flight-volume stopping-distance barriers",
+    "mapping_coverage_counts_per_agent": [
+      {
+        "known_voxels": 92348,
+        "total_voxels": 4596100
+      },
+      {
+        "known_voxels": 92212,
+        "total_voxels": 4596100
+      },
+      {
+        "known_voxels": 92334,
+        "total_voxels": 4596100
+      },
+      {
+        "known_voxels": 92206,
+        "total_voxels": 4596100
+      },
+      {
+        "known_voxels": 122068,
+        "total_voxels": 4596100
+      }
+    ],
+    "mapping_coverage_definition": "known SDF voxels / configured planning-box voxels; joint value is the maximum over peer-fused agent maps",
+    "mapping_coverage_joint": 0.0265590391854,
+    "mapping_coverage_per_agent": [
+      0.0200926872783,
+      0.0200630969735,
+      0.0200896412176,
+      0.0200617915189,
+      0.0265590391854
+    ],
+    "mapping_coverage_target": 0.95,
+    "mapping_coverage_target_reached": false,
+    "max_contact_force": 0.0,
+    "min_inter_drone": 3.0313513707446496,
+    "min_obstacle_clearance": -0.0628940478309547,
+    "min_sweep_free_travel": 0.0,
+    "odometry_rate_hz": 200.0,
+    "path_lengths": [
+      0.0229102838863997,
+      0.0,
+      9.536743172944284e-08,
+      4.768371586472142e-08,
+      4.768371586472142e-08
+    ],
+    "physics_contact_events": 0,
+    "physics_rate_hz": 50.0,
+    "point_cloud_frames": 75,
+    "positions": [
+      [
+        -6.001067161560059,
+        -10.003462791442871,
+        0.622594952583313
+      ],
+      [
+        0.0,
+        -10.0,
+        1.5
+      ],
+      [
+        6.0,
+        -10.0,
+        2.4000000953674316
+      ],
+      [
+        -3.0,
+        -10.0,
+        1.0499999523162842
+      ],
+      [
+        3.0,
+        -10.0,
+        1.9500000476837158
+      ]
+    ],
+    "safety_interventions": 20,
+    "safety_point_refresh_hz": 5.0,
+    "scene_query_hits": 1800,
+    "scene_query_updates": 750,
+    "sensor_rate_hz": 5.0,
+    "sensor_source": "upstream_depth_plus_360_safety_lidar",
+    "start_positions": [
+      [
+        -6.0,
+        -10.0,
+        0.6
+      ],
+      [
+        0.0,
+        -10.0,
+        1.5
+      ],
+      [
+        6.0,
+        -10.0,
+        2.4
+      ],
+      [
+        -3.0,
+        -10.0,
+        1.05
+      ],
+      [
+        3.0,
+        -10.0,
+        1.95
+      ]
+    ],
+    "stop_reason": "duration",
+    "vehicle_asset_usd": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/isaac_assets/racer_so3_quadrotor/usd/crazyflie_with_racer_dynamics.usd",
+    "vehicle_model": "racer_so3"
+  },
+  "passed": false,
+  "require_completion": false,
+  "return_position_errors_m": [
+    0.022883654441855462,
+    0.0,
+    9.536743172944284e-08,
+    4.768371586472142e-08,
+    4.768371586472142e-08
+  ],
+  "returned_drone_ids": [],
+  "scene": "warehouse_simple.usd",
+  "vehicle": "crazyflie_with_racer_dynamics.usd"
+}

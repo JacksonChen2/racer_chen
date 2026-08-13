@@ -1,11 +1,14 @@
-swarm_exploration/utils/lkh_mtsp_solver/resource/*.atsp
-swarm_exploration/utils/lkh_mtsp_solver/resource/*.par
-swarm_exploration/utils/lkh_mtsp_solver/resource/*.tour
+# ROS / colcon generated products
 build/
-devel/
 install/
 log/
 logs/
+build_*/
+install_*/
+log_*/
+third_party/nlopt-build/
+
+# Python caches and local environments
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -14,5 +17,25 @@ __pycache__/
 .coverage
 htmlcov/
 .venv/
+venv/
+.sionna_runtime/
+
+# IDE and operating-system state
 .vscode/
 .idea/
+.DS_Store
+
+# Local runtime output (curated package test_results remain tracked)
+/results/
+
+# Large local simulation and validation traces. Keep the compact JSON/Markdown
+# summaries in these directories, but regenerate raw logs locally as needed.
+*.log
+*.log.*
+*.bag
+*.db3
+
+# RACER/LKH temporary solver files
+*.atsp
+*.par
+*.tour
