@@ -34,9 +34,12 @@ def _launch_nodes(context):
         raise RuntimeError(f"unsupported warehouse scenario: {scenario}")
     communication_mode = LaunchConfiguration("communication_mode").perform(context)
     network_topology = LaunchConfiguration("network_topology").perform(context)
-    if network_topology not in ("distributed", "ap_assisted"):
+    if network_topology not in (
+        "distributed", "ap_assisted", "bs_round_robin"
+    ):
         raise RuntimeError(
-            "network_topology must be distributed or ap_assisted"
+            "network_topology must be distributed, ap_assisted, or "
+            "bs_round_robin"
         )
     require_sionna = LaunchConfiguration("require_sionna").perform(context).lower() in (
         "1", "true", "yes", "on"
@@ -49,6 +52,7 @@ def _launch_nodes(context):
         / "original_warehouse_simple.yaml"
     )
     scenario_parameters = {}
+    ap_position = [-0.5, 2.85, 8.10]
     if scenario in ("warehouse_loaded", "warehouse_loaded_center"):
         # Coordinate/storage adaptation only; all upstream RACER planning
         # modules continue to consume the same parameters and code paths.
@@ -64,6 +68,9 @@ def _launch_nodes(context):
             "sdf_map.box_max_y": 26.2,
             "sdf_map.box_max_z": 8.4,
         }
+        # Centre of the loaded RACER flight volume, mounted with the same
+        # enclosure/phase-centre offset as the Warehouse Simple BS.
+        ap_position = [-10.5, 16.7, 8.10]
     lkh_executable = str(
         Path(get_package_prefix("racer_original_core"))
         / "lib"
@@ -226,6 +233,7 @@ def _launch_nodes(context):
                         "use_sim_time": True,
                         "drone_count": drone_count,
                         "network_topology": network_topology,
+                        "ap_position": ap_position,
                         "scene_xml": LaunchConfiguration("sionna_scene_xml").perform(context),
                         "radio_map_cache": LaunchConfiguration("radio_map_cache").perform(context),
                         "require_sionna": require_sionna,

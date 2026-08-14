@@ -56,8 +56,8 @@ interactive_hz="${RACER_INTERACTIVE_RENDER_HZ:-30}"
 map_points="${RACER_VISUALIZATION_MAX_MAP_POINTS:-12000}"
 record_trajectory_history="${RACER_RECORD_TRAJECTORY_HISTORY:-0}"
 result_dir="${RACER_RESULT_DIR:-${workspace_dir}/validation}"
-if [[ "${network_topology}" != "distributed" && "${network_topology}" != "ap_assisted" ]]; then
-  printf 'RACER_NETWORK_TOPOLOGY must be distributed or ap_assisted.\n' >&2
+if [[ "${network_topology}" != "distributed" && "${network_topology}" != "ap_assisted" && "${network_topology}" != "bs_round_robin" ]]; then
+  printf 'RACER_NETWORK_TOPOLOGY must be distributed, ap_assisted, or bs_round_robin.\n' >&2
   exit 2
 fi
 if [[ ! "${wall_time_multiplier}" =~ ^[1-9][0-9]*$ || ! "${wall_time_grace}" =~ ^[0-9]+$ ]]; then
@@ -74,7 +74,7 @@ result_file="${result_dir}/${run_tag}_result.json"
 
 if [[ "${scenario}" == "warehouse_loaded" || "${scenario}" == "warehouse_loaded_center" ]]; then
   # This layer lives next to its relative warehouse.usd dependency.
-  default_scene_usd="${repo_root}/ros2_3d_py_ws/warehouse_loaded.usd"
+  default_scene_usd="${repo_root}/ros2_3d_py_ws/warehouse_loaded_with_industrial_ap.usda"
   default_sionna_scene_xml="${workspace_dir}/src/racer_sionna_comm/assets/warehouse_loaded_sionna/warehouse.xml"
   default_radio_map_cache="${workspace_dir}/src/racer_sionna_comm/assets/warehouse_loaded_sionna/hybrid_radio_cache.npz"
 elif [[ "${scenario}" == "warehouse_simple" ]]; then
@@ -256,7 +256,16 @@ topology_active = (
     communication_statistics.get("network_topology") == network_topology
     and (
         network_topology == "distributed"
-        or communication_statistics.get("ap_global_updates_received", 0) > 0
+        or (
+            network_topology == "ap_assisted"
+            and communication_statistics.get("ap_global_updates_received", 0) > 0
+        )
+        or (
+            network_topology == "bs_round_robin"
+            and communication_statistics.get("bs_round_robin_enabled") is True
+            and communication_statistics.get("bs_round_robin_turns", 0) >= drone_count
+            and communication_statistics.get("bs_upload_grants_delivered", 0) > 0
+        )
     )
 )
 finished = sorted({

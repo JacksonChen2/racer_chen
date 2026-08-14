@@ -136,7 +136,9 @@ class SionnaChannelNode(Node):
         self.network_topology = str(
             self.declare_parameter("network_topology", "distributed").value
         )
-        self.ap_enabled = self.network_topology == "ap_assisted"
+        self.ap_enabled = self.network_topology in (
+            "ap_assisted", "bs_round_robin"
+        )
         self.ap_node_id = self.drone_count if self.ap_enabled else None
         self.node_count = self.drone_count + int(self.ap_enabled)
         self.ap_position = np.asarray(
@@ -157,22 +159,40 @@ class SionnaChannelNode(Node):
             self.declare_parameter("allow_analytic_fallback", False).value
         )
         self.frequency_hz = float(
-            self.declare_parameter("carrier_frequency_hz", 2.4e9).value
+            self.declare_parameter("carrier_frequency_hz", 28.0e9).value
         )
         self.bandwidth_hz = float(
-            self.declare_parameter("bandwidth_hz", 20.0e6).value
+            self.declare_parameter("bandwidth_hz", 100.0e6).value
         )
         self.tx_power_dbm = float(
-            self.declare_parameter("tx_power_dbm", 20.0).value
+            self.declare_parameter("tx_power_dbm", 23.0).value
         )
         self.ap_tx_power_dbm = float(
-            self.declare_parameter("ap_tx_power_dbm", 20.0).value
+            self.declare_parameter("ap_tx_power_dbm", 33.0).value
         )
         self.uav_antenna_gain_dbi = float(
             self.declare_parameter("uav_antenna_gain_dbi", 0.0).value
         )
         self.ap_antenna_gain_dbi = float(
-            self.declare_parameter("ap_antenna_gain_dbi", 4.0).value
+            self.declare_parameter("ap_antenna_gain_dbi", 0.0).value
+        )
+        self.uav_array_rows = int(
+            self.declare_parameter("uav_array_rows", 4).value
+        )
+        self.uav_array_cols = int(
+            self.declare_parameter("uav_array_cols", 4).value
+        )
+        self.ap_array_rows = int(
+            self.declare_parameter("ap_array_rows", 8).value
+        )
+        self.ap_array_cols = int(
+            self.declare_parameter("ap_array_cols", 8).value
+        )
+        self.directional_beamforming = bool(
+            self.declare_parameter("directional_beamforming", True).value
+        )
+        self.small_scale_fading = str(
+            self.declare_parameter("small_scale_fading", "none").value
         )
         self.noise_figure_db = float(
             self.declare_parameter("receiver_noise_figure_db", 7.0).value
@@ -210,16 +230,34 @@ class SionnaChannelNode(Node):
             self.declare_parameter("fallback_path_loss_exponent", 2.2).value
         )
 
-        if self.network_topology not in ("distributed", "ap_assisted"):
+        if self.network_topology not in (
+            "distributed", "ap_assisted", "bs_round_robin"
+        ):
             raise ValueError(
-                "network_topology must be distributed or ap_assisted"
+                "network_topology must be distributed, ap_assisted, or "
+                "bs_round_robin"
             )
         if self.ap_position.shape != (3,) or not np.all(
             np.isfinite(self.ap_position)
         ):
             raise ValueError("ap_position must contain three finite coordinates")
-        if self.drone_count <= 0 or self.solver_rate_hz <= 0.0 or self.publish_rate_hz <= 0.0:
+        if (
+            self.drone_count <= 0
+            or self.solver_rate_hz <= 0.0
+            or self.publish_rate_hz <= 0.0
+            or min(
+                self.uav_array_rows,
+                self.uav_array_cols,
+                self.ap_array_rows,
+                self.ap_array_cols,
+            ) <= 0
+        ):
             raise ValueError("drone_count and channel rates must be positive")
+        if self.small_scale_fading != "none":
+            raise ValueError(
+                "small_scale_fading must be 'none'; Sionna RT paths are used "
+                "without an added Rayleigh process"
+            )
         self.noise_power_dbm = (
             -174.0
             + 10.0 * math.log10(self.bandwidth_hz)
@@ -354,6 +392,14 @@ class SionnaChannelNode(Node):
                 "radio_node_count": self.node_count,
                 "ap_node_id": self.ap_node_id,
                 "ap_position": self.ap_position.tolist(),
+                "carrier_frequency_hz": self.frequency_hz,
+                "bandwidth_hz": self.bandwidth_hz,
+                "uav_tx_power_dbm": self.tx_power_dbm,
+                "bs_tx_power_dbm": self.ap_tx_power_dbm,
+                "uav_upa": [self.uav_array_rows, self.uav_array_cols],
+                "bs_upa": [self.ap_array_rows, self.ap_array_cols],
+                "directional_beamforming": self.directional_beamforming,
+                "small_scale_fading": self.small_scale_fading,
             },
             sort_keys=True,
         )
@@ -599,6 +645,23 @@ class SionnaChannelNode(Node):
         rx_gain_dbi = (
             self.ap_antenna_gain_dbi if receiver_is_ap else self.uav_antenna_gain_dbi
         )
+        if self.directional_beamforming:
+            tx_elements = (
+                self.ap_array_rows * self.ap_array_cols
+                if sender_is_ap
+                else self.uav_array_rows * self.uav_array_cols
+            )
+            rx_elements = (
+                self.ap_array_rows * self.ap_array_cols
+                if receiver_is_ap
+                else self.uav_array_rows * self.uav_array_cols
+            )
+            # Per-link conjugate beam steering supplies the coherent UPA gain.
+            # Geometry, occlusion, reflection, diffraction settings, and path
+            # gain still come exclusively from Sionna RT. No random fading is
+            # superimposed on those deterministic paths.
+            tx_gain_dbi += 10.0 * math.log10(float(tx_elements))
+            rx_gain_dbi += 10.0 * math.log10(float(rx_elements))
         rss_dbm = tx_power_dbm + tx_gain_dbi + rx_gain_dbi + gain_db
         return {
             "distance": distance,

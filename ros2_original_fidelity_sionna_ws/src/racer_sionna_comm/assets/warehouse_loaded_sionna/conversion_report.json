@@ -11,14 +11,14 @@
     -41.41703414916992,
     -0.009031959809362888
   ],
-  "exported_mesh_prim_count": 7134,
+  "exported_mesh_prim_count": 7135,
   "geometry_mode": "oriented_bbox_proxy",
-  "input_usd": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/ros2_3d_py_ws/warehouse_loaded.usd",
-  "mesh_prim_count": 7146,
+  "input_usd": "/home/jackson/racer2/racer_cloud/racer_chen/ros2_3d_py_ws/warehouse_loaded_with_industrial_ap.usda",
+  "mesh_prim_count": 7147,
   "output_units": "meter",
   "output_up_axis": "Z",
-  "output_xml": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/warehouse.xml",
-  "prim_count": 43872,
+  "output_xml": "/home/jackson/racer2/racer_cloud/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/warehouse.xml",
+  "prim_count": 43896,
   "rf_material_groups": {
     "ceiling_board": {
       "bounds_max_m": [
@@ -31,7 +31,7 @@
         -41.40703201293945,
         3.0
       ],
-      "file": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_ceiling_board.ply",
+      "file": "/home/jackson/racer2/racer_cloud/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_ceiling_board.ply",
       "file_size_bytes": 46081,
       "source_meshes": 182,
       "triangles": 2184,
@@ -48,7 +48,7 @@
         -11.189949035644531,
         -2.47955313170678e-07
       ],
-      "file": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_chipboard.ply",
+      "file": "/home/jackson/racer2/racer_cloud/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_chipboard.ply",
       "file_size_bytes": 469947,
       "source_meshes": 1864,
       "triangles": 22368,
@@ -65,7 +65,7 @@
         -23.431610107421875,
         -8.583068478174027e-08
       ],
-      "file": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_concrete.ply",
+      "file": "/home/jackson/racer2/racer_cloud/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_concrete.ply",
       "file_size_bytes": 109081,
       "source_meshes": 432,
       "triangles": 5184,
@@ -82,11 +82,11 @@
         -41.41703414916992,
         -0.0019066845998167992
       ],
-      "file": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_metal.ply",
-      "file_size_bytes": 1078023,
-      "source_meshes": 4277,
-      "triangles": 51324,
-      "vertices": 34216
+      "file": "/home/jackson/racer2/racer_cloud/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_metal.ply",
+      "file_size_bytes": 1078275,
+      "source_meshes": 4278,
+      "triangles": 51336,
+      "vertices": 34224
     },
     "plywood": {
       "bounds_max_m": [
@@ -99,7 +99,7 @@
         8.805994987487793,
         -0.009031959809362888
       ],
-      "file": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_plywood.ply",
+      "file": "/home/jackson/racer2/racer_cloud/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_plywood.ply",
       "file_size_bytes": 54397,
       "source_meshes": 215,
       "triangles": 2580,
@@ -116,7 +116,7 @@
         -17.258304595947266,
         -0.00017162565200123936
       ],
-      "file": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_wood.ply",
+      "file": "/home/jackson/racer2/racer_cloud/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_wood.ply",
       "file_size_bytes": 41545,
       "source_meshes": 164,
       "triangles": 1968,
@@ -291,6 +291,6 @@
       18
     ]
   ],
-  "triangle_count": 85608,
+  "triangle_count": 85620,
   "unresolved_dependencies": []
 }

@@ -66,6 +66,52 @@ JSON、每秒覆盖率历史、0.5 秒采样轨迹、`coverage_curve.csv`、`com
 和 `comparison.md`。原 UAV 直链使用逐链路独立的确定性随机流，新增 AP 链路不会
 仅因消耗额外随机数而改变对照组的直链丢包序列。
 
+## 28 GHz 中心基站 Round Robin 实验
+
+`bs_round_robin` 保留 UAV↔UAV 的原 RACER 广播内容与 chunk bookkeeping，同时让
+中心 BS 逐架服务 UAV。每个服务轮次只放行当前 UAV 的 BS 下行与上行：BS 先向它
+发送上传授权，并从全局 chunk 集合中下发该 UAV 缺少的 chunk；授权成功后，该 UAV
+只上传自己已知、BS 尚未知且已有 payload 的增量 chunk。每轮上下行均有 chunk 数
+上限，未成功或未发完的差集留到下一次 Round Robin 轮次。
+
+PHY 配置为 28 GHz、100 MHz、120 kHz SCS、normal-CP OFDM（66 PRB），BS 为
+8×8 UPA/33 dBm，UAV 为 4×4 UPA/23 dBm。链路路径增益、厂房遮挡和反射由在线
+Sionna RT 计算；UPA 采用逐链路相干定向波束增益，不叠加 Rayleigh fading。数据面
+使用 5G NR LDPC waterfall 模型，并以初始 TBLER 10% 为目标在 QPSK、16QAM、
+64QAM、256QAM 间自适应选取 MCS。900 秒或原 RACER 任务完成即停止：
+
+```bash
+./run_warehouse_simple_bs_round_robin_900s.sh
+```
+
+最终 JSON 的 `communication.statistics` 会记录 Round Robin 轮数、授权成功数、
+BS 上下行增量 chunk 数、各 MCS 使用次数及完整 PHY 参数，便于确认实际生效配置。
+关闭全部 UAV↔BS 链路、仅保留相同毫米波 PHY 下原 RACER 分布式广播的配对基线为：
+
+```bash
+./run_warehouse_simple_distributed_900s.sh
+```
+
+两个正式入口默认使用相同的 100 Hz 物理、10 Hz 传感器、320×240 深度图和
+19,200 ray budget，以保证仅改变通信拓扑。
+
+`warehouse_loaded` 和 `warehouse_loaded_center` 默认加载
+`warehouse_loaded_with_industrial_ap.usda`：BS 安装在有效建图区天花板中心
+`(-10.5, 16.7)`，外壳挂点高度为 8.55 m，射频相位中心为
+`(-10.5, 16.7, 8.10)`。修改场景后可用下列命令重新烘焙对应 Sionna RT 几何：
+
+```bash
+./prepare_warehouse_loaded_sionna_scene.sh
+```
+
+Warehouse Loaded 的正式配对实验使用 640×480@30 Hz 深度相机、76,800 个有效
+深度 ray、200 Hz 物理频率，并在任务完成或 1800 秒时停止。依次运行 BS Round
+Robin 与关闭 UAV↔BS 链路的纯分布式 RACER，并绘制联合覆盖率对比图：
+
+```bash
+./run_warehouse_loaded_comparison_1800s.sh
+```
+
 `sionna` 是默认且严格的在线射线追踪模式；初始化或 PathSolver 失败时测试失败，
 不会退化到解析距离模型。可选的 `sionna_hybrid` 模式使用预生成射频缓存以提高
 长时可视化帧率：
