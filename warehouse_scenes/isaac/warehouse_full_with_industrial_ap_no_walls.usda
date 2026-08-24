@@ -1,0 +1,1327 @@
+#usda 1.0
+(
+    customLayerData = {
+        dictionary cameraSettings = {
+            dictionary Front = {
+                double3 position = (5, 0, 0)
+                double radius = 5
+            }
+            dictionary Perspective = {
+                double3 position = (6.980254740081191, 45.71489982431324, 4.649287151573397)
+                double3 target = (-7.13685490027898, 28.062989565619, 4.642650688924336)
+            }
+            dictionary Right = {
+                double3 position = (0, -5, 0)
+                double radius = 5
+            }
+            dictionary Top = {
+                double3 position = (0, 0, 5)
+                double radius = 5
+            }
+            string boundCamera = "/OmniverseKit_Persp"
+        }
+        string modification = "All SM_Wall* assemblies are inactive; floor, ceiling, racks, cargo, and industrial AP are retained."
+        dictionary omni_layer = {
+            string authoring_layer = "./warehouse_full_with_industrial_ap_no_walls.usda"
+        }
+        string racerScenario = "warehouse_full_with_industrial_ap_no_walls"
+        dictionary renderSettings = {
+        }
+        string sourceScene = "warehouse_full_with_industrial_ap.usda"
+    }
+    defaultPrim = "World"
+    metersPerUnit = 1
+    subLayers = [
+        @warehouse_full_with_industrial_ap.usda@
+    ]
+    upAxis = "Z"
+)
+
+over "World"
+{
+    over "WarehouseScene"
+    {
+        over "full_warehouse"
+        {
+            over "SM_WallA_3M8" (
+                active = false
+            )
+            {
+            }
+
+            over "SM_WallA_3M9" (
+                active = false
+            )
+            {
+            }
+
+            over "SM_WallA_InnerCorner19" (
+                active = false
+            )
+            {
+            }
+
+            over "SM_WallA_3M21_1371" (
+                active = false
+            )
+            {
+            }
+
+            over "SM_WallA_3M22_1372" (
+                active = false
+            )
+            {
+            }
+
+            over "SM_WallA_InnerCorner31" (
+                active = false
+            )
+            {
+            }
+
+            over "SM_WallA_InnerCorner36" (
+                active = false
+            )
+            {
+            }
+
+            over "SM_WallA_InnerCorner20" (
+                active = false
+            )
+            {
+            }
+
+            over "SM_WallA_InnerCorner21" (
+                active = false
+            )
+            {
+            }
+
+            over "SM_WallA_InnerCorner37" (
+                active = false
+            )
+            {
+            }
+        }
+    }
+
+    over "full_warehouse"
+    {
+        over "SM_BracketBeam_6m7"
+        {
+            over "SM_BracketBeam_3m"
+            {
+                over "SM_BracketBeam_3m" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_PillarPartA_9M10_1473"
+        {
+            over "SM_PillarPartA_9M"
+            {
+                over "SM_PillarPartA_9M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_PillarPartA_9M12_1482"
+        {
+            over "SM_PillarPartA_9M"
+            {
+                over "SM_PillarPartA_9M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_PillarPartA_9M6_1455"
+        {
+            over "SM_PillarPartA_9M"
+            {
+                over "SM_PillarPartA_9M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_PillarPartA_9M8_1464"
+        {
+            over "SM_PillarPartA_9M"
+            {
+                over "SM_PillarPartA_9M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_6M15"
+        {
+            over "SM_WallA_6M"
+            {
+                over "SM_WallA_6M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_6M16"
+        {
+            over "SM_WallA_6M"
+            {
+                over "SM_WallA_6M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+
+                    over "Section1" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_6M17"
+        {
+            over "SM_WallA_6M"
+            {
+                over "SM_WallA_6M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+
+                    over "Section1" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_6M18"
+        {
+            over "SM_WallA_6M"
+            {
+                over "SM_WallA_6M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+
+                    over "Section1" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_InnerCorner11"
+        {
+            over "SM_WallA_InnerCorner"
+            {
+                over "SM_WallA_InnerCorner"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_InnerCorner14"
+        {
+            over "SM_WallB_InnerCorner"
+            {
+                over "SM_WallB_InnerCorner" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_InnerCorner15"
+        {
+            over "SM_WallB_InnerCorner"
+            {
+                over "SM_WallB_InnerCorner" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_InnerCorner18"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_InnerCorner24"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_InnerCorner25"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_InnerCorner26"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_InnerCorner28"
+        {
+            over "SM_WallB_InnerCorner"
+            {
+                over "SM_WallB_InnerCorner" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_InnerCorner30"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_InnerCorner32"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_InnerCorner33"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_InnerCorner34"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_InnerCorner35"
+        {
+            over "SM_WallB_InnerCorner"
+            {
+                over "SM_WallB_InnerCorner" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallWire_74"
+        {
+            over "SM_WallWire_10" (
+                active = false
+            )
+            {
+            }
+        }
+
+        over "SM_WallA_3M31"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M32"
+        {
+            over "SM_WallB_3M"
+            {
+                over "SM_WallB_3M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M34"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M35"
+        {
+            over "SM_WallB_3M"
+            {
+                over "SM_WallB_3M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M36"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M37"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M38"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M39"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M40"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M41"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_6M13"
+        {
+            over "SM_WallA_3M"
+            {
+                over "SM_WallA_3M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+
+                    over "Section1" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_6M3_94"
+        {
+            over "SM_WallA_6M"
+            {
+                over "SM_WallA_6M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+
+                    over "Section1" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_6M4"
+        {
+            over "SM_WallA_6M"
+            {
+                over "SM_WallA_6M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+
+                    over "Section1" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_6M6"
+        {
+            over "SM_WallA_6M"
+            {
+                over "SM_WallA_6M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+
+                    over "Section1" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_6M7"
+        {
+            over "SM_WallA_6M"
+            {
+                over "SM_WallA_6M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+
+                    over "Section1" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_InnerCorner10"
+        {
+            over "SM_WallA_InnerCorner"
+            {
+                over "SM_WallA_InnerCorner"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+
+                    over "Section1" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallWire_53"
+        {
+            over "SM_WallWire_09" (
+                active = false
+            )
+            {
+            }
+        }
+
+        over "SM_floor35"
+        {
+            over "SM_floor02"
+            {
+            }
+        }
+
+        over "SM_floor36"
+        {
+            over "SM_floor02"
+            {
+            }
+        }
+
+        over "SM_WallWire_51"
+        {
+            over "SM_WallWire_09" (
+                active = false
+            )
+            {
+            }
+        }
+
+        over "SM_WallWire_52"
+        {
+            over "SM_WallWire_09" (
+                active = false
+            )
+            {
+            }
+        }
+
+        over "SM_PillarPartA_9M11_1481"
+        {
+            over "SM_PillarPartA_9M"
+            {
+                over "SM_PillarPartA_9M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_PillarPartA_9M7_1463"
+        {
+            over "SM_PillarPartA_9M"
+            {
+                over "SM_PillarPartA_9M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_PillarPartA_9M9_1472"
+        {
+            over "SM_PillarPartA_9M"
+            {
+                over "SM_PillarPartA_9M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_3M18_460"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M19"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M20"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M21_1371"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M26"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M27"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M28"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M8"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_6M10"
+        {
+            over "SM_WallA_6M"
+            {
+                over "SM_WallA_6M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+
+                    over "Section1" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_6M11"
+        {
+            over "SM_WallA_6M"
+            {
+                over "SM_WallA_6M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+
+                    over "Section1" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_6M12"
+        {
+            over "SM_WallA_6M"
+            {
+                over "SM_WallA_6M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+
+                    over "Section1" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_6M5"
+        {
+            over "SM_WallA_6M"
+            {
+                over "SM_WallA_6M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_InnerCorner12"
+        {
+            over "SM_WallA_InnerCorner"
+            {
+                over "SM_WallA_InnerCorner"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+
+                    over "Section1" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_InnerCorner13"
+        {
+            over "SM_WallB_InnerCorner"
+            {
+                over "SM_WallB_InnerCorner" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_InnerCorner16"
+        {
+            over "SM_WallB_InnerCorner"
+            {
+                over "SM_WallB_InnerCorner" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_InnerCorner27"
+        {
+            over "SM_WallB_InnerCorner"
+            {
+                over "SM_WallB_InnerCorner" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_InnerCorner29"
+        {
+            over "SM_WallB_InnerCorner"
+            {
+                over "SM_WallB_InnerCorner" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_InnerCorner9_88"
+        {
+            over "SM_WallA_InnerCorner"
+            {
+                over "SM_WallA_InnerCorner"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_3M10"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M11"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M12"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M13"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M14"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M15"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M16"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M33"
+        {
+            over "SM_WallA_3M"
+            {
+                over "SM_WallA_3M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+
+                    over "Section1" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_3M42"
+        {
+            over "SM_WallA_6M"
+            {
+                over "SM_WallA_6M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+
+                    over "Section1" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_3M43"
+        {
+            over "SM_WallA_6M"
+            {
+                over "SM_WallA_6M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+
+                    over "Section1" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_3M44"
+        {
+            over "SM_WallA_6M"
+            {
+                over "SM_WallA_6M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+
+                    over "Section1" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_3M50"
+        {
+            over "SM_WallB_3M"
+            {
+                over "SM_WallB_3M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M51"
+        {
+            over "SM_WallB_3M"
+            {
+                over "SM_WallB_3M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_3M6_113"
+        {
+            over "SM_WallA_3M"
+            {
+                over "SM_WallA_3M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+
+                    over "Section1" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallA_3M7"
+        {
+            over "SM_WallB_6M"
+            {
+                over "SM_WallB_6M" (
+                    active = false
+                )
+                {
+                }
+            }
+        }
+
+        over "SM_WallA_6M24"
+        {
+            over "SM_WallA_3M"
+            {
+                over "SM_WallA_3M"
+                {
+                    over "Section0" (
+                        active = false
+                    )
+                    {
+                    }
+
+                    over "Section1" (
+                        active = false
+                    )
+                    {
+                    }
+                }
+            }
+        }
+
+        over "SM_WallWire_54"
+        {
+            over "SM_WallWire_09" (
+                active = false
+            )
+            {
+            }
+        }
+
+        over "SM_WallWire_56"
+        {
+            over "SM_WallWire_09" (
+                active = false
+            )
+            {
+            }
+        }
+
+        over "SM_WallWire_68"
+        {
+            over "SM_WallWire_08" (
+                active = false
+            )
+            {
+            }
+        }
+
+        over "SM_WallWire_70"
+        {
+            over "SM_WallWire_06" (
+                active = false
+            )
+            {
+            }
+        }
+
+        over "SM_WallWire_55"
+        {
+            over "SM_WallWire_09" (
+                active = false
+            )
+            {
+            }
+        }
+    }
+}
+
+over "Render"
+{
+    over "OmniverseKit"
+    {
+        over "HydraTextures"
+        {
+            over "omni_kit_widget_viewport_ViewportTexture_0"
+            {
+                rel camera = </OmniverseKit_Persp>
+                rel orderedVars = </Render/Vars/LdrColor>
+                custom bool overrideClipRange = 0
+                uniform int2 resolution = (1280, 720)
+            }
+        }
+    }
+}
+

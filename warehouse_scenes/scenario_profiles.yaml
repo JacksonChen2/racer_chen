@@ -1,0 +1,64 @@
+# Central catalog for the Warehouse exploration profiles.
+# Coordinates use the shared Isaac/ROS world frame in metres.
+profiles:
+  warehouse_simple:
+    isaac_scene: isaac/warehouse_simple.usd
+    isaac_scene_with_bs: isaac/warehouse_simple_with_industrial_ap.usda
+    sionna_scene: sionna/warehouse_simple_with_ap/warehouse.xml
+    map_min: [-10.2, -12.0, 0.0]
+    map_max: [9.2, 17.8, 9.0]
+    safety_min: [-10.37, -12.24, 0.0]
+    safety_max: [9.37, 17.96, 9.0]
+    bs_phase_center: [-0.5, 2.85, 8.10]
+
+  warehouse_loaded:
+    description: Original northern rack-zone benchmark.
+    isaac_scene: isaac/warehouse_loaded.usd
+    isaac_scene_with_bs: isaac/warehouse_loaded_with_industrial_ap.usda
+    sionna_scene: sionna/warehouse_loaded/warehouse.xml
+    map_min: [-26.8, 7.2, 0.0]
+    map_max: [5.8, 26.2, 8.5]
+    safety_min: [-27.05, 6.95, 0.0]
+    safety_max: [6.05, 26.45, 8.8]
+    bs_phase_center: [-13.5, 16.0, 8.55]
+
+  warehouse_loaded_center:
+    description: Rack-zone benchmark with central-aisle UAV starts.
+    inherits: warehouse_loaded
+    starts:
+      - [-8.8, 15.2, 0.80]
+      - [-6.8, 15.2, 1.50]
+      - [-8.8, 17.2, 2.20]
+      - [-6.8, 17.2, 1.15]
+      - [-7.8, 16.2, 1.85]
+
+  warehouse_loaded_full:
+    description: Complete enclosed factory, including the y < 1 southern area.
+    isaac_scene: isaac/warehouse_loaded_full.usda
+    isaac_scene_with_bs: isaac/warehouse_loaded_full_with_industrial_ap.usda
+    sionna_scene: sionna/warehouse_loaded/warehouse.xml
+    bs_uav_radio_map: radio_maps/warehouse_loaded_full_bs_uav_28ghz/bs_uav_radio_maps.npz
+    bs_uav_radio_map_summary: radio_maps/warehouse_loaded_full_bs_uav_28ghz/radio_map_summary.json
+    wifi_2p4ghz_radio_map: radio_maps/warehouse_loaded_full_bs_uav_wifi_2p4ghz_20dbm/bs_uav_radio_maps.npz
+    wifi_5p8ghz_radio_map: radio_maps/warehouse_loaded_full_bs_uav_wifi_5p8ghz_20dbm/bs_uav_radio_maps.npz
+    bs_y0_variant:
+      isaac_scene_with_bs: isaac/warehouse_loaded_full_bs_y0.usda
+      sionna_scene: sionna/warehouse_loaded_full_bs_y0/warehouse.xml
+      bs_phase_center: [-13.5, 0.0, 8.55]
+      wifi_2p4ghz_radio_map: radio_maps/warehouse_loaded_full_bs_y0_wifi_2p4ghz_20dbm/bs_uav_radio_maps.npz
+      wifi_5p8ghz_radio_map: radio_maps/warehouse_loaded_full_bs_y0_wifi_5p8ghz_20dbm/bs_uav_radio_maps.npz
+      mmwave_28ghz_radio_map: radio_maps/warehouse_loaded_full_bs_y0_28ghz_33dbm/bs_uav_radio_maps.npz
+    map_min: [-27.0, -23.0, 0.0]
+    map_max: [6.0, 30.0, 8.5]
+    safety_min: [-27.25, -23.25, 0.0]
+    safety_max: [6.25, 30.25, 8.8]
+    sdf_storage_size: [56.2, 64.0, 9.0]
+    coverage_box_min: [-27.0, -23.0, 0.4]
+    coverage_box_max: [6.0, 30.0, 8.4]
+    bs_phase_center: [-13.5, 16.0, 8.55]
+    starts:
+      - [-20.0, 0.0, 0.80]
+      - [-16.0, 0.0, 1.50]
+      - [-12.0, 0.0, 2.20]
+      - [-8.0, 0.0, 1.15]
+      - [-4.0, 0.0, 1.85]

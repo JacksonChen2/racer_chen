@@ -1,0 +1,29 @@
+{
+  "name": "warehouse_full_with_industrial_ap_no_walls",
+  "source_isaac_scene": "isaac/warehouse_full_with_industrial_ap.usda",
+  "isaac_scene": "isaac/warehouse_full_with_industrial_ap_no_walls.usda",
+  "sionna_scene": "sionna/warehouse_full_with_industrial_ap_no_walls/warehouse.xml",
+  "removed": {
+    "selection_rule": "all SM_Wall* assemblies in /World/WarehouseScene/full_warehouse",
+    "root_prims": [
+      "SM_WallA_3M8",
+      "SM_WallA_3M9",
+      "SM_WallA_InnerCorner19",
+      "SM_WallA_3M21_1371",
+      "SM_WallA_3M22_1372",
+      "SM_WallA_InnerCorner31",
+      "SM_WallA_InnerCorner36",
+      "SM_WallA_InnerCorner20",
+      "SM_WallA_InnerCorner21",
+      "SM_WallA_InnerCorner37"
+    ]
+  },
+  "retained": [
+    "floor",
+    "ceiling",
+    "racks",
+    "cargo and props",
+    "industrial Wi-Fi access point"
+  ],
+  "notes": "The source scene is not modified. Isaac and Sionna variants must be used together for physically and electromagnetically consistent experiments."
+}

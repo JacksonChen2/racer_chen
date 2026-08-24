@@ -1,0 +1,17 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Z"
+    subLayers = [
+        @warehouse_loaded_with_industrial_ap.usda@
+    ]
+    customLayerData = {
+        string racerScenario = "warehouse_loaded_full"
+        double3 racerMapMin = (-27, -23, 0)
+        double3 racerMapMax = (6, 30, 8.5)
+        double3 racerBsPhaseCenter = (-13.5, 16, 8.55)
+        string racerRegion = "complete enclosed factory; exterior loading apron excluded"
+    }
+)
+

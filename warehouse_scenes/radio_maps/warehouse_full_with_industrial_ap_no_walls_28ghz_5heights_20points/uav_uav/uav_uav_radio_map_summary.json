@@ -1,0 +1,1231 @@
+{
+  "scene": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/warehouse_scenes/sionna/warehouse_full_with_industrial_ap_no_walls/warehouse.xml",
+  "scene_label": "Warehouse Full No Walls",
+  "point_selection": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/warehouse_scenes/radio_maps/warehouse_full_with_industrial_ap_no_walls_28ghz_5heights_20points/collision_free_tx_points.json",
+  "points_per_height": 20,
+  "uav_heights_m": [
+    0.75,
+    1.5,
+    3.0,
+    5.0,
+    7.5
+  ],
+  "bounds_m": [
+    -27.0,
+    6.0,
+    0.6,
+    30.6
+  ],
+  "cell_size_m": 0.5,
+  "frequency_hz": 28000000000.0,
+  "bandwidth_hz": 100000000.0,
+  "uav_tx_power_dbm": 23.0,
+  "samples_per_map": 100000,
+  "max_depth": 2,
+  "diffraction": false,
+  "seed": 42,
+  "receiver_plane": "same height as each transmitter",
+  "radio_map_quantity": "isotropic path gain and received power",
+  "point_statistics": [
+    {
+      "height_m": 0.75,
+      "point_id": 1,
+      "tx_position_m": [
+        -26.6,
+        1.0,
+        0.75
+      ],
+      "rx_power_mean_dbm": -254.19216620733766,
+      "fraction_rx_power_above_minus_100_dbm": 0.10176767676767677,
+      "fraction_rx_power_above_minus_120_dbm": 0.10909090909090909
+    },
+    {
+      "height_m": 0.75,
+      "point_id": 2,
+      "tx_position_m": [
+        -18.55,
+        1.0,
+        0.75
+      ],
+      "rx_power_mean_dbm": -253.29460672452367,
+      "fraction_rx_power_above_minus_100_dbm": 0.11035353535353536,
+      "fraction_rx_power_above_minus_120_dbm": 0.11237373737373738
+    },
+    {
+      "height_m": 0.75,
+      "point_id": 3,
+      "tx_position_m": [
+        -10.5,
+        1.0,
+        0.75
+      ],
+      "rx_power_mean_dbm": -248.5441473890661,
+      "fraction_rx_power_above_minus_100_dbm": 0.13484848484848486,
+      "fraction_rx_power_above_minus_120_dbm": 0.1361111111111111
+    },
+    {
+      "height_m": 0.75,
+      "point_id": 4,
+      "tx_position_m": [
+        -2.4499999999999993,
+        1.0,
+        0.75
+      ],
+      "rx_power_mean_dbm": -253.4035873863262,
+      "fraction_rx_power_above_minus_100_dbm": 0.11085858585858586,
+      "fraction_rx_power_above_minus_120_dbm": 0.11212121212121212
+    },
+    {
+      "height_m": 0.75,
+      "point_id": 5,
+      "tx_position_m": [
+        5.6,
+        1.0,
+        0.75
+      ],
+      "rx_power_mean_dbm": -255.42820975376281,
+      "fraction_rx_power_above_minus_100_dbm": 0.09848484848484848,
+      "fraction_rx_power_above_minus_120_dbm": 0.10303030303030303
+    },
+    {
+      "height_m": 0.75,
+      "point_id": 6,
+      "tx_position_m": [
+        -26.6,
+        10.733333333333334,
+        0.75
+      ],
+      "rx_power_mean_dbm": -271.72154525142014,
+      "fraction_rx_power_above_minus_100_dbm": 0.025,
+      "fraction_rx_power_above_minus_120_dbm": 0.025
+    },
+    {
+      "height_m": 0.75,
+      "point_id": 7,
+      "tx_position_m": [
+        -18.55,
+        10.733333333333334,
+        0.75
+      ],
+      "rx_power_mean_dbm": -229.58362041934262,
+      "fraction_rx_power_above_minus_100_dbm": 0.22121212121212122,
+      "fraction_rx_power_above_minus_120_dbm": 0.22525252525252526
+    },
+    {
+      "height_m": 0.75,
+      "point_id": 8,
+      "tx_position_m": [
+        -11.0,
+        11.233333333333334,
+        0.75
+      ],
+      "rx_power_mean_dbm": -211.3550636304147,
+      "fraction_rx_power_above_minus_100_dbm": 0.3085858585858586,
+      "fraction_rx_power_above_minus_120_dbm": 0.31085858585858583
+    },
+    {
+      "height_m": 0.75,
+      "point_id": 9,
+      "tx_position_m": [
+        -2.4499999999999993,
+        10.733333333333334,
+        0.75
+      ],
+      "rx_power_mean_dbm": -254.17503061869323,
+      "fraction_rx_power_above_minus_100_dbm": 0.10858585858585859,
+      "fraction_rx_power_above_minus_120_dbm": 0.1111111111111111
+    },
+    {
+      "height_m": 0.75,
+      "point_id": 10,
+      "tx_position_m": [
+        5.6,
+        10.733333333333334,
+        0.75
+      ],
+      "rx_power_mean_dbm": -272.5711164650947,
+      "fraction_rx_power_above_minus_100_dbm": 0.02095959595959596,
+      "fraction_rx_power_above_minus_120_dbm": 0.02095959595959596
+    },
+    {
+      "height_m": 0.75,
+      "point_id": 11,
+      "tx_position_m": [
+        -26.6,
+        20.46666666666667,
+        0.75
+      ],
+      "rx_power_mean_dbm": -271.6805959576117,
+      "fraction_rx_power_above_minus_100_dbm": 0.025,
+      "fraction_rx_power_above_minus_120_dbm": 0.025252525252525252
+    },
+    {
+      "height_m": 0.75,
+      "point_id": 12,
+      "tx_position_m": [
+        -18.55,
+        20.46666666666667,
+        0.75
+      ],
+      "rx_power_mean_dbm": -224.0060520930805,
+      "fraction_rx_power_above_minus_100_dbm": 0.25075757575757573,
+      "fraction_rx_power_above_minus_120_dbm": 0.25252525252525254
+    },
+    {
+      "height_m": 0.75,
+      "point_id": 13,
+      "tx_position_m": [
+        -11.5,
+        20.46666666666667,
+        0.75
+      ],
+      "rx_power_mean_dbm": -215.04586183506007,
+      "fraction_rx_power_above_minus_100_dbm": 0.28888888888888886,
+      "fraction_rx_power_above_minus_120_dbm": 0.2926767676767677
+    },
+    {
+      "height_m": 0.75,
+      "point_id": 14,
+      "tx_position_m": [
+        -2.4499999999999993,
+        20.46666666666667,
+        0.75
+      ],
+      "rx_power_mean_dbm": -243.02597758724525,
+      "fraction_rx_power_above_minus_100_dbm": 0.16237373737373736,
+      "fraction_rx_power_above_minus_120_dbm": 0.16414141414141414
+    },
+    {
+      "height_m": 0.75,
+      "point_id": 15,
+      "tx_position_m": [
+        5.6,
+        20.46666666666667,
+        0.75
+      ],
+      "rx_power_mean_dbm": -272.4809628865944,
+      "fraction_rx_power_above_minus_100_dbm": 0.02095959595959596,
+      "fraction_rx_power_above_minus_120_dbm": 0.021464646464646464
+    },
+    {
+      "height_m": 0.75,
+      "point_id": 16,
+      "tx_position_m": [
+        -26.6,
+        30.200000000000003,
+        0.75
+      ],
+      "rx_power_mean_dbm": -272.72014331817866,
+      "fraction_rx_power_above_minus_100_dbm": 0.019444444444444445,
+      "fraction_rx_power_above_minus_120_dbm": 0.020454545454545454
+    },
+    {
+      "height_m": 0.75,
+      "point_id": 17,
+      "tx_position_m": [
+        -18.55,
+        30.200000000000003,
+        0.75
+      ],
+      "rx_power_mean_dbm": -231.95217025797888,
+      "fraction_rx_power_above_minus_100_dbm": 0.21035353535353535,
+      "fraction_rx_power_above_minus_120_dbm": 0.21338383838383837
+    },
+    {
+      "height_m": 0.75,
+      "point_id": 18,
+      "tx_position_m": [
+        -10.5,
+        30.200000000000003,
+        0.75
+      ],
+      "rx_power_mean_dbm": -195.06742875208312,
+      "fraction_rx_power_above_minus_100_dbm": 0.3813131313131313,
+      "fraction_rx_power_above_minus_120_dbm": 0.38737373737373737
+    },
+    {
+      "height_m": 0.75,
+      "point_id": 19,
+      "tx_position_m": [
+        -2.4499999999999993,
+        30.200000000000003,
+        0.75
+      ],
+      "rx_power_mean_dbm": -231.87423260076827,
+      "fraction_rx_power_above_minus_100_dbm": 0.2106060606060606,
+      "fraction_rx_power_above_minus_120_dbm": 0.21363636363636362
+    },
+    {
+      "height_m": 0.75,
+      "point_id": 20,
+      "tx_position_m": [
+        5.6,
+        30.200000000000003,
+        0.75
+      ],
+      "rx_power_mean_dbm": -273.64051040799166,
+      "fraction_rx_power_above_minus_100_dbm": 0.0148989898989899,
+      "fraction_rx_power_above_minus_120_dbm": 0.015909090909090907
+    },
+    {
+      "height_m": 1.5,
+      "point_id": 1,
+      "tx_position_m": [
+        -26.6,
+        1.0,
+        1.5
+      ],
+      "rx_power_mean_dbm": -252.91547061432405,
+      "fraction_rx_power_above_minus_100_dbm": 0.11313131313131314,
+      "fraction_rx_power_above_minus_120_dbm": 0.11666666666666667
+    },
+    {
+      "height_m": 1.5,
+      "point_id": 2,
+      "tx_position_m": [
+        -18.55,
+        1.0,
+        1.5
+      ],
+      "rx_power_mean_dbm": -251.5594064971549,
+      "fraction_rx_power_above_minus_100_dbm": 0.12045454545454545,
+      "fraction_rx_power_above_minus_120_dbm": 0.12348484848484849
+    },
+    {
+      "height_m": 1.5,
+      "point_id": 3,
+      "tx_position_m": [
+        -10.5,
+        1.0,
+        1.5
+      ],
+      "rx_power_mean_dbm": -247.5348094992412,
+      "fraction_rx_power_above_minus_100_dbm": 0.14343434343434344,
+      "fraction_rx_power_above_minus_120_dbm": 0.1436868686868687
+    },
+    {
+      "height_m": 1.5,
+      "point_id": 4,
+      "tx_position_m": [
+        -2.4499999999999993,
+        1.0,
+        1.5
+      ],
+      "rx_power_mean_dbm": -252.19315651943901,
+      "fraction_rx_power_above_minus_100_dbm": 0.1191919191919192,
+      "fraction_rx_power_above_minus_120_dbm": 0.11994949494949494
+    },
+    {
+      "height_m": 1.5,
+      "point_id": 5,
+      "tx_position_m": [
+        5.6,
+        1.0,
+        1.5
+      ],
+      "rx_power_mean_dbm": -254.08953325164777,
+      "fraction_rx_power_above_minus_100_dbm": 0.10782828282828283,
+      "fraction_rx_power_above_minus_120_dbm": 0.11060606060606061
+    },
+    {
+      "height_m": 1.5,
+      "point_id": 6,
+      "tx_position_m": [
+        -26.6,
+        10.733333333333334,
+        1.5
+      ],
+      "rx_power_mean_dbm": -271.39200979595535,
+      "fraction_rx_power_above_minus_100_dbm": 0.02702020202020202,
+      "fraction_rx_power_above_minus_120_dbm": 0.02727272727272727
+    },
+    {
+      "height_m": 1.5,
+      "point_id": 7,
+      "tx_position_m": [
+        -18.55,
+        10.733333333333334,
+        1.5
+      ],
+      "rx_power_mean_dbm": -228.640312565745,
+      "fraction_rx_power_above_minus_100_dbm": 0.22904040404040404,
+      "fraction_rx_power_above_minus_120_dbm": 0.2345959595959596
+    },
+    {
+      "height_m": 1.5,
+      "point_id": 8,
+      "tx_position_m": [
+        -11.5,
+        10.733333333333334,
+        1.5
+      ],
+      "rx_power_mean_dbm": -219.85295716456446,
+      "fraction_rx_power_above_minus_100_dbm": 0.271969696969697,
+      "fraction_rx_power_above_minus_120_dbm": 0.27424242424242423
+    },
+    {
+      "height_m": 1.5,
+      "point_id": 9,
+      "tx_position_m": [
+        -2.4499999999999993,
+        10.733333333333334,
+        1.5
+      ],
+      "rx_power_mean_dbm": -245.7713955508121,
+      "fraction_rx_power_above_minus_100_dbm": 0.14898989898989898,
+      "fraction_rx_power_above_minus_120_dbm": 0.1542929292929293
+    },
+    {
+      "height_m": 1.5,
+      "point_id": 10,
+      "tx_position_m": [
+        5.6,
+        10.733333333333334,
+        1.5
+      ],
+      "rx_power_mean_dbm": -272.4578149388149,
+      "fraction_rx_power_above_minus_100_dbm": 0.02196969696969697,
+      "fraction_rx_power_above_minus_120_dbm": 0.02196969696969697
+    },
+    {
+      "height_m": 1.5,
+      "point_id": 11,
+      "tx_position_m": [
+        -26.6,
+        20.46666666666667,
+        1.5
+      ],
+      "rx_power_mean_dbm": -271.5404681073284,
+      "fraction_rx_power_above_minus_100_dbm": 0.026515151515151516,
+      "fraction_rx_power_above_minus_120_dbm": 0.026515151515151516
+    },
+    {
+      "height_m": 1.5,
+      "point_id": 12,
+      "tx_position_m": [
+        -18.55,
+        20.46666666666667,
+        1.5
+      ],
+      "rx_power_mean_dbm": -226.07039483661342,
+      "fraction_rx_power_above_minus_100_dbm": 0.2404040404040404,
+      "fraction_rx_power_above_minus_120_dbm": 0.2452020202020202
+    },
+    {
+      "height_m": 1.5,
+      "point_id": 13,
+      "tx_position_m": [
+        -11.5,
+        20.46666666666667,
+        1.5
+      ],
+      "rx_power_mean_dbm": -213.88652285853044,
+      "fraction_rx_power_above_minus_100_dbm": 0.298989898989899,
+      "fraction_rx_power_above_minus_120_dbm": 0.30227272727272725
+    },
+    {
+      "height_m": 1.5,
+      "point_id": 14,
+      "tx_position_m": [
+        -2.4499999999999993,
+        20.46666666666667,
+        1.5
+      ],
+      "rx_power_mean_dbm": -235.02448672130475,
+      "fraction_rx_power_above_minus_100_dbm": 0.201010101010101,
+      "fraction_rx_power_above_minus_120_dbm": 0.20454545454545456
+    },
+    {
+      "height_m": 1.5,
+      "point_id": 15,
+      "tx_position_m": [
+        5.6,
+        20.46666666666667,
+        1.5
+      ],
+      "rx_power_mean_dbm": -272.40866484600804,
+      "fraction_rx_power_above_minus_100_dbm": 0.022222222222222223,
+      "fraction_rx_power_above_minus_120_dbm": 0.022222222222222223
+    },
+    {
+      "height_m": 1.5,
+      "point_id": 16,
+      "tx_position_m": [
+        -26.6,
+        30.200000000000003,
+        1.5
+      ],
+      "rx_power_mean_dbm": -272.4293325322087,
+      "fraction_rx_power_above_minus_100_dbm": 0.021717171717171718,
+      "fraction_rx_power_above_minus_120_dbm": 0.022222222222222223
+    },
+    {
+      "height_m": 1.5,
+      "point_id": 17,
+      "tx_position_m": [
+        -18.55,
+        30.200000000000003,
+        1.5
+      ],
+      "rx_power_mean_dbm": -231.62821933446185,
+      "fraction_rx_power_above_minus_100_dbm": 0.2159090909090909,
+      "fraction_rx_power_above_minus_120_dbm": 0.21893939393939393
+    },
+    {
+      "height_m": 1.5,
+      "point_id": 18,
+      "tx_position_m": [
+        -10.5,
+        30.200000000000003,
+        1.5
+      ],
+      "rx_power_mean_dbm": -194.70676926026752,
+      "fraction_rx_power_above_minus_100_dbm": 0.39444444444444443,
+      "fraction_rx_power_above_minus_120_dbm": 0.3984848484848485
+    },
+    {
+      "height_m": 1.5,
+      "point_id": 19,
+      "tx_position_m": [
+        -2.4499999999999993,
+        30.200000000000003,
+        1.5
+      ],
+      "rx_power_mean_dbm": -229.1916047139385,
+      "fraction_rx_power_above_minus_100_dbm": 0.22525252525252526,
+      "fraction_rx_power_above_minus_120_dbm": 0.2308080808080808
+    },
+    {
+      "height_m": 1.5,
+      "point_id": 20,
+      "tx_position_m": [
+        5.6,
+        30.200000000000003,
+        1.5
+      ],
+      "rx_power_mean_dbm": -273.20650431093026,
+      "fraction_rx_power_above_minus_100_dbm": 0.018434343434343435,
+      "fraction_rx_power_above_minus_120_dbm": 0.018434343434343435
+    },
+    {
+      "height_m": 3.0,
+      "point_id": 1,
+      "tx_position_m": [
+        -26.6,
+        1.0,
+        3.0
+      ],
+      "rx_power_mean_dbm": -251.82434924584666,
+      "fraction_rx_power_above_minus_100_dbm": 0.12171717171717172,
+      "fraction_rx_power_above_minus_120_dbm": 0.12474747474747475
+    },
+    {
+      "height_m": 3.0,
+      "point_id": 2,
+      "tx_position_m": [
+        -18.55,
+        1.0,
+        3.0
+      ],
+      "rx_power_mean_dbm": -248.85295739859728,
+      "fraction_rx_power_above_minus_100_dbm": 0.13484848484848486,
+      "fraction_rx_power_above_minus_120_dbm": 0.1383838383838384
+    },
+    {
+      "height_m": 3.0,
+      "point_id": 3,
+      "tx_position_m": [
+        -10.5,
+        1.0,
+        3.0
+      ],
+      "rx_power_mean_dbm": -244.3412202727483,
+      "fraction_rx_power_above_minus_100_dbm": 0.15555555555555556,
+      "fraction_rx_power_above_minus_120_dbm": 0.16313131313131313
+    },
+    {
+      "height_m": 3.0,
+      "point_id": 4,
+      "tx_position_m": [
+        -2.4499999999999993,
+        1.0,
+        3.0
+      ],
+      "rx_power_mean_dbm": -250.89147986302675,
+      "fraction_rx_power_above_minus_100_dbm": 0.12474747474747475,
+      "fraction_rx_power_above_minus_120_dbm": 0.12727272727272726
+    },
+    {
+      "height_m": 3.0,
+      "point_id": 5,
+      "tx_position_m": [
+        5.6,
+        1.0,
+        3.0
+      ],
+      "rx_power_mean_dbm": -252.76771043607673,
+      "fraction_rx_power_above_minus_100_dbm": 0.11843434343434343,
+      "fraction_rx_power_above_minus_120_dbm": 0.11944444444444445
+    },
+    {
+      "height_m": 3.0,
+      "point_id": 6,
+      "tx_position_m": [
+        -26.6,
+        10.733333333333334,
+        3.0
+      ],
+      "rx_power_mean_dbm": -270.0219934736422,
+      "fraction_rx_power_above_minus_100_dbm": 0.03409090909090909,
+      "fraction_rx_power_above_minus_120_dbm": 0.03434343434343434
+    },
+    {
+      "height_m": 3.0,
+      "point_id": 7,
+      "tx_position_m": [
+        -18.55,
+        10.733333333333334,
+        3.0
+      ],
+      "rx_power_mean_dbm": -224.51225475036713,
+      "fraction_rx_power_above_minus_100_dbm": 0.2494949494949495,
+      "fraction_rx_power_above_minus_120_dbm": 0.2590909090909091
+    },
+    {
+      "height_m": 3.0,
+      "point_id": 8,
+      "tx_position_m": [
+        -11.5,
+        10.733333333333334,
+        3.0
+      ],
+      "rx_power_mean_dbm": -212.15919114968673,
+      "fraction_rx_power_above_minus_100_dbm": 0.31212121212121213,
+      "fraction_rx_power_above_minus_120_dbm": 0.3154040404040404
+    },
+    {
+      "height_m": 3.0,
+      "point_id": 9,
+      "tx_position_m": [
+        -2.4499999999999993,
+        10.733333333333334,
+        3.0
+      ],
+      "rx_power_mean_dbm": -229.28602539600354,
+      "fraction_rx_power_above_minus_100_dbm": 0.22727272727272727,
+      "fraction_rx_power_above_minus_120_dbm": 0.23535353535353534
+    },
+    {
+      "height_m": 3.0,
+      "point_id": 10,
+      "tx_position_m": [
+        5.6,
+        10.733333333333334,
+        3.0
+      ],
+      "rx_power_mean_dbm": -271.58508706682403,
+      "fraction_rx_power_above_minus_100_dbm": 0.026262626262626262,
+      "fraction_rx_power_above_minus_120_dbm": 0.026515151515151516
+    },
+    {
+      "height_m": 3.0,
+      "point_id": 11,
+      "tx_position_m": [
+        -26.6,
+        20.46666666666667,
+        3.0
+      ],
+      "rx_power_mean_dbm": -269.28849327784934,
+      "fraction_rx_power_above_minus_100_dbm": 0.03737373737373737,
+      "fraction_rx_power_above_minus_120_dbm": 0.03737373737373737
+    },
+    {
+      "height_m": 3.0,
+      "point_id": 12,
+      "tx_position_m": [
+        -18.55,
+        20.46666666666667,
+        3.0
+      ],
+      "rx_power_mean_dbm": -221.6996321131197,
+      "fraction_rx_power_above_minus_100_dbm": 0.2648989898989899,
+      "fraction_rx_power_above_minus_120_dbm": 0.2734848484848485
+    },
+    {
+      "height_m": 3.0,
+      "point_id": 13,
+      "tx_position_m": [
+        -11.5,
+        20.46666666666667,
+        3.0
+      ],
+      "rx_power_mean_dbm": -208.75135333661424,
+      "fraction_rx_power_above_minus_100_dbm": 0.3292929292929293,
+      "fraction_rx_power_above_minus_120_dbm": 0.3333333333333333
+    },
+    {
+      "height_m": 3.0,
+      "point_id": 14,
+      "tx_position_m": [
+        -2.4499999999999993,
+        20.46666666666667,
+        3.0
+      ],
+      "rx_power_mean_dbm": -224.04265489954906,
+      "fraction_rx_power_above_minus_100_dbm": 0.25404040404040407,
+      "fraction_rx_power_above_minus_120_dbm": 0.2590909090909091
+    },
+    {
+      "height_m": 3.0,
+      "point_id": 15,
+      "tx_position_m": [
+        5.6,
+        20.46666666666667,
+        3.0
+      ],
+      "rx_power_mean_dbm": -271.3981678110506,
+      "fraction_rx_power_above_minus_100_dbm": 0.02727272727272727,
+      "fraction_rx_power_above_minus_120_dbm": 0.02727272727272727
+    },
+    {
+      "height_m": 3.0,
+      "point_id": 16,
+      "tx_position_m": [
+        -26.6,
+        30.200000000000003,
+        3.0
+      ],
+      "rx_power_mean_dbm": -272.2982798111092,
+      "fraction_rx_power_above_minus_100_dbm": 0.022727272727272728,
+      "fraction_rx_power_above_minus_120_dbm": 0.023484848484848483
+    },
+    {
+      "height_m": 3.0,
+      "point_id": 17,
+      "tx_position_m": [
+        -18.55,
+        30.200000000000003,
+        3.0
+      ],
+      "rx_power_mean_dbm": -227.87320152224487,
+      "fraction_rx_power_above_minus_100_dbm": 0.23535353535353534,
+      "fraction_rx_power_above_minus_120_dbm": 0.24444444444444444
+    },
+    {
+      "height_m": 3.0,
+      "point_id": 18,
+      "tx_position_m": [
+        -10.5,
+        30.200000000000003,
+        3.0
+      ],
+      "rx_power_mean_dbm": -193.8611674319166,
+      "fraction_rx_power_above_minus_100_dbm": 0.40126262626262627,
+      "fraction_rx_power_above_minus_120_dbm": 0.4113636363636364
+    },
+    {
+      "height_m": 3.0,
+      "point_id": 19,
+      "tx_position_m": [
+        -2.4499999999999993,
+        30.200000000000003,
+        3.0
+      ],
+      "rx_power_mean_dbm": -226.62134238447285,
+      "fraction_rx_power_above_minus_100_dbm": 0.2398989898989899,
+      "fraction_rx_power_above_minus_120_dbm": 0.2494949494949495
+    },
+    {
+      "height_m": 3.0,
+      "point_id": 20,
+      "tx_position_m": [
+        4.6,
+        29.700000000000003,
+        3.0
+      ],
+      "rx_power_mean_dbm": -274.6848548607731,
+      "fraction_rx_power_above_minus_100_dbm": 0.010606060606060607,
+      "fraction_rx_power_above_minus_120_dbm": 0.010606060606060607
+    },
+    {
+      "height_m": 5.0,
+      "point_id": 1,
+      "tx_position_m": [
+        -26.6,
+        1.0,
+        5.0
+      ],
+      "rx_power_mean_dbm": -250.66217413137863,
+      "fraction_rx_power_above_minus_100_dbm": 0.1292929292929293,
+      "fraction_rx_power_above_minus_120_dbm": 0.13005050505050506
+    },
+    {
+      "height_m": 5.0,
+      "point_id": 2,
+      "tx_position_m": [
+        -18.55,
+        1.0,
+        5.0
+      ],
+      "rx_power_mean_dbm": -241.0938664104571,
+      "fraction_rx_power_above_minus_100_dbm": 0.17323232323232324,
+      "fraction_rx_power_above_minus_120_dbm": 0.17777777777777778
+    },
+    {
+      "height_m": 5.0,
+      "point_id": 3,
+      "tx_position_m": [
+        -10.5,
+        1.0,
+        5.0
+      ],
+      "rx_power_mean_dbm": -224.00736272874943,
+      "fraction_rx_power_above_minus_100_dbm": 0.24646464646464647,
+      "fraction_rx_power_above_minus_120_dbm": 0.2674242424242424
+    },
+    {
+      "height_m": 5.0,
+      "point_id": 4,
+      "tx_position_m": [
+        -2.4499999999999993,
+        1.0,
+        5.0
+      ],
+      "rx_power_mean_dbm": -246.55710611151298,
+      "fraction_rx_power_above_minus_100_dbm": 0.14671717171717172,
+      "fraction_rx_power_above_minus_120_dbm": 0.1494949494949495
+    },
+    {
+      "height_m": 5.0,
+      "point_id": 5,
+      "tx_position_m": [
+        5.6,
+        1.0,
+        5.0
+      ],
+      "rx_power_mean_dbm": -251.90246627430008,
+      "fraction_rx_power_above_minus_100_dbm": 0.12196969696969696,
+      "fraction_rx_power_above_minus_120_dbm": 0.12373737373737374
+    },
+    {
+      "height_m": 5.0,
+      "point_id": 6,
+      "tx_position_m": [
+        -26.6,
+        10.733333333333334,
+        5.0
+      ],
+      "rx_power_mean_dbm": -257.6432875528882,
+      "fraction_rx_power_above_minus_100_dbm": 0.09267676767676768,
+      "fraction_rx_power_above_minus_120_dbm": 0.0952020202020202
+    },
+    {
+      "height_m": 5.0,
+      "point_id": 7,
+      "tx_position_m": [
+        -18.55,
+        10.733333333333334,
+        5.0
+      ],
+      "rx_power_mean_dbm": -207.8964089043601,
+      "fraction_rx_power_above_minus_100_dbm": 0.33106060606060606,
+      "fraction_rx_power_above_minus_120_dbm": 0.33611111111111114
+    },
+    {
+      "height_m": 5.0,
+      "point_id": 8,
+      "tx_position_m": [
+        -10.5,
+        10.733333333333334,
+        5.0
+      ],
+      "rx_power_mean_dbm": -183.78046042609128,
+      "fraction_rx_power_above_minus_100_dbm": 0.4414141414141414,
+      "fraction_rx_power_above_minus_120_dbm": 0.45656565656565656
+    },
+    {
+      "height_m": 5.0,
+      "point_id": 9,
+      "tx_position_m": [
+        -2.4499999999999993,
+        10.733333333333334,
+        5.0
+      ],
+      "rx_power_mean_dbm": -202.3240242145963,
+      "fraction_rx_power_above_minus_100_dbm": 0.35782828282828283,
+      "fraction_rx_power_above_minus_120_dbm": 0.3616161616161616
+    },
+    {
+      "height_m": 5.0,
+      "point_id": 10,
+      "tx_position_m": [
+        5.6,
+        10.733333333333334,
+        5.0
+      ],
+      "rx_power_mean_dbm": -257.1061204718393,
+      "fraction_rx_power_above_minus_100_dbm": 0.09621212121212121,
+      "fraction_rx_power_above_minus_120_dbm": 0.09747474747474748
+    },
+    {
+      "height_m": 5.0,
+      "point_id": 11,
+      "tx_position_m": [
+        -26.6,
+        20.46666666666667,
+        5.0
+      ],
+      "rx_power_mean_dbm": -261.9369392820648,
+      "fraction_rx_power_above_minus_100_dbm": 0.07222222222222222,
+      "fraction_rx_power_above_minus_120_dbm": 0.07222222222222222
+    },
+    {
+      "height_m": 5.0,
+      "point_id": 12,
+      "tx_position_m": [
+        -18.55,
+        20.46666666666667,
+        5.0
+      ],
+      "rx_power_mean_dbm": -206.87255150957168,
+      "fraction_rx_power_above_minus_100_dbm": 0.3340909090909091,
+      "fraction_rx_power_above_minus_120_dbm": 0.34116161616161617
+    },
+    {
+      "height_m": 5.0,
+      "point_id": 13,
+      "tx_position_m": [
+        -10.5,
+        20.46666666666667,
+        5.0
+      ],
+      "rx_power_mean_dbm": -184.31748494521534,
+      "fraction_rx_power_above_minus_100_dbm": 0.44267676767676767,
+      "fraction_rx_power_above_minus_120_dbm": 0.4542929292929293
+    },
+    {
+      "height_m": 5.0,
+      "point_id": 14,
+      "tx_position_m": [
+        -2.4499999999999993,
+        20.46666666666667,
+        5.0
+      ],
+      "rx_power_mean_dbm": -199.21047728162776,
+      "fraction_rx_power_above_minus_100_dbm": 0.37146464646464644,
+      "fraction_rx_power_above_minus_120_dbm": 0.37626262626262624
+    },
+    {
+      "height_m": 5.0,
+      "point_id": 15,
+      "tx_position_m": [
+        5.6,
+        20.46666666666667,
+        5.0
+      ],
+      "rx_power_mean_dbm": -261.5035585269758,
+      "fraction_rx_power_above_minus_100_dbm": 0.07323232323232323,
+      "fraction_rx_power_above_minus_120_dbm": 0.07424242424242425
+    },
+    {
+      "height_m": 5.0,
+      "point_id": 16,
+      "tx_position_m": [
+        -26.6,
+        30.200000000000003,
+        5.0
+      ],
+      "rx_power_mean_dbm": -269.77966887129924,
+      "fraction_rx_power_above_minus_100_dbm": 0.0345959595959596,
+      "fraction_rx_power_above_minus_120_dbm": 0.03535353535353535
+    },
+    {
+      "height_m": 5.0,
+      "point_id": 17,
+      "tx_position_m": [
+        -18.55,
+        30.200000000000003,
+        5.0
+      ],
+      "rx_power_mean_dbm": -220.59983574184244,
+      "fraction_rx_power_above_minus_100_dbm": 0.2702020202020202,
+      "fraction_rx_power_above_minus_120_dbm": 0.2792929292929293
+    },
+    {
+      "height_m": 5.0,
+      "point_id": 18,
+      "tx_position_m": [
+        -10.5,
+        30.200000000000003,
+        5.0
+      ],
+      "rx_power_mean_dbm": -174.7843020812107,
+      "fraction_rx_power_above_minus_100_dbm": 0.4936868686868687,
+      "fraction_rx_power_above_minus_120_dbm": 0.5063131313131313
+    },
+    {
+      "height_m": 5.0,
+      "point_id": 19,
+      "tx_position_m": [
+        -2.4499999999999993,
+        30.200000000000003,
+        5.0
+      ],
+      "rx_power_mean_dbm": -218.65327083969112,
+      "fraction_rx_power_above_minus_100_dbm": 0.2777777777777778,
+      "fraction_rx_power_above_minus_120_dbm": 0.28964646464646465
+    },
+    {
+      "height_m": 5.0,
+      "point_id": 20,
+      "tx_position_m": [
+        5.6,
+        30.200000000000003,
+        5.0
+      ],
+      "rx_power_mean_dbm": -271.1666115269355,
+      "fraction_rx_power_above_minus_100_dbm": 0.02803030303030303,
+      "fraction_rx_power_above_minus_120_dbm": 0.028282828282828285
+    },
+    {
+      "height_m": 7.5,
+      "point_id": 1,
+      "tx_position_m": [
+        -26.6,
+        1.0,
+        7.5
+      ],
+      "rx_power_mean_dbm": -250.42700458864726,
+      "fraction_rx_power_above_minus_100_dbm": 0.12878787878787878,
+      "fraction_rx_power_above_minus_120_dbm": 0.1292929292929293
+    },
+    {
+      "height_m": 7.5,
+      "point_id": 2,
+      "tx_position_m": [
+        -18.55,
+        1.0,
+        7.5
+      ],
+      "rx_power_mean_dbm": -234.3781129960794,
+      "fraction_rx_power_above_minus_100_dbm": 0.20732323232323233,
+      "fraction_rx_power_above_minus_120_dbm": 0.20732323232323233
+    },
+    {
+      "height_m": 7.5,
+      "point_id": 3,
+      "tx_position_m": [
+        -10.5,
+        1.0,
+        7.5
+      ],
+      "rx_power_mean_dbm": -212.0804991256184,
+      "fraction_rx_power_above_minus_100_dbm": 0.3164141414141414,
+      "fraction_rx_power_above_minus_120_dbm": 0.31742424242424244
+    },
+    {
+      "height_m": 7.5,
+      "point_id": 4,
+      "tx_position_m": [
+        -2.4499999999999993,
+        1.0,
+        7.5
+      ],
+      "rx_power_mean_dbm": -243.33103057651704,
+      "fraction_rx_power_above_minus_100_dbm": 0.16313131313131313,
+      "fraction_rx_power_above_minus_120_dbm": 0.16313131313131313
+    },
+    {
+      "height_m": 7.5,
+      "point_id": 5,
+      "tx_position_m": [
+        5.6,
+        1.0,
+        7.5
+      ],
+      "rx_power_mean_dbm": -251.13111363194062,
+      "fraction_rx_power_above_minus_100_dbm": 0.125,
+      "fraction_rx_power_above_minus_120_dbm": 0.12575757575757576
+    },
+    {
+      "height_m": 7.5,
+      "point_id": 6,
+      "tx_position_m": [
+        -26.6,
+        10.733333333333334,
+        7.5
+      ],
+      "rx_power_mean_dbm": -255.39533742779608,
+      "fraction_rx_power_above_minus_100_dbm": 0.10479797979797979,
+      "fraction_rx_power_above_minus_120_dbm": 0.1053030303030303
+    },
+    {
+      "height_m": 7.5,
+      "point_id": 7,
+      "tx_position_m": [
+        -18.55,
+        10.733333333333334,
+        7.5
+      ],
+      "rx_power_mean_dbm": -204.75520147232527,
+      "fraction_rx_power_above_minus_100_dbm": 0.3431818181818182,
+      "fraction_rx_power_above_minus_120_dbm": 0.3452020202020202
+    },
+    {
+      "height_m": 7.5,
+      "point_id": 8,
+      "tx_position_m": [
+        -10.5,
+        10.733333333333334,
+        7.5
+      ],
+      "rx_power_mean_dbm": -161.45416959771285,
+      "fraction_rx_power_above_minus_100_dbm": 0.5522727272727272,
+      "fraction_rx_power_above_minus_120_dbm": 0.5545454545454546
+    },
+    {
+      "height_m": 7.5,
+      "point_id": 9,
+      "tx_position_m": [
+        -2.4499999999999993,
+        10.733333333333334,
+        7.5
+      ],
+      "rx_power_mean_dbm": -197.79610680478527,
+      "fraction_rx_power_above_minus_100_dbm": 0.37575757575757573,
+      "fraction_rx_power_above_minus_120_dbm": 0.37853535353535356
+    },
+    {
+      "height_m": 7.5,
+      "point_id": 10,
+      "tx_position_m": [
+        5.6,
+        10.733333333333334,
+        7.5
+      ],
+      "rx_power_mean_dbm": -255.69282199844213,
+      "fraction_rx_power_above_minus_100_dbm": 0.10252525252525252,
+      "fraction_rx_power_above_minus_120_dbm": 0.10378787878787879
+    },
+    {
+      "height_m": 7.5,
+      "point_id": 11,
+      "tx_position_m": [
+        -26.6,
+        20.46666666666667,
+        7.5
+      ],
+      "rx_power_mean_dbm": -259.3220317500751,
+      "fraction_rx_power_above_minus_100_dbm": 0.08535353535353535,
+      "fraction_rx_power_above_minus_120_dbm": 0.0856060606060606
+    },
+    {
+      "height_m": 7.5,
+      "point_id": 12,
+      "tx_position_m": [
+        -18.55,
+        20.46666666666667,
+        7.5
+      ],
+      "rx_power_mean_dbm": -250.3637737895749,
+      "fraction_rx_power_above_minus_100_dbm": 0.12777777777777777,
+      "fraction_rx_power_above_minus_120_dbm": 0.12803030303030302
+    },
+    {
+      "height_m": 7.5,
+      "point_id": 13,
+      "tx_position_m": [
+        -10.5,
+        20.46666666666667,
+        7.5
+      ],
+      "rx_power_mean_dbm": -162.13448451111122,
+      "fraction_rx_power_above_minus_100_dbm": 0.55,
+      "fraction_rx_power_above_minus_120_dbm": 0.5527777777777778
+    },
+    {
+      "height_m": 7.5,
+      "point_id": 14,
+      "tx_position_m": [
+        -2.4499999999999993,
+        20.46666666666667,
+        7.5
+      ],
+      "rx_power_mean_dbm": -227.4248780921526,
+      "fraction_rx_power_above_minus_100_dbm": 0.24116161616161616,
+      "fraction_rx_power_above_minus_120_dbm": 0.24343434343434345
+    },
+    {
+      "height_m": 7.5,
+      "point_id": 15,
+      "tx_position_m": [
+        5.6,
+        20.46666666666667,
+        7.5
+      ],
+      "rx_power_mean_dbm": -263.4065529166807,
+      "fraction_rx_power_above_minus_100_dbm": 0.0648989898989899,
+      "fraction_rx_power_above_minus_120_dbm": 0.06616161616161616
+    },
+    {
+      "height_m": 7.5,
+      "point_id": 16,
+      "tx_position_m": [
+        -26.6,
+        30.200000000000003,
+        7.5
+      ],
+      "rx_power_mean_dbm": -270.16712840864136,
+      "fraction_rx_power_above_minus_100_dbm": 0.03333333333333333,
+      "fraction_rx_power_above_minus_120_dbm": 0.03383838383838384
+    },
+    {
+      "height_m": 7.5,
+      "point_id": 17,
+      "tx_position_m": [
+        -18.55,
+        30.200000000000003,
+        7.5
+      ],
+      "rx_power_mean_dbm": -216.09430837787554,
+      "fraction_rx_power_above_minus_100_dbm": 0.2964646464646465,
+      "fraction_rx_power_above_minus_120_dbm": 0.29848484848484846
+    },
+    {
+      "height_m": 7.5,
+      "point_id": 18,
+      "tx_position_m": [
+        -10.5,
+        30.200000000000003,
+        7.5
+      ],
+      "rx_power_mean_dbm": -180.09584945168973,
+      "fraction_rx_power_above_minus_100_dbm": 0.46893939393939393,
+      "fraction_rx_power_above_minus_120_dbm": 0.4755050505050505
+    },
+    {
+      "height_m": 7.5,
+      "point_id": 19,
+      "tx_position_m": [
+        -2.4499999999999993,
+        30.200000000000003,
+        7.5
+      ],
+      "rx_power_mean_dbm": -213.28223741458874,
+      "fraction_rx_power_above_minus_100_dbm": 0.3085858585858586,
+      "fraction_rx_power_above_minus_120_dbm": 0.31262626262626264
+    },
+    {
+      "height_m": 7.5,
+      "point_id": 20,
+      "tx_position_m": [
+        5.6,
+        30.200000000000003,
+        7.5
+      ],
+      "rx_power_mean_dbm": -271.2669394048567,
+      "fraction_rx_power_above_minus_100_dbm": 0.027525252525252526,
+      "fraction_rx_power_above_minus_120_dbm": 0.028282828282828285
+    }
+  ]
+}

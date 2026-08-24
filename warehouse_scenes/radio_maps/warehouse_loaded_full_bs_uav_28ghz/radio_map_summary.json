@@ -1,0 +1,78 @@
+{
+  "scene": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/warehouse_scenes/sionna/warehouse_loaded/warehouse.xml",
+  "scene_label": "Warehouse_Loaded_Full",
+  "bs_position_m": [
+    -13.5,
+    16.0,
+    8.55
+  ],
+  "uav_heights_m": [
+    0.75,
+    1.5,
+    3.0,
+    5.0,
+    7.5
+  ],
+  "bounds_m": [
+    -27.0,
+    6.0,
+    -23.0,
+    30.0
+  ],
+  "cell_size_m": 0.5,
+  "frequency_hz": 28000000000.0,
+  "bandwidth_hz": 100000000.0,
+  "tx_power_dbm": 33.0,
+  "samples_per_map": 100000,
+  "max_depth": 2,
+  "diffraction": false,
+  "seed": 42,
+  "radio_map_quantity": "isotropic path gain and received power; no UPA beamforming gain",
+  "statistics": [
+    {
+      "uav_height_m": 0.75,
+      "path_gain_mean_db": -227.6880340576172,
+      "path_gain_p10_db": -300.0,
+      "rx_power_mean_dbm": -194.6880340576172,
+      "rx_power_p10_dbm": -267.0,
+      "fraction_rx_power_above_minus_100_dbm": 0.3403373356203545,
+      "fraction_rx_power_above_minus_120_dbm": 0.3403373356203545
+    },
+    {
+      "uav_height_m": 1.5,
+      "path_gain_mean_db": -225.0663604736328,
+      "path_gain_p10_db": -300.0,
+      "rx_power_mean_dbm": -192.0663604736328,
+      "rx_power_p10_dbm": -267.0,
+      "fraction_rx_power_above_minus_100_dbm": 0.35062893081761004,
+      "fraction_rx_power_above_minus_120_dbm": 0.3507718696397942
+    },
+    {
+      "uav_height_m": 3.0,
+      "path_gain_mean_db": -221.00836181640625,
+      "path_gain_p10_db": -300.0,
+      "rx_power_mean_dbm": -188.00836181640625,
+      "rx_power_p10_dbm": -267.0,
+      "fraction_rx_power_above_minus_100_dbm": 0.3666380789022298,
+      "fraction_rx_power_above_minus_120_dbm": 0.3673527730131504
+    },
+    {
+      "uav_height_m": 5.0,
+      "path_gain_mean_db": -207.7237548828125,
+      "path_gain_p10_db": -300.0,
+      "rx_power_mean_dbm": -174.7237548828125,
+      "rx_power_p10_dbm": -267.0,
+      "fraction_rx_power_above_minus_100_dbm": 0.42495711835334476,
+      "fraction_rx_power_above_minus_120_dbm": 0.42495711835334476
+    },
+    {
+      "uav_height_m": 7.5,
+      "path_gain_mean_db": -209.3592071533203,
+      "path_gain_p10_db": -300.0,
+      "rx_power_mean_dbm": -176.3592071533203,
+      "rx_power_p10_dbm": -267.0,
+      "fraction_rx_power_above_minus_100_dbm": 0.417095483133219,
+      "fraction_rx_power_above_minus_120_dbm": 0.41723842195540306
+    }
+  ]
+}

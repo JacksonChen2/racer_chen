@@ -1,0 +1,21 @@
+{
+  "scene": "warehouse_full_with_industrial_ap",
+  "layout": "fixed x/y with five BS phase-center heights",
+  "fixed_xy_m": [-10.0, 14.0],
+  "frequency_hz": 28000000000.0,
+  "bandwidth_hz": 100000000.0,
+  "downlink_tx_power_dbm": 45.0,
+  "uplink_tx_power_dbm": 30.0,
+  "uav_heights_m": [0.75, 1.5, 3.0, 5.0, 7.5],
+  "bounds_m": [-27.0, 6.0, 0.6, 30.6],
+  "cell_size_m": 0.5,
+  "samples_per_map": 100000,
+  "max_depth": 2,
+  "candidates": [
+    {"id": "bs_z5", "position_m": [-10.0, 14.0, 5.0], "output_dir": "bs_z5"},
+    {"id": "bs_z6", "position_m": [-10.0, 14.0, 6.0], "output_dir": "bs_z6"},
+    {"id": "bs_z7", "position_m": [-10.0, 14.0, 7.0], "output_dir": "bs_z7"},
+    {"id": "bs_z8", "position_m": [-10.0, 14.0, 8.0], "output_dir": "bs_z8"},
+    {"id": "bs_z8p5", "position_m": [-10.0, 14.0, 8.5], "output_dir": "bs_z8p5"}
+  ]
+}

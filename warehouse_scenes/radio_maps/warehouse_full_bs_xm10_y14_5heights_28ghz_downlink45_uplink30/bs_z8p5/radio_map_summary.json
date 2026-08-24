@@ -1,0 +1,110 @@
+{
+  "scene": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/warehouse_scenes/sionna/warehouse_full_with_industrial_ap/warehouse.xml",
+  "scene_label": "Warehouse Full bs_z8p5",
+  "bs_position_m": [
+    -10.0,
+    14.0,
+    8.5
+  ],
+  "uav_heights_m": [
+    0.75,
+    1.5,
+    3.0,
+    5.0,
+    7.5
+  ],
+  "bounds_m": [
+    -27.0,
+    6.0,
+    0.6,
+    30.6
+  ],
+  "cell_size_m": 0.5,
+  "frequency_hz": 28000000000.0,
+  "bandwidth_hz": 100000000.0,
+  "tx_power_dbm": 45.0,
+  "downlink_tx_power_dbm": 45.0,
+  "uplink_tx_power_dbm": 30.0,
+  "samples_per_map": 100000,
+  "max_depth": 2,
+  "diffraction": false,
+  "seed": 42,
+  "radio_map_quantity": "isotropic path gain and received power; no UPA beamforming gain",
+  "statistics": [
+    {
+      "uav_height_m": 0.75,
+      "path_gain_mean_db": -186.76434326171875,
+      "path_gain_p10_db": -300.0,
+      "rx_power_mean_dbm": -141.76434326171875,
+      "rx_power_p10_dbm": -255.0,
+      "fraction_rx_power_above_minus_100_dbm": 0.5363636363636364,
+      "fraction_rx_power_above_minus_120_dbm": 0.5363636363636364,
+      "downlink_rx_power_mean_dbm": -141.76434326171875,
+      "downlink_rx_power_p10_dbm": -255.0,
+      "uplink_rx_power_mean_dbm": -156.76434326171875,
+      "uplink_rx_power_p10_dbm": -270.0,
+      "uplink_fraction_rx_power_above_minus_100_dbm": 0.5363636363636364,
+      "uplink_fraction_rx_power_above_minus_120_dbm": 0.5363636363636364
+    },
+    {
+      "uav_height_m": 1.5,
+      "path_gain_mean_db": -179.85008239746094,
+      "path_gain_p10_db": -300.0,
+      "rx_power_mean_dbm": -134.85008239746094,
+      "rx_power_p10_dbm": -255.0,
+      "fraction_rx_power_above_minus_100_dbm": 0.5694444444444444,
+      "fraction_rx_power_above_minus_120_dbm": 0.5694444444444444,
+      "downlink_rx_power_mean_dbm": -134.85008239746094,
+      "downlink_rx_power_p10_dbm": -255.0,
+      "uplink_rx_power_mean_dbm": -149.85008239746094,
+      "uplink_rx_power_p10_dbm": -270.0,
+      "uplink_fraction_rx_power_above_minus_100_dbm": 0.5694444444444444,
+      "uplink_fraction_rx_power_above_minus_120_dbm": 0.5694444444444444
+    },
+    {
+      "uav_height_m": 3.0,
+      "path_gain_mean_db": -160.6667022705078,
+      "path_gain_p10_db": -300.0,
+      "rx_power_mean_dbm": -115.66669464111328,
+      "rx_power_p10_dbm": -255.0,
+      "fraction_rx_power_above_minus_100_dbm": 0.6558080808080808,
+      "fraction_rx_power_above_minus_120_dbm": 0.6558080808080808,
+      "downlink_rx_power_mean_dbm": -115.66669464111328,
+      "downlink_rx_power_p10_dbm": -255.0,
+      "uplink_rx_power_mean_dbm": -130.6667022705078,
+      "uplink_rx_power_p10_dbm": -270.0,
+      "uplink_fraction_rx_power_above_minus_100_dbm": 0.6555555555555556,
+      "uplink_fraction_rx_power_above_minus_120_dbm": 0.6558080808080808
+    },
+    {
+      "uav_height_m": 5.0,
+      "path_gain_mean_db": -143.37513732910156,
+      "path_gain_p10_db": -300.0,
+      "rx_power_mean_dbm": -98.3751449584961,
+      "rx_power_p10_dbm": -255.0,
+      "fraction_rx_power_above_minus_100_dbm": 0.7282828282828283,
+      "fraction_rx_power_above_minus_120_dbm": 0.7282828282828283,
+      "downlink_rx_power_mean_dbm": -98.3751449584961,
+      "downlink_rx_power_p10_dbm": -255.0,
+      "uplink_rx_power_mean_dbm": -113.3751449584961,
+      "uplink_rx_power_p10_dbm": -270.0,
+      "uplink_fraction_rx_power_above_minus_100_dbm": 0.7282828282828283,
+      "uplink_fraction_rx_power_above_minus_120_dbm": 0.7282828282828283
+    },
+    {
+      "uav_height_m": 7.5,
+      "path_gain_mean_db": -158.3562774658203,
+      "path_gain_p10_db": -300.0,
+      "rx_power_mean_dbm": -113.35629272460938,
+      "rx_power_p10_dbm": -255.0,
+      "fraction_rx_power_above_minus_100_dbm": 0.6553030303030303,
+      "fraction_rx_power_above_minus_120_dbm": 0.6553030303030303,
+      "downlink_rx_power_mean_dbm": -113.35629272460938,
+      "downlink_rx_power_p10_dbm": -255.0,
+      "uplink_rx_power_mean_dbm": -128.35629272460938,
+      "uplink_rx_power_p10_dbm": -270.0,
+      "uplink_fraction_rx_power_above_minus_100_dbm": 0.6547979797979798,
+      "uplink_fraction_rx_power_above_minus_120_dbm": 0.6553030303030303
+    }
+  ]
+}
