@@ -224,17 +224,80 @@ def warehouse_loaded_center_scene() -> Scenario3D:
     )
 
 
+def warehouse_loaded_full_scene() -> Scenario3D:
+    """Complete enclosed factory, including the southern y < 1 rack area."""
+
+    return Scenario3D(
+        name="warehouse_loaded_full",
+        map_min=(-27.0, -23.0, 0.0),
+        map_max=(6.0, 30.0, 8.5),
+        starts=(
+            (-20.0, 0.0, 0.80),
+            (-16.0, 0.0, 1.50),
+            (-12.0, 0.0, 2.20),
+            (-8.0, 0.0, 1.15),
+            (-4.0, 0.0, 1.85),
+        ),
+        obstacles=(),
+        coarse_grid_size=(8.25, 6.625, 4.25),
+        truth_mode="observed_volume",
+        safety_min=(-27.25, -23.25, 0.0),
+        safety_max=(6.25, 30.25, 8.8),
+    )
+
+
+def warehouse_full_scene() -> Scenario3D:
+    """User-edited northern full-warehouse volume with a central BS."""
+
+    return Scenario3D(
+        name="warehouse_full",
+        map_min=(-27.0, 0.6, 0.0),
+        map_max=(6.0, 30.6, 8.5),
+        starts=(
+            (-8.8, 15.2, 0.80),
+            (-6.8, 15.2, 1.50),
+            (-8.8, 17.2, 2.20),
+            (-6.8, 17.2, 1.15),
+            (-7.8, 16.2, 1.85),
+            (-26.6, 1.0, 0.75),
+            (-18.55, 1.0, 1.50),
+            (-10.5, 1.0, 3.00),
+            (-2.45, 1.0, 5.00),
+            (5.6, 1.0, 7.50),
+            (-26.1, 8.3, 1.50),
+            (-18.55, 8.3, 3.00),
+            (-10.5, 8.3, 5.00),
+            (-2.45, 8.3, 7.50),
+            (5.1, 8.3, 0.75),
+            (-8.8, 15.2, 3.80),
+            (-18.55, 22.9, 5.00),
+            (-10.5, 22.4, 0.75),
+            (-2.45, 22.9, 1.50),
+            (-6.8, 15.2, 3.80),
+        ),
+        obstacles=(),
+        coarse_grid_size=(8.25, 7.5, 4.25),
+        truth_mode="observed_volume",
+        safety_min=(-27.25, 0.35, 0.0),
+        safety_max=(6.25, 30.85, 8.8),
+    )
+
+
 DEFAULT_SCENARIO = acceptance_scene()
 LARGE_SCENARIO = large_acceptance_scene()
 WAREHOUSE_SCENARIO = warehouse_simple_scene()
 WAREHOUSE_LOADED_SCENARIO = warehouse_loaded_scene()
 WAREHOUSE_LOADED_CENTER_SCENARIO = warehouse_loaded_center_scene()
+WAREHOUSE_LOADED_FULL_SCENARIO = warehouse_loaded_full_scene()
+WAREHOUSE_FULL_SCENARIO = warehouse_full_scene()
 SCENARIOS: Dict[str, Scenario3D] = {
     DEFAULT_SCENARIO.name: DEFAULT_SCENARIO,
     LARGE_SCENARIO.name: LARGE_SCENARIO,
     WAREHOUSE_SCENARIO.name: WAREHOUSE_SCENARIO,
     WAREHOUSE_LOADED_SCENARIO.name: WAREHOUSE_LOADED_SCENARIO,
     WAREHOUSE_LOADED_CENTER_SCENARIO.name: WAREHOUSE_LOADED_CENTER_SCENARIO,
+    WAREHOUSE_LOADED_FULL_SCENARIO.name: WAREHOUSE_LOADED_FULL_SCENARIO,
+    WAREHOUSE_FULL_SCENARIO.name: WAREHOUSE_FULL_SCENARIO,
 }
 
 

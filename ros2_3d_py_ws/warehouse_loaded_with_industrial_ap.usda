@@ -1,5 +1,31 @@
 #usda 1.0
 (
+    customLayerData = {
+        dictionary cameraSettings = {
+            dictionary Front = {
+                double3 position = (5, 0, 0)
+                double radius = 5
+            }
+            dictionary Perspective = {
+                double3 position = (-12.344000764809904, 17.581974531679883, 8.701520874339954)
+                double3 target = (-13.635987455490211, 15.567273031225195, 7.865824674767548)
+            }
+            dictionary Right = {
+                double3 position = (0, -5, 0)
+                double radius = 5
+            }
+            dictionary Top = {
+                double3 position = (0, 0, 5)
+                double radius = 5
+            }
+            string boundCamera = "/OmniverseKit_Persp"
+        }
+        dictionary omni_layer = {
+            string authoring_layer = "./warehouse_loaded_with_industrial_ap.usda"
+        }
+        dictionary renderSettings = {
+        }
+    }
     defaultPrim = "World"
     metersPerUnit = 1
     subLayers = [
@@ -15,8 +41,191 @@ over "World"
     )
     {
         custom string experiment:role = "visible_and_rf_access_point"
-        custom double3 radio:phaseCenter = (-10.5, 16.7, 8.10)
-        double3 xformOp:translate = (-10.5, 16.7, 8.55)
+        custom double3 radio:phaseCenter = (-13.5, 16.0, 8.55)
+        double3 xformOp:translate = (-13.5, 16.0, 9.0)
         uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    over "WarehouseScene"
+    {
+        over "full_warehouse"
+        {
+            over "SM_WallA_3M8"
+            {
+                token visibility = "inherited"
+
+                over "SM_WallB_6M"
+                {
+                    token visibility = "inherited"
+
+                    over "SM_WallB_6M"
+                    {
+                        token visibility = "inherited"
+                    }
+                }
+            }
+
+            over "SM_WallA_3M9"
+            {
+                token visibility = "inherited"
+            }
+
+            over "SM_WallA_InnerCorner19"
+            {
+                token visibility = "inherited"
+            }
+
+            over "SM_WallA_3M21_1371"
+            {
+                token visibility = "inherited"
+            }
+
+            over "SM_WallA_3M22_1372"
+            {
+                token visibility = "inherited"
+            }
+
+            over "SM_WallA_InnerCorner31"
+            {
+                token visibility = "inherited"
+            }
+
+            over "SM_WallA_InnerCorner36"
+            {
+                token visibility = "inherited"
+            }
+
+            over "SM_WallA_InnerCorner20"
+            {
+                token visibility = "inherited"
+            }
+
+            over "SM_WallA_InnerCorner21"
+            {
+                token visibility = "inherited"
+            }
+
+            over "SM_WallA_InnerCorner37"
+            {
+                token visibility = "inherited"
+            }
+
+            over "SM_LampCeilingA_15"
+            {
+                over "RectLight"
+                {
+                    token visibility = "invisible"
+                }
+            }
+
+            over "SM_LampCeilingA_356"
+            {
+                over "RectLight"
+                {
+                    token visibility = "invisible"
+                }
+            }
+
+            over "GroundPlane"
+            {
+                over "CollisionMesh"
+                {
+                    token visibility = "invisible"
+                }
+            }
+
+            over "SM_LampCeilingA_32"
+            {
+                over "RectLight"
+                {
+                    token visibility = "invisible"
+                }
+            }
+        }
+    }
+
+    over "Racklarge01" (
+        active = false
+    )
+    {
+        token visibility = "invisible"
+
+        over "RackLarge_00" (
+            active = false
+        )
+        {
+        }
+    }
+
+    over "Racklarge01_01"
+    {
+        over "RackLarge_00" (
+            active = false
+        )
+        {
+        }
+
+        over "RackLarge_06" (
+            active = false
+        )
+        {
+        }
+    }
+
+    over "Racklarge02"
+    {
+        over "RackLarge_10" (
+            active = false
+        )
+        {
+        }
+
+        over "RackLarge_16" (
+            active = true
+        )
+        {
+        }
+
+        over "RackLarge_17" (
+            active = false
+        )
+        {
+        }
+    }
+
+    over "Racklarge02_01" (
+        active = false
+    )
+    {
+        token visibility = "invisible"
+
+        over "RackLarge_10" (
+            active = false
+        )
+        {
+        }
+
+        over "RackLarge_16" (
+            active = false
+        )
+        {
+        }
+    }
+}
+
+over "Render"
+{
+    over "OmniverseKit"
+    {
+        over "HydraTextures"
+        {
+            over "omni_kit_widget_viewport_ViewportTexture_0"
+            {
+                rel camera = </OmniverseKit_Persp>
+                rel orderedVars = </Render/Vars/LdrColor>
+                custom bool overrideClipRange = 0
+                uniform int2 resolution = (1280, 720)
+            }
+        }
     }
 }

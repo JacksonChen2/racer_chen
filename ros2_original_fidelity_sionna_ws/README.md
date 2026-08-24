@@ -95,13 +95,23 @@ BS 上下行增量 chunk 数、各 MCS 使用次数及完整 PHY 参数，便于
 两个正式入口默认使用相同的 100 Hz 物理、10 Hz 传感器、320×240 深度图和
 19,200 ray budget，以保证仅改变通信拓扑。
 
-`warehouse_loaded` 和 `warehouse_loaded_center` 默认加载
-`warehouse_loaded_with_industrial_ap.usda`：BS 安装在有效建图区天花板中心
-`(-10.5, 16.7)`，外壳挂点高度为 8.55 m，射频相位中心为
-`(-10.5, 16.7, 8.10)`。修改场景后可用下列命令重新烘焙对应 Sionna RT 几何：
+`warehouse_loaded`、`warehouse_loaded_center` 和 `warehouse_loaded_full` 默认加载
+`warehouse_loaded_with_industrial_ap.usda`：BS 位置通过 28 GHz Sionna radio-map
+网格搜索选取，同时评价完整厂房和有效货架建图区的多高度链路。外壳安装面位于
+`(-13.5, 16.0, 9.0)`，射频相位中心为 `(-13.5, 16.0, 8.55)`。修改场景后可用
+下列命令重新烘焙对应 Sionna RT 几何：
 
 ```bash
 ./prepare_warehouse_loaded_sionna_scene.sh
+```
+
+`warehouse_loaded` 保留原货架区基准（`y=7.2..26.2 m`）；新增的
+`warehouse_loaded_full` 覆盖完整封闭厂房（`x=-27..6 m`、`y=-23..30 m`、
+`z=0..8.5 m`），包含 `y<1` 的南侧货架和生产区，但不包含室外装卸平台。
+其 5 架 UAV 从中央横向通道出发，正式 900 秒、28 GHz BS Round Robin 入口为：
+
+```bash
+./run_warehouse_loaded_full_bs_rr_900s.sh
 ```
 
 Warehouse Loaded 的正式配对实验使用 640×480@30 Hz 深度相机、76,800 个有效

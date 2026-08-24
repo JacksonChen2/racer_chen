@@ -13,7 +13,8 @@ log_path = Path(sys.argv[1])
 drone_count = int(sys.argv[2])
 launch_pid = int(sys.argv[3])
 finish_pattern = re.compile(
-    r"racer_original_exploration_(\d+).*(?:finish exploration|state: FINISH)"
+    r"racer_(?:original|recovery)_exploration_(\d+).*"
+    r"(?:finish exploration|state: FINISH)"
 )
 finished = set()
 

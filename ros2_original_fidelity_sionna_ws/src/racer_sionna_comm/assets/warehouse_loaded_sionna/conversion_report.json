@@ -11,14 +11,14 @@
     -41.41703414916992,
     -0.009031959809362888
   ],
-  "exported_mesh_prim_count": 7135,
+  "exported_mesh_prim_count": 5057,
   "geometry_mode": "oriented_bbox_proxy",
-  "input_usd": "/home/jackson/racer2/racer_cloud/racer_chen/ros2_3d_py_ws/warehouse_loaded_with_industrial_ap.usda",
-  "mesh_prim_count": 7147,
+  "input_usd": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/ros2_3d_py_ws/warehouse_loaded_with_industrial_ap.usda",
+  "mesh_prim_count": 5059,
   "output_units": "meter",
   "output_up_axis": "Z",
-  "output_xml": "/home/jackson/racer2/racer_cloud/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/warehouse.xml",
-  "prim_count": 43896,
+  "output_xml": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/warehouse.xml",
+  "prim_count": 33634,
   "rf_material_groups": {
     "ceiling_board": {
       "bounds_max_m": [
@@ -31,11 +31,11 @@
         -41.40703201293945,
         3.0
       ],
-      "file": "/home/jackson/racer2/racer_cloud/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_ceiling_board.ply",
-      "file_size_bytes": 46081,
-      "source_meshes": 182,
-      "triangles": 2184,
-      "vertices": 1456
+      "file": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_ceiling_board.ply",
+      "file_size_bytes": 48601,
+      "source_meshes": 192,
+      "triangles": 2304,
+      "vertices": 1536
     },
     "chipboard": {
       "bounds_max_m": [
@@ -48,7 +48,7 @@
         -11.189949035644531,
         -2.47955313170678e-07
       ],
-      "file": "/home/jackson/racer2/racer_cloud/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_chipboard.ply",
+      "file": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_chipboard.ply",
       "file_size_bytes": 469947,
       "source_meshes": 1864,
       "triangles": 22368,
@@ -65,7 +65,7 @@
         -23.431610107421875,
         -8.583068478174027e-08
       ],
-      "file": "/home/jackson/racer2/racer_cloud/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_concrete.ply",
+      "file": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_concrete.ply",
       "file_size_bytes": 109081,
       "source_meshes": 432,
       "triangles": 5184,
@@ -82,11 +82,11 @@
         -41.41703414916992,
         -0.0019066845998167992
       ],
-      "file": "/home/jackson/racer2/racer_cloud/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_metal.ply",
-      "file_size_bytes": 1078275,
-      "source_meshes": 4278,
-      "triangles": 51336,
-      "vertices": 34224
+      "file": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_metal.ply",
+      "file_size_bytes": 552099,
+      "source_meshes": 2190,
+      "triangles": 26280,
+      "vertices": 17520
     },
     "plywood": {
       "bounds_max_m": [
@@ -99,7 +99,7 @@
         8.805994987487793,
         -0.009031959809362888
       ],
-      "file": "/home/jackson/racer2/racer_cloud/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_plywood.ply",
+      "file": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_plywood.ply",
       "file_size_bytes": 54397,
       "source_meshes": 215,
       "triangles": 2580,
@@ -116,7 +116,7 @@
         -17.258304595947266,
         -0.00017162565200123936
       ],
-      "file": "/home/jackson/racer2/racer_cloud/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_wood.ply",
+      "file": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_loaded_sionna/meshes/warehouse_wood.ply",
       "file_size_bytes": 41545,
       "source_meshes": 164,
       "triangles": 1968,
@@ -124,59 +124,27 @@
     }
   },
   "rf_material_note": "USD visual materials were heuristically mapped to Sionna ITU radio materials. Plastic/rubber is approximated as plywood; unrecognized geometry uses concrete.",
-  "skipped_invisible_or_guide": 12,
+  "skipped_invisible_or_guide": 2,
   "source_face_count": 0,
   "source_meters_per_unit": 1.0,
   "source_up_axis": "Z",
   "source_vertex_count": 0,
   "top_usd_material_names": [
     [
-      "Cardboard_C2",
-      506
-    ],
-    [
-      "Cardboard_D1",
-      420
-    ],
-    [
       "Shelf",
-      376
+      250
     ],
     [
       "Crate",
-      348
-    ],
-    [
-      "Cardboard_B2",
-      338
-    ],
-    [
-      "Cardboard_C3",
-      252
-    ],
-    [
-      "Cardboard_A2",
-      252
-    ],
-    [
-      "Cardboard_A",
-      224
-    ],
-    [
-      "Cardboard_C1",
-      198
-    ],
-    [
-      "Cardboard_B1",
-      196
+      240
     ],
     [
       "MI_SignC",
       195
     ],
     [
-      "Cardboard_D3",
-      170
+      "Cardboard_C2",
+      182
     ],
     [
       "MI_RackSetC_03",
@@ -187,20 +155,20 @@
       158
     ],
     [
-      "Cardboard_A3",
-      140
+      "Cardboard_D1",
+      150
     ],
     [
       "MI_CeilingA_06b",
+      132
+    ],
+    [
+      "Cardboard_B2",
       122
     ],
     [
       "MI_BottlesPlastic_01",
       120
-    ],
-    [
-      "Cardboard_B3",
-      112
     ],
     [
       "MI_RackSetD_05",
@@ -211,6 +179,18 @@
       90
     ],
     [
+      "Cardboard_C3",
+      90
+    ],
+    [
+      "Cardboard_A2",
+      90
+    ],
+    [
+      "Cardboard_A",
+      80
+    ],
+    [
       "MI_BeamsA_05",
       77
     ],
@@ -219,11 +199,19 @@
       72
     ],
     [
+      "Cardboard_C1",
+      72
+    ],
+    [
       "MI_RackSetB_03",
       70
     ],
     [
-      "Pallet",
+      "Cardboard_B1",
+      70
+    ],
+    [
+      "Cardboard_D3",
       62
     ],
     [
@@ -233,6 +221,14 @@
     [
       "MI_Floor_02b",
       54
+    ],
+    [
+      "Cardboard_A3",
+      50
+    ],
+    [
+      "Cardboard_B3",
+      40
     ],
     [
       "MI_CardBoxC",
@@ -263,12 +259,12 @@
       30
     ],
     [
-      "Cardboard_D2",
-      28
-    ],
-    [
       "MI_CardBoxB",
       27
+    ],
+    [
+      "Pallet",
+      26
     ],
     [
       "MI_FrameA_05",
@@ -289,8 +285,12 @@
     [
       "GeneratedCardboard",
       18
+    ],
+    [
+      "MI_BeamsA_02",
+      16
     ]
   ],
-  "triangle_count": 85620,
+  "triangle_count": 60684,
   "unresolved_dependencies": []
 }

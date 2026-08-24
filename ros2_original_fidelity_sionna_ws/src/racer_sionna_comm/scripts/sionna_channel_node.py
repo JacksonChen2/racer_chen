@@ -143,7 +143,7 @@ class SionnaChannelNode(Node):
         self.node_count = self.drone_count + int(self.ap_enabled)
         self.ap_position = np.asarray(
             self.declare_parameter(
-                "ap_position", [-0.5, 2.85, 8.10]
+                "ap_position", [0.0, 3.0, 8.10]
             ).value,
             dtype=np.float64,
         )
@@ -231,11 +231,12 @@ class SionnaChannelNode(Node):
         )
 
         if self.network_topology not in (
-            "distributed", "ap_assisted", "bs_round_robin"
+            "distributed", "nearest_neighbors", "distance_radius",
+            "ap_assisted", "bs_round_robin",
         ):
             raise ValueError(
-                "network_topology must be distributed, ap_assisted, or "
-                "bs_round_robin"
+                "network_topology must be distributed, nearest_neighbors, "
+                "distance_radius, ap_assisted, or bs_round_robin"
             )
         if self.ap_position.shape != (3,) or not np.all(
             np.isfinite(self.ap_position)

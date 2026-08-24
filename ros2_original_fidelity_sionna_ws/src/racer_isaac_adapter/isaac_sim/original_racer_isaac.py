@@ -13,6 +13,7 @@ upstream ROS 1 simulator rather than the paper's real vehicle: a 1 kHz plant,
 import argparse
 import asyncio
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 import faulthandler
 import json
 import math
@@ -110,6 +111,21 @@ def parse_arguments() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--sensor-worker-count",
+        type=int,
+        default=1,
+        help=(
+            "CPU workers used for per-UAV depth/lidar coordinate transforms; "
+            "Isaac sensor access and ROS publication remain on the main thread"
+        ),
+    )
+    parser.add_argument(
+        "--scene-query-rate-hz",
+        type=float,
+        default=50.0,
+        help="per-UAV PhysX execution-safety sweep refresh rate",
+    )
+    parser.add_argument(
         "--vehicle-model",
         choices=("racer_so3", "crazyflie"),
         default="racer_so3",
@@ -168,6 +184,10 @@ if ARGS.vehicle_model == "racer_so3":
         raise SystemExit(f"vehicle USD does not exist: {ARGS.vehicle_usd}")
 if ARGS.camera_ray_budget <= 0:
     raise SystemExit("--camera-ray-budget must be positive")
+if ARGS.sensor_worker_count <= 0:
+    raise SystemExit("--sensor-worker-count must be positive")
+if ARGS.scene_query_rate_hz <= 0.0:
+    raise SystemExit("--scene-query-rate-hz must be positive")
 if ARGS.visualization_max_map_points <= 0:
     raise SystemExit("--visualization-max-map-points must be positive")
 if ARGS.interactive_render_hz <= 0.0:
@@ -226,6 +246,7 @@ from visualization_msgs.msg import Marker  # noqa: E402
 
 from crazyflie_cpp_bridge import (  # noqa: E402
     MASS as CRAZYFLIE_MASS,
+    quaternion_matrix,
     velocity_wrench,
 )
 from pointcloud_cpp_bridge import (  # noqa: E402
@@ -248,7 +269,9 @@ from safety_cpp_bridge import (  # noqa: E402
     aabb_obstacle_filter,
     cbf_swarm_filter,
     flight_volume_filter,
+    pointcloud_obstacle_constraints,
     pointcloud_obstacle_filter,
+    project_velocity_constraints,
     sweep_obstacle_filter,
 )
 
@@ -306,6 +329,26 @@ MAPPING_MIN_RAY_LENGTH = 0.5
 MAPPING_MAX_RAY_LENGTH = 4.5
 DEPTH_FILTER_MARGIN = max(1, round(2 * min(DEPTH_SCALE_X, DEPTH_SCALE_Y)))
 DEPTH_SKIP_PIXEL = max(1, round(2 * min(DEPTH_SCALE_X, DEPTH_SCALE_Y)))
+# The pinhole sampling lattice and deterministic ray-budget selection do not
+# change between frames.  Precomputing them avoids rebuilding and thinning the
+# same 640x480 grid for every UAV at every sensor tick.
+_depth_sample_v, _depth_sample_u = np.mgrid[
+    DEPTH_FILTER_MARGIN:DEPTH_HEIGHT - DEPTH_FILTER_MARGIN:DEPTH_SKIP_PIXEL,
+    DEPTH_FILTER_MARGIN:DEPTH_WIDTH - DEPTH_FILTER_MARGIN:DEPTH_SKIP_PIXEL,
+]
+DEPTH_SAMPLE_ROWS = _depth_sample_v.reshape(-1)
+DEPTH_SAMPLE_COLS = _depth_sample_u.reshape(-1)
+if len(DEPTH_SAMPLE_ROWS) > ARGS.camera_ray_budget:
+    _depth_selected = np.linspace(
+        0,
+        len(DEPTH_SAMPLE_ROWS) - 1,
+        ARGS.camera_ray_budget,
+        dtype=np.int64,
+    )
+    DEPTH_SAMPLE_ROWS = DEPTH_SAMPLE_ROWS[_depth_selected]
+    DEPTH_SAMPLE_COLS = DEPTH_SAMPLE_COLS[_depth_selected]
+DEPTH_SAMPLE_U = DEPTH_SAMPLE_COLS.astype(np.float32)
+DEPTH_SAMPLE_V = DEPTH_SAMPLE_ROWS.astype(np.float32)
 CAMERA_TRANSLATION = np.zeros(3)
 # The upstream ideal renderer has no carrier geometry.  The generated Isaac
 # visual envelope reaches 0.26 + 0.062 m from the body origin, so returns
@@ -342,13 +385,14 @@ SAFETY_LIDAR_VERTICAL_RESOLUTION_DEG = 5.0
 # The lidar is deliberately coarse and can miss a thin shelf edge or ceiling
 # lamp between beams.  A low-level rigid-body sweep closes that geometric gap
 # without feeding privileged scene information into RACER's planning map.
-SCENE_QUERY_PERIOD = 0.02
+SCENE_QUERY_PERIOD = 1.0 / ARGS.scene_query_rate_hz
 SCENE_QUERY_RANGE = 2.4
 # The sphere itself already encloses the full rotor/arm collision geometry.
 # Retain an additional free-travel reserve for PhysX contact offset, attitude
-# lag and the 20 ms scene-query interval.  This is an actuator safety margin,
-# not an occupancy-map inflation or a planner parameter.
-SCENE_QUERY_CLEARANCE = 0.06
+# lag and the configured scene-query interval.  The speed-scaled term keeps a
+# lower query rate conservative instead of silently increasing travel between
+# cached sweeps. This is an actuator margin, not planner-map inflation.
+SCENE_QUERY_CLEARANCE = 0.02 + SOURCE_MAX_SPEED * SCENE_QUERY_PERIOD
 SOURCE_MAX_YAW_RATE = (
     math.radians(10.0) if ARGS.vehicle_model == "racer_so3" else 0.15
 )
@@ -390,15 +434,23 @@ def _external_obstacle_filter(
     points_world: Sequence[Sequence[float]],
     current_velocity: Sequence[float],
     sweep_constraints=(),
+    point_constraints=None,
 ) -> np.ndarray:
-    result = pointcloud_obstacle_filter(
-        preferred,
-        position,
-        points_world,
-        clearance=OBSTACLE_CONTROL_CLEARANCE,
-        speed_limit=SOURCE_MAX_SPEED,
-        current_velocity=current_velocity,
-    )
+    if point_constraints is None:
+        result = pointcloud_obstacle_filter(
+            preferred,
+            position,
+            points_world,
+            clearance=OBSTACLE_CONTROL_CLEARANCE,
+            speed_limit=SOURCE_MAX_SPEED,
+            current_velocity=current_velocity,
+        )
+    else:
+        result = project_velocity_constraints(
+            preferred,
+            point_constraints,
+            SOURCE_MAX_SPEED,
+        )
     if SCENARIO.safety_min is not None and SCENARIO.safety_max is not None:
         result = flight_volume_filter(
             result,
@@ -417,6 +469,113 @@ def _external_obstacle_filter(
         clearance=SCENE_QUERY_CLEARANCE,
     )
     return np.asarray(result, dtype=float)
+
+
+def _solve_control_job(job):
+    """Solve one UAV controller without calling Isaac/PhysX APIs.
+
+    The main thread snapshots rigid-body state and scene-query results before
+    dispatch.  This keeps all simulator APIs on their owning thread while the
+    independent NumPy safety/controller work scales across UAVs.
+    """
+
+    (
+        drone_id,
+        requested_command,
+        position,
+        orientation,
+        velocity,
+        angular_velocity,
+        yaw_command,
+        motor_rpm,
+        execution_safety_points,
+        sweep_constraints,
+        peer_states,
+    ) = job
+    point_constraints = None
+    if ARGS.scene_usd is None:
+        applied_command = np.asarray(
+            aabb_obstacle_filter(
+                requested_command,
+                position,
+                SCENARIO.obstacles,
+                clearance=OBSTACLE_CONTROL_CLEARANCE,
+                speed_limit=SOURCE_MAX_SPEED,
+                current_velocity=velocity,
+            ),
+            dtype=float,
+        )
+    else:
+        point_constraints = pointcloud_obstacle_constraints(
+            position,
+            execution_safety_points,
+            clearance=OBSTACLE_CONTROL_CLEARANCE,
+            current_velocity=velocity,
+        )
+        applied_command = _external_obstacle_filter(
+            requested_command,
+            position,
+            execution_safety_points,
+            velocity,
+            sweep_constraints,
+            point_constraints,
+        )
+    applied_command = np.asarray(
+        cbf_swarm_filter(
+            applied_command,
+            position,
+            peer_states,
+            safe_distance=SWARM_CONTROL_DISTANCE,
+            speed_limit=SOURCE_MAX_SPEED,
+            current_velocity=velocity,
+        ),
+        dtype=float,
+    )
+    # Pairwise projection can point toward a nearby wall; retain the obstacle
+    # barrier as final authority, using the already-built point constraints.
+    if ARGS.scene_usd is None:
+        applied_command = np.asarray(
+            aabb_obstacle_filter(
+                applied_command,
+                position,
+                SCENARIO.obstacles,
+                clearance=OBSTACLE_CONTROL_CLEARANCE,
+                speed_limit=SOURCE_MAX_SPEED,
+                current_velocity=velocity,
+            ),
+            dtype=float,
+        )
+    else:
+        applied_command = _external_obstacle_filter(
+            applied_command,
+            position,
+            execution_safety_points,
+            velocity,
+            sweep_constraints,
+            point_constraints,
+        )
+    if ARGS.vehicle_model == "racer_so3":
+        wrench = velocity_motor_wrench(
+            applied_command,
+            velocity,
+            orientation,
+            angular_velocity,
+            yaw_command,
+            motor_rpm,
+            PHYSICS_DT,
+        )
+    else:
+        wrench = velocity_wrench(
+            applied_command,
+            velocity,
+            orientation,
+            angular_velocity,
+            yaw_command,
+        )
+    intervened = float(
+        np.linalg.norm(applied_command - requested_command)
+    ) > 1.0e-3
+    return drone_id, applied_command, wrench, intervened
 
 
 def _backend_array_to_numpy(value) -> np.ndarray:
@@ -892,6 +1051,19 @@ class IsaacRacer3DBridge(Node):
         self.safety_sensors = safety_sensors
         self.contacts = contacts
         self.drone_count = len(bodies)
+        self.sensor_executor = (
+            ThreadPoolExecutor(
+                max_workers=min(ARGS.sensor_worker_count, self.drone_count),
+                thread_name_prefix="racer_sensor",
+            )
+            if ARGS.sensor_worker_count > 1 and self.drone_count > 1
+            else None
+        )
+        self.sensor_worker_count = (
+            min(ARGS.sensor_worker_count, self.drone_count)
+            if self.sensor_executor is not None
+            else 1
+        )
         self.commands = [np.zeros(3) for _ in bodies]
         self.applied_commands = [np.zeros(3) for _ in bodies]
         self.safety_points = [np.empty((0, 3), dtype=float) for _ in bodies]
@@ -1356,16 +1528,21 @@ class IsaacRacer3DBridge(Node):
             )
         )
         states = []
+        angular_velocities = []
         for body in self.bodies:
             position, orientation = body.get_world_pose()
             states.append(
                 (
                     np.asarray(position, dtype=float),
-                    orientation,
+                    np.asarray(orientation, dtype=float),
                     np.asarray(body.get_linear_velocity(), dtype=float),
                 )
             )
-        for drone_id, body in enumerate(self.bodies):
+            angular_velocities.append(
+                np.asarray(body.get_angular_velocity(), dtype=float)
+            )
+        control_jobs = []
+        for drone_id in range(self.drone_count):
             if phase_checkpoint:
                 print(
                     f"RACER_3D_PHASE step={self.control_steps} "
@@ -1406,92 +1583,45 @@ class IsaacRacer3DBridge(Node):
                     flush=True,
                 )
             execution_safety_points = self._execution_safety_points(drone_id)
-            applied_command = self.commands[drone_id]
-            if ARGS.scene_usd is None:
-                applied_command = np.asarray(
-                    aabb_obstacle_filter(
-                        applied_command,
-                        position,
-                        SCENARIO.obstacles,
-                        clearance=OBSTACLE_CONTROL_CLEARANCE,
-                        speed_limit=SOURCE_MAX_SPEED,
-                        current_velocity=velocity,
-                    ),
-                    dtype=float,
-                )
-            else:
-                applied_command = _external_obstacle_filter(
-                    applied_command,
+            peer_states = [
+                (peer_id, peer_position, peer_velocity)
+                for peer_id, (
+                    peer_position,
+                    _,
+                    peer_velocity,
+                ) in enumerate(states)
+                if peer_id != drone_id
+            ]
+            control_jobs.append(
+                (
+                    drone_id,
+                    self.commands[drone_id].copy(),
                     position,
-                    execution_safety_points,
+                    orientation,
                     velocity,
+                    angular_velocities[drone_id],
+                    self.yaw_commands[drone_id],
+                    self.motor_rpms[drone_id].copy(),
+                    execution_safety_points,
                     self.scene_query_constraints[drone_id],
+                    peer_states,
                 )
-            applied_command = np.asarray(
-                cbf_swarm_filter(
-                    applied_command,
-                    position,
-                    [
-                        (peer_id, peer_position, peer_velocity)
-                        for peer_id, (
-                            peer_position,
-                            _,
-                            peer_velocity,
-                        ) in enumerate(states)
-                        if peer_id != drone_id
-                    ],
-                    safe_distance=SWARM_CONTROL_DISTANCE,
-                    speed_limit=SOURCE_MAX_SPEED,
-                    current_velocity=velocity,
-                ),
-                dtype=float,
             )
-            # Pairwise projection can point toward a nearby wall; make the
-            # obstacle barrier the final authority on the combined command.
-            if ARGS.scene_usd is None:
-                applied_command = np.asarray(
-                    aabb_obstacle_filter(
-                        applied_command,
-                        position,
-                        SCENARIO.obstacles,
-                        clearance=OBSTACLE_CONTROL_CLEARANCE,
-                        speed_limit=SOURCE_MAX_SPEED,
-                        current_velocity=velocity,
-                    ),
-                    dtype=float,
-                )
-            else:
-                applied_command = _external_obstacle_filter(
-                    applied_command,
-                    position,
-                    execution_safety_points,
-                    velocity,
-                    self.scene_query_constraints[drone_id],
-                )
-            if float(
-                np.linalg.norm(applied_command - self.commands[drone_id])
-            ) > 1.0e-3:
+
+        if self.sensor_executor is None:
+            control_results = map(_solve_control_job, control_jobs)
+        else:
+            control_results = self.sensor_executor.map(
+                _solve_control_job, control_jobs
+            )
+        for drone_id, applied_command, wrench, intervened in control_results:
+            body = self.bodies[drone_id]
+            velocity = states[drone_id][2]
+            if intervened:
                 self.safety_interventions += 1
             self.applied_commands[drone_id] = applied_command
             if ARGS.vehicle_model == "racer_so3":
-                wrench = velocity_motor_wrench(
-                    applied_command,
-                    velocity,
-                    orientation,
-                    body.get_angular_velocity(),
-                    self.yaw_commands[drone_id],
-                    self.motor_rpms[drone_id],
-                    PHYSICS_DT,
-                )
                 self.motor_rpms[drone_id] = wrench.motor_rpm
-            else:
-                wrench = velocity_wrench(
-                    applied_command,
-                    velocity,
-                    orientation,
-                    body.get_angular_velocity(),
-                    self.yaw_commands[drone_id],
-                )
             # Tensor force commands are one-substep values. Submit force and
             # torque together so neither component overwrites the other.
             body._rigid_prim_view.apply_forces_and_torques_at_pos(
@@ -1527,9 +1657,9 @@ class IsaacRacer3DBridge(Node):
                                 drone_id
                             ].tolist(),
                             "applied_command": applied_command.tolist(),
-                            "angular_velocity": np.asarray(
-                                body.get_angular_velocity()
-                            ).tolist(),
+                            "angular_velocity": angular_velocities[
+                                drone_id
+                            ].tolist(),
                             "local_force": wrench.local_force.tolist(),
                             "local_torque": wrench.local_torque.tolist(),
                             "motors": wrench.motor_thrusts.tolist(),
@@ -1745,8 +1875,6 @@ class IsaacRacer3DBridge(Node):
         position: Sequence[float],
         orientation: Sequence[float],
     ) -> Tuple[np.ndarray, np.ndarray]:
-        from crazyflie_cpp_bridge import quaternion_matrix
-
         values = np.asarray(raw_points, dtype=float).reshape((-1, 3))
         finite = np.all(np.isfinite(values), axis=1)
         values = values[finite]
@@ -1766,8 +1894,6 @@ class IsaacRacer3DBridge(Node):
         position: Sequence[float],
         orientation: Sequence[float],
     ) -> np.ndarray:
-        from crazyflie_cpp_bridge import quaternion_matrix
-
         values = np.asarray(raw_points, dtype=float).reshape((-1, 3))
         finite = np.all(np.isfinite(values), axis=1)
         values = values[finite]
@@ -1800,29 +1926,12 @@ class IsaacRacer3DBridge(Node):
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Project one upstream-equivalent depth frame into the map frame."""
 
-        from crazyflie_cpp_bridge import quaternion_matrix
-
         depth = np.asarray(depth_image, dtype=np.float32).squeeze()
         if depth.shape != (DEPTH_HEIGHT, DEPTH_WIDTH):
             return np.empty((0, 3), dtype=np.float32), np.empty(0, dtype=bool)
-        vv, uu = np.mgrid[
-            DEPTH_FILTER_MARGIN:DEPTH_HEIGHT - DEPTH_FILTER_MARGIN:DEPTH_SKIP_PIXEL,
-            DEPTH_FILTER_MARGIN:DEPTH_WIDTH - DEPTH_FILTER_MARGIN:DEPTH_SKIP_PIXEL,
-        ]
-        z_measured = depth[vv, uu].reshape(-1)
-        u = uu.reshape(-1).astype(np.float32)
-        v = vv.reshape(-1).astype(np.float32)
-
-        # Optional diagnostic/performance thinning.  The normal default is at
-        # least the complete 640x480, skip-pixel=2 upstream grid, so this branch
-        # is not taken in source-fidelity runs.
-        if len(z_measured) > ARGS.camera_ray_budget:
-            selected = np.linspace(
-                0, len(z_measured) - 1, ARGS.camera_ray_budget, dtype=np.int64
-            )
-            z_measured = z_measured[selected]
-            u = u[selected]
-            v = v[selected]
+        z_measured = depth[DEPTH_SAMPLE_ROWS, DEPTH_SAMPLE_COLS]
+        u = DEPTH_SAMPLE_U
+        v = DEPTH_SAMPLE_V
         finite_positive = np.isfinite(z_measured) & (z_measured > 0.0)
         keep = ~(finite_positive & (z_measured < DEPTH_MIN_RANGE))
         z_measured, u, v = z_measured[keep], u[keep], v[keep]
@@ -1850,7 +1959,40 @@ class IsaacRacer3DBridge(Node):
         )
         return world.astype(np.float32), hit
 
+    @staticmethod
+    def _transform_sensor_capture(capture):
+        """Pure NumPy per-UAV work suitable for the sensor worker pool."""
+
+        drone_id, position, orientation, raw, raw_safety = capture
+        if ARGS.vehicle_model == "racer_so3":
+            mapping_points, mapping_hit = (
+                IsaacRacer3DBridge._depth_world_points(
+                    raw, position, orientation
+                )
+            )
+            safety_hits = np.empty((0, 3), dtype=float)
+            if raw_safety is not None:
+                safety_hits = IsaacRacer3DBridge._safety_lidar_world_points(
+                    raw_safety, position, orientation
+                )
+        else:
+            mapping_points, mapping_hit = (
+                IsaacRacer3DBridge._legacy_lidar_world_points(
+                    raw, position, orientation
+                )
+            )
+            safety_hits = np.empty((0, 3), dtype=float)
+        return (
+            drone_id,
+            np.asarray(position, dtype=float),
+            tuple(np.asarray(raw).shape),
+            mapping_points,
+            mapping_hit,
+            safety_hits,
+        )
+
     def _publish_clouds(self, stamp) -> None:
+        captures = []
         for drone_id, (body, range_sensor) in enumerate(
             zip(self.bodies, self.range_sensors)
         ):
@@ -1860,38 +2002,47 @@ class IsaacRacer3DBridge(Node):
                 if raw is None:
                     continue
                 raw = _backend_array_to_numpy(raw)
-                points, hit = self._depth_world_points(
-                    raw, position, orientation
-                )
                 # Only the original forward depth-camera rays are published
                 # to RACER. The 360-degree lidar belongs exclusively to the
                 # independent low-level safety layer and must not alter map,
                 # frontier, allocation or trajectory decisions.
-                mapping_points = points
-                mapping_hit = hit
-                safety_hits = np.empty((0, 3), dtype=float)
                 safety_frame = self.safety_sensors[
                     drone_id
                 ].get_current_frame()
                 raw_safety = safety_frame.get("point_cloud")
                 if raw_safety is not None:
-                    safety_hits = self._safety_lidar_world_points(
-                        _backend_array_to_numpy(raw_safety),
-                        position,
-                        orientation,
-                    )
+                    raw_safety = _backend_array_to_numpy(raw_safety)
             else:
                 raw = range_sensor.get_current_frame().get("point_cloud")
                 if raw is None:
                     continue
                 raw = _backend_array_to_numpy(raw)
-                points, hit = self._legacy_lidar_world_points(
-                    raw, position, orientation
+                raw_safety = None
+            captures.append(
+                (
+                    drone_id,
+                    np.asarray(position, dtype=float),
+                    np.asarray(orientation, dtype=float),
+                    raw,
+                    raw_safety,
                 )
-                mapping_points = points
-                mapping_hit = hit
-                safety_hits = np.empty((0, 3), dtype=float)
-            if len(points) < 12:
+            )
+
+        if self.sensor_executor is None:
+            transformed = map(self._transform_sensor_capture, captures)
+        else:
+            transformed = self.sensor_executor.map(
+                self._transform_sensor_capture, captures
+            )
+        for (
+            drone_id,
+            position,
+            raw_shape,
+            mapping_points,
+            mapping_hit,
+            safety_hits,
+        ) in transformed:
+            if len(mapping_points) < 12:
                 continue
             camera_hits = np.asarray(mapping_points[mapping_hit], dtype=float)
             current_hits = (
@@ -1965,7 +2116,9 @@ class IsaacRacer3DBridge(Node):
                                 point, SCENARIO.obstacles
                             )
                         )
-                        for point in points[::max(1, len(points) // 500)]
+                        for point in mapping_points[
+                            ::max(1, len(mapping_points) // 500)
+                        ]
                     ]
                     median_error = float(np.median(clearances))
                 print(
@@ -1977,7 +2130,7 @@ class IsaacRacer3DBridge(Node):
                                 if ARGS.vehicle_model == "racer_so3"
                                 else "legacy_rotating_lidar"
                             ),
-                            "raw_shape": list(raw.shape),
+                            "raw_shape": list(raw_shape),
                             "world_count": len(mapping_points),
                             "camera_ray_budget": (
                                 ARGS.camera_ray_budget
@@ -1995,6 +2148,11 @@ class IsaacRacer3DBridge(Node):
                 create_xyzi_cloud(stamp, "world", mapping_points, mapping_hit)
             )
             self.cloud_frames += 1
+
+    def shutdown_sensor_workers(self) -> None:
+        if self.sensor_executor is not None:
+            self.sensor_executor.shutdown(wait=True, cancel_futures=True)
+            self.sensor_executor = None
 
     def publish_metrics(self) -> None:
         if (
@@ -2057,6 +2215,7 @@ class IsaacRacer3DBridge(Node):
                     "rate_hz": 1.0 / DEPTH_PERIOD,
                     "skip_pixel": DEPTH_SKIP_PIXEL,
                     "point_cloud_ray_budget": ARGS.camera_ray_budget,
+                    "cpu_sensor_workers": self.sensor_worker_count,
                     "self_return_filter_radius_m": SELF_FILTER_RADIUS,
                     "mount_translation_body_m": CAMERA_TRANSLATION.tolist(),
                     "safety_lidar_horizontal_fov_deg": 360.0,
@@ -2109,6 +2268,8 @@ class IsaacRacer3DBridge(Node):
             "safety_interventions": self.safety_interventions,
             "scene_query_updates": self.scene_query_updates,
             "scene_query_hits": self.scene_query_hits,
+            "scene_query_rate_hz": 1.0 / SCENE_QUERY_PERIOD,
+            "scene_query_clearance_m": SCENE_QUERY_CLEARANCE,
             "min_sweep_free_travel": (
                 self.min_sweep_free_travel
                 if math.isfinite(self.min_sweep_free_travel)
@@ -2321,6 +2482,8 @@ def main() -> None:
         f"RACER_3D_ISAAC_READY drones={len(bodies)} "
         f"duration={ARGS.duration:.1f} vehicle={ARGS.vehicle_model} "
         f"physics_hz={1.0 / PHYSICS_DT:.0f} motion=rotor_wrench "
+        f"sensor_workers={bridge.sensor_worker_count} "
+        f"scene_query_hz={1.0 / SCENE_QUERY_PERIOD:.0f} "
         f"propeller_visuals={'on' if bridge.propeller_visuals.enabled else 'off'} "
         f"sensor={'DepthCamera+360SafetyLidar' if ARGS.vehicle_model == 'racer_so3' else 'RotatingLidarPhysX'} "
         f"scene={ARGS.scene_usd or SCENARIO.name}",
@@ -2525,10 +2688,13 @@ def main() -> None:
                     "odometry_rate_hz": 1.0 / ODOM_PERIOD,
                     "sensor_rate_hz": 1.0 / DEPTH_PERIOD,
                     "camera_ray_budget": ARGS.camera_ray_budget,
+                    "cpu_sensor_workers": bridge.sensor_worker_count,
                     "safety_point_refresh_hz": 1.0 / DEPTH_PERIOD,
                     "safety_interventions": bridge.safety_interventions,
                     "scene_query_updates": bridge.scene_query_updates,
                     "scene_query_hits": bridge.scene_query_hits,
+                    "scene_query_rate_hz": 1.0 / SCENE_QUERY_PERIOD,
+                    "scene_query_clearance_m": SCENE_QUERY_CLEARANCE,
                     "min_sweep_free_travel": (
                         bridge.min_sweep_free_travel
                         if math.isfinite(bridge.min_sweep_free_travel)
@@ -2541,6 +2707,7 @@ def main() -> None:
             ),
             flush=True,
         )
+        bridge.shutdown_sensor_workers()
         bridge.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

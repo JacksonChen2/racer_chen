@@ -128,6 +128,33 @@ def test_warehouse_loaded_profile_covers_generated_cargo_zone():
     )
 
 
+def test_warehouse_loaded_full_profile_covers_complete_factory():
+    scenario = get_scenario("warehouse_loaded_full")
+    assert scenario.map_size == (33.0, 53.0, 8.5)
+    assert scenario.truth_mode == "observed_volume"
+    assert scenario.obstacles == ()
+    assert scenario.starts == (
+        (-20.0, 0.0, 0.80),
+        (-16.0, 0.0, 1.50),
+        (-12.0, 0.0, 2.20),
+        (-8.0, 0.0, 1.15),
+        (-4.0, 0.0, 1.85),
+    )
+    # The full profile includes both the southern racks and the original
+    # generated-cargo rack zone.
+    assert scenario.map_min[1] < 1.0 < scenario.map_max[1]
+    generated_min = (-25.3773, 9.4816, 1.5957)
+    generated_max = (4.4511, 24.2265, 6.4522)
+    assert all(a < b for a, b in zip(scenario.map_min, generated_min))
+    assert all(a < b for a, b in zip(generated_max, scenario.map_max))
+    assert all(
+        all(lower < value < upper for value, lower, upper in zip(
+            start, scenario.map_min, scenario.map_max
+        ))
+        for start in scenario.starts
+    )
+
+
 def test_planner_falls_back_when_owned_frontier_is_unreachable(monkeypatch):
     voxel_map = VoxelMap(1.0, (0.0, 0.0, 0.0), (6.0, 4.0, 4.0))
     voxel_map.set_states(np.full(voxel_map.shape, FREE, dtype=np.int8))

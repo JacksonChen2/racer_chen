@@ -6,14 +6,18 @@
 
 #include <racer_fidelity_msgs/msg/chunk_data.hpp>
 #include <racer_fidelity_msgs/msg/chunk_stamps.hpp>
+#include <racer_recovery_core/msg/recovery_command.hpp>
+#include <racer_recovery_core/msg/recovery_status.hpp>
 
 #include <rclcpp/generic_publisher.hpp>
 #include <rclcpp/generic_subscription.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/serialized_message.hpp>
 #include <rclcpp/serialization.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <deque>
@@ -47,6 +51,8 @@ const std::vector<TopicPolicy> kTopicPolicies{
     {"pair_opt", "racer_fidelity_msgs/msg/PairOpt", 7, 2.0, true},
     {"pair_opt_res", "racer_fidelity_msgs/msg/PairOptResponse", 7, 2.0, true},
     {"trajectory", "racer_fidelity_msgs/msg/Bspline", 8, 1.0, true},
+    {"recovery_status", "racer_recovery_core/msg/RecoveryStatus", 9, 2.0, true},
+    {"recovery_command", "racer_recovery_core/msg/RecoveryCommand", 10, 5.0, true},
     {"chunk_stamps", "racer_fidelity_msgs/msg/ChunkStamps", 4, 3.0, true},
     {"chunk_data", "racer_fidelity_msgs/msg/ChunkData", 2, 10.0, true},
 };
@@ -117,6 +123,15 @@ class CommunicationProxy final : public rclcpp::Node {
         drone_count_(declare_parameter<int>("drone_count", 5)),
         topology_(declare_parameter<std::string>("network_topology",
                                                  "distributed")),
+        nearest_neighbor_count_(
+            declare_parameter<int>("nearest_neighbor_count", 0)),
+        lossless_nearest_neighbor_count_(
+            declare_parameter<int>("lossless_nearest_neighbor_count", 0)),
+        communication_range_m_(
+            declare_parameter<double>("communication_range_m", 4.0)),
+        ideal_coalesce_window_s_(
+            1.0e-3 * declare_parameter<double>(
+                           "ideal_coalesce_window_ms", 20.0)),
         carrier_frequency_hz_(
             declare_parameter<double>("carrier_frequency_hz", 28.0e9)),
         bs_tx_power_dbm_(declare_parameter<double>("ap_tx_power_dbm", 33.0)),
@@ -131,6 +146,7 @@ class CommunicationProxy final : public rclcpp::Node {
         queue_capacity_bytes_(static_cast<std::size_t>(
             declare_parameter<int>("queue_capacity_bytes", 262144))),
         max_retries_(declare_parameter<int>("max_retries", 3)),
+        bs_max_retries_(declare_parameter<int>("bs_max_retries", 3)),
         retry_backoff_s_(
             1.0e-3 * declare_parameter<double>("retry_backoff_ms", 8.0)),
         bs_min_turn_s_(1.0e-3 *
@@ -156,14 +172,17 @@ class CommunicationProxy final : public rclcpp::Node {
       throw std::runtime_error(
           "mode must be ideal, sionna, or sionna_hybrid");
     }
-    if (topology_ != "distributed" && topology_ != "ap_assisted" &&
+    if (topology_ != "distributed" && topology_ != "nearest_neighbors" &&
+        topology_ != "distance_radius" && topology_ != "ap_assisted" &&
         topology_ != "bs_round_robin") {
       throw std::runtime_error(
-          "network_topology must be distributed, ap_assisted, or "
-          "bs_round_robin");
+          "network_topology must be distributed, nearest_neighbors, "
+          "distance_radius, ap_assisted, or bs_round_robin");
     }
     if (drone_count_ < 1 || queue_capacity_bytes_ == 0U ||
-        max_retries_ < 0 || base_latency_s_ < 0.0 || jitter_s_ < 0.0 ||
+        max_retries_ < 0 || bs_max_retries_ < 0 ||
+        ideal_coalesce_window_s_ <= 0.0 || base_latency_s_ < 0.0 ||
+        jitter_s_ < 0.0 ||
         retry_backoff_s_ < 0.0 || bs_min_turn_s_ < 0.0 ||
         bs_control_bytes_ == 0U || bs_max_downlink_chunks_per_turn_ < 1 ||
         bs_max_uplink_chunks_per_turn_ < 1 || carrier_frequency_hz_ <= 0.0 ||
@@ -171,8 +190,33 @@ class CommunicationProxy final : public rclcpp::Node {
         uav_array_cols_ < 1) {
       throw std::runtime_error("invalid communication proxy parameters");
     }
+    nearest_neighbors_enabled_ = topology_ == "nearest_neighbors";
+    distance_radius_enabled_ = topology_ == "distance_radius";
+    if (nearest_neighbors_enabled_ &&
+        (nearest_neighbor_count_ < 1 ||
+         nearest_neighbor_count_ >= drone_count_)) {
+      throw std::runtime_error(
+          "nearest_neighbor_count must be in [1, drone_count - 1]");
+    }
+    if (distance_radius_enabled_ && communication_range_m_ <= 0.0) {
+      throw std::runtime_error("communication_range_m must be positive");
+    }
     ap_enabled_ = topology_ == "ap_assisted" ||
                   topology_ == "bs_round_robin";
+    if (lossless_nearest_neighbor_count_ < 0 ||
+        lossless_nearest_neighbor_count_ >= drone_count_) {
+      throw std::runtime_error(
+          "lossless_nearest_neighbor_count must be in [0, drone_count - 1]");
+    }
+    if (lossless_nearest_neighbor_count_ > 0 &&
+        (mode_ == "ideal" || topology_ != "distributed" || ap_enabled_)) {
+      throw std::runtime_error(
+          "lossless nearest-neighbor overrides require a non-ideal "
+          "distributed UAV-to-UAV topology");
+    }
+    // AP-assisted modes model an actual two-hop radio path.  The lossless
+    // distributed baselines instead forward serialized buffers directly.
+    ideal_direct_enabled_ = mode_ == "ideal" && !ap_enabled_;
     bs_round_robin_enabled_ = topology_ == "bs_round_robin";
     ap_node_id_ = drone_count_;
     radio_node_count_ = drone_count_ + static_cast<int>(ap_enabled_);
@@ -218,7 +262,45 @@ class CommunicationProxy final : public rclcpp::Node {
     for (auto &topics : ap_latest_messages_) {
       topics.resize(kTopicPolicies.size());
     }
+    ideal_latest_messages_.resize(static_cast<std::size_t>(drone_count_));
+    ideal_latest_born_at_.resize(static_cast<std::size_t>(drone_count_));
+    for (int sender = 0; sender < drone_count_; ++sender) {
+      ideal_latest_messages_[static_cast<std::size_t>(sender)].resize(
+          kTopicPolicies.size());
+      ideal_latest_born_at_[static_cast<std::size_t>(sender)].assign(
+          kTopicPolicies.size(), 0.0);
+    }
     uav_chunks_.resize(static_cast<std::size_t>(drone_count_));
+    uav_positions_.resize(static_cast<std::size_t>(drone_count_));
+    uav_position_valid_.assign(static_cast<std::size_t>(drone_count_), false);
+    odometry_subscriptions_.reserve(static_cast<std::size_t>(drone_count_));
+    for (int drone = 0; drone < drone_count_; ++drone) {
+      odometry_subscriptions_.push_back(
+          create_subscription<nav_msgs::msg::Odometry>(
+              "/drone_" + std::to_string(drone) + "/odom",
+              rclcpp::SensorDataQoS(),
+              [this, drone](nav_msgs::msg::Odometry::ConstSharedPtr message) {
+                const auto &position = message->pose.pose.position;
+                uav_positions_[static_cast<std::size_t>(drone)] =
+                    {position.x, position.y, position.z};
+                uav_position_valid_[static_cast<std::size_t>(drone)] = true;
+              }));
+    }
+
+    if (ap_enabled_) {
+      const auto status_index = topicIndex("recovery_status");
+      const auto command_index = topicIndex("recovery_command");
+      ap_recovery_status_publisher_ = create_generic_publisher(
+          "/racer_ap_recovery/status_uplink",
+          kTopicPolicies.at(status_index).type, data_qos);
+      ap_recovery_command_subscription_ = create_generic_subscription(
+          "/racer_ap_recovery/command_downlink",
+          kTopicPolicies.at(command_index).type, data_qos,
+          [this, command_index](
+              std::shared_ptr<rclcpp::SerializedMessage> message) {
+            onApRecoveryCommand(command_index, std::move(message));
+          });
+    }
 
     link_subscription_ = create_subscription<LinkQualityArray>(
         "/racer_sionna/link_quality", rclcpp::QoS(20).reliable(),
@@ -230,15 +312,22 @@ class CommunicationProxy final : public rclcpp::Node {
             "/racer_sionna/comm_statistics", rclcpp::QoS(10).reliable());
     scheduler_timer_ = create_wall_timer(
         std::chrono::milliseconds(2), [this]() { schedulerTick(); });
+    ideal_coalesce_timer_ = create_wall_timer(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::duration<double>(ideal_coalesce_window_s_)),
+        [this]() { flushIdealLatest(); });
     statistics_timer_ = create_wall_timer(
         std::chrono::seconds(1), [this]() { publishStatistics(); });
 
     RCLCPP_INFO(
         get_logger(),
         "source-faithful communication proxy ready: mode=%s topology=%s "
-        "drones=%d radio_nodes=%d bs_node_id=%d seed=%d phy=NR-LDPC "
+        "drones=%d nearest_neighbors=%d lossless_nearest_neighbors=%d "
+        "communication_range_m=%.3f "
+        "radio_nodes=%d bs_node_id=%d seed=%d phy=NR-LDPC "
         "waveform=CP-OFDM",
-        mode_.c_str(), topology_.c_str(), drone_count_, radio_node_count_,
+        mode_.c_str(), topology_.c_str(), drone_count_, nearest_neighbor_count_,
+        lossless_nearest_neighbor_count_, communication_range_m_, radio_node_count_,
         ap_enabled_ ? ap_node_id_ : -1, random_seed_);
   }
 
@@ -369,9 +458,26 @@ class CommunicationProxy final : public rclcpp::Node {
     }
     const double stamp = now().seconds();
     const std::size_t bytes = 64U + message->size();
+    const auto &topic_key = kTopicPolicies.at(topic_index).key;
     ChunkKey chunk_key{};
     observeUavTransmit(sender, topic_index, message, &chunk_key);
     const bool has_chunk_key = chunk_key.owner > 0 && chunk_key.index > 0U;
+
+    if (ideal_direct_enabled_) {
+      if (idealCoalescable(topic_index)) {
+        auto &latest = ideal_latest_messages_[static_cast<std::size_t>(sender)]
+                                             [topic_index];
+        if (latest) ++ideal_coalesced_messages_;
+        latest = std::move(message);
+        ideal_latest_born_at_[static_cast<std::size_t>(sender)][topic_index] =
+            stamp;
+        return;
+      }
+      deliverIdealDirect(sender, topic_index, std::move(message), stamp,
+                         has_chunk_key ? &chunk_key : nullptr);
+      return;
+    }
+
     auto flow = std::make_shared<DeliveryFlow>();
     flow->origin_sender = sender;
     flow->topic_index = topic_index;
@@ -380,12 +486,35 @@ class CommunicationProxy final : public rclcpp::Node {
     flow->delivered.assign(static_cast<std::size_t>(drone_count_), false);
     flow->delivered[static_cast<std::size_t>(sender)] = true;
 
-    const auto intended_receivers = static_cast<std::uint64_t>(
-        std::max(0, drone_count_ - 1));
+    if (topic_key == "recovery_status") {
+      ++logical_attempted_packets_;
+      logical_attempted_bytes_ += bytes;
+      if (ap_enabled_) {
+        enqueue(sender, ap_node_id_, topic_index, message, flow,
+                RouteStage::kApUplink, -1, stamp);
+      }
+      return;
+    }
+    if (topic_key == "recovery_command") return;
+
+    const auto receivers = intendedReceivers(sender);
+    const auto lossless_receivers = losslessNearestReceivers(sender, receivers);
+    std::vector<bool> lossless_receiver_mask(
+        static_cast<std::size_t>(drone_count_), false);
+    for (const int receiver : lossless_receivers) {
+      lossless_receiver_mask[static_cast<std::size_t>(receiver)] = true;
+    }
+    const auto intended_receivers =
+        static_cast<std::uint64_t>(receivers.size());
     logical_attempted_packets_ += intended_receivers;
     logical_attempted_bytes_ += intended_receivers * bytes;
-    for (int receiver = 0; receiver < drone_count_; ++receiver) {
-      if (receiver == sender) continue;
+    for (const int receiver : receivers) {
+      if (lossless_receiver_mask[static_cast<std::size_t>(receiver)]) {
+        deliverLosslessNearest(
+            sender, receiver, topic_index, message, flow, stamp,
+            has_chunk_key ? &chunk_key : nullptr);
+        continue;
+      }
       enqueue(sender, receiver, topic_index, message, flow,
               RouteStage::kDirect, receiver, stamp,
               has_chunk_key ? &chunk_key : nullptr);
@@ -395,6 +524,241 @@ class CommunicationProxy final : public rclcpp::Node {
               RouteStage::kApUplink, -1, stamp,
               has_chunk_key ? &chunk_key : nullptr);
     }
+  }
+
+  void deliverLosslessNearest(
+      int sender, int receiver, std::size_t topic_index,
+      const std::shared_ptr<rclcpp::SerializedMessage> &message,
+      const std::shared_ptr<DeliveryFlow> &flow, double born_at,
+      const ChunkKey *chunk_key = nullptr) {
+    const double stamp = now().seconds();
+    const std::size_t bytes = 64U + (message ? message->size() : 0U);
+    ++attempted_packets_;
+    attempted_bytes_ += bytes;
+    ++direct_attempted_packets_;
+    PendingPacket packet;
+    packet.message = message;
+    packet.flow = flow;
+    packet.topic_index = topic_index;
+    packet.route = RouteStage::kDirect;
+    packet.final_receiver = receiver;
+    packet.born_at = born_at;
+    packet.enqueued_at = stamp;
+    packet.delivery_at = stamp;
+    packet.bytes = bytes;
+    if (chunk_key != nullptr) {
+      packet.has_chunk_key = true;
+      packet.chunk_key = *chunk_key;
+    }
+    completeSuccessfulPacket({sender, receiver}, packet, stamp);
+    ++lossless_nearest_forwarded_packets_;
+  }
+
+  bool idealCoalescable(std::size_t topic_index) const {
+    const auto &key = kTopicPolicies.at(topic_index).key;
+    return key == "drone_state" || key == "trajectory" ||
+           key == "chunk_stamps";
+  }
+
+  void deliverIdealDirect(
+      int sender, std::size_t topic_index,
+      std::shared_ptr<rclcpp::SerializedMessage> message, double born_at,
+      const ChunkKey *chunk_key = nullptr) {
+    const auto &topic_key = kTopicPolicies.at(topic_index).key;
+    // Preserve the existing recovery routing contract: status is consumed by
+    // the AP only, and commands originate at the AP.
+    if (topic_key == "recovery_status" || topic_key == "recovery_command") {
+      return;
+    }
+    const double stamp = now().seconds();
+    const std::size_t bytes = 64U + (message ? message->size() : 0U);
+    const auto receivers = intendedReceivers(sender);
+    logical_attempted_packets_ += receivers.size();
+    logical_attempted_bytes_ += receivers.size() * bytes;
+
+    auto flow = std::make_shared<DeliveryFlow>();
+    flow->origin_sender = sender;
+    flow->topic_index = topic_index;
+    flow->born_at = born_at;
+    flow->bytes = bytes;
+    flow->delivered.assign(static_cast<std::size_t>(drone_count_), false);
+    flow->delivered[static_cast<std::size_t>(sender)] = true;
+
+    for (const int receiver : receivers) {
+      ++attempted_packets_;
+      attempted_bytes_ += bytes;
+      ++direct_attempted_packets_;
+      PendingPacket packet;
+      packet.message = message;
+      packet.flow = flow;
+      packet.topic_index = topic_index;
+      packet.route = RouteStage::kDirect;
+      packet.final_receiver = receiver;
+      packet.born_at = born_at;
+      packet.enqueued_at = stamp;
+      packet.delivery_at = stamp;
+      packet.bytes = bytes;
+      if (chunk_key != nullptr) {
+        packet.has_chunk_key = true;
+        packet.chunk_key = *chunk_key;
+      }
+      completeSuccessfulPacket({sender, receiver}, packet, stamp);
+      ++ideal_direct_forwarded_packets_;
+    }
+  }
+
+  void flushIdealLatest() {
+    if (!ideal_direct_enabled_) return;
+    for (int sender = 0; sender < drone_count_; ++sender) {
+      for (std::size_t topic_index = 0; topic_index < kTopicPolicies.size();
+           ++topic_index) {
+        auto &latest = ideal_latest_messages_[static_cast<std::size_t>(sender)]
+                                             [topic_index];
+        if (!latest) continue;
+        auto message = std::move(latest);
+        const double born_at =
+            ideal_latest_born_at_[static_cast<std::size_t>(sender)]
+                                 [topic_index];
+        deliverIdealDirect(sender, topic_index, std::move(message), born_at);
+      }
+    }
+  }
+
+  std::vector<int> intendedReceivers(int sender) {
+    std::vector<int> receivers;
+    receivers.reserve(static_cast<std::size_t>(std::max(0, drone_count_ - 1)));
+    for (int receiver = 0; receiver < drone_count_; ++receiver) {
+      if (receiver != sender) receivers.push_back(receiver);
+    }
+    if (!nearest_neighbors_enabled_ && !distance_radius_enabled_) {
+      return receivers;
+    }
+    if (!uav_position_valid_[static_cast<std::size_t>(sender)]) {
+      position_unavailable_receivers_ += receivers.size();
+      return {};
+    }
+    const auto &source = uav_positions_[static_cast<std::size_t>(sender)];
+    receivers.erase(
+        std::remove_if(receivers.begin(), receivers.end(),
+                       [this](int receiver) {
+                         return !uav_position_valid_[
+                             static_cast<std::size_t>(receiver)];
+                       }),
+        receivers.end());
+    if (distance_radius_enabled_) {
+      const double range_squared = communication_range_m_ * communication_range_m_;
+      const auto before_filter = receivers.size();
+      receivers.erase(
+          std::remove_if(receivers.begin(), receivers.end(),
+                         [this, &source, range_squared](int receiver) {
+                           const auto &target = uav_positions_[
+                               static_cast<std::size_t>(receiver)];
+                           const double dx = source[0] - target[0];
+                           const double dy = source[1] - target[1];
+                           const double dz = source[2] - target[2];
+                           return dx * dx + dy * dy + dz * dz >
+                                  range_squared;
+                         }),
+          receivers.end());
+      range_filtered_receivers_ += before_filter - receivers.size();
+      return receivers;
+    }
+    std::sort(receivers.begin(), receivers.end(),
+              [this, &source](int left, int right) {
+                const auto squared_distance = [&source](const auto &point) {
+                  const double dx = source[0] - point[0];
+                  const double dy = source[1] - point[1];
+                  const double dz = source[2] - point[2];
+                  return dx * dx + dy * dy + dz * dz;
+                };
+                const double left_distance = squared_distance(
+                    uav_positions_[static_cast<std::size_t>(left)]);
+                const double right_distance = squared_distance(
+                    uav_positions_[static_cast<std::size_t>(right)]);
+                if (left_distance != right_distance) {
+                  return left_distance < right_distance;
+                }
+                return left < right;
+              });
+    if (receivers.size() > static_cast<std::size_t>(nearest_neighbor_count_)) {
+      nearest_filtered_receivers_ +=
+          receivers.size() - static_cast<std::size_t>(nearest_neighbor_count_);
+      receivers.resize(static_cast<std::size_t>(nearest_neighbor_count_));
+    }
+    return receivers;
+  }
+
+  std::vector<int> losslessNearestReceivers(
+      int sender, const std::vector<int> &candidates) {
+    if (lossless_nearest_neighbor_count_ <= 0 || candidates.empty()) {
+      return {};
+    }
+    if (!uav_position_valid_[static_cast<std::size_t>(sender)] ||
+        std::any_of(candidates.begin(), candidates.end(),
+                    [this](int receiver) {
+                      return !uav_position_valid_[
+                          static_cast<std::size_t>(receiver)];
+                    })) {
+      ++lossless_nearest_position_unavailable_events_;
+      return {};
+    }
+    const auto &source = uav_positions_[static_cast<std::size_t>(sender)];
+    auto receivers = candidates;
+    std::sort(receivers.begin(), receivers.end(),
+              [this, &source](int left, int right) {
+                const auto squared_distance = [&source](const auto &point) {
+                  const double dx = source[0] - point[0];
+                  const double dy = source[1] - point[1];
+                  const double dz = source[2] - point[2];
+                  return dx * dx + dy * dy + dz * dz;
+                };
+                const double left_distance = squared_distance(
+                    uav_positions_[static_cast<std::size_t>(left)]);
+                const double right_distance = squared_distance(
+                    uav_positions_[static_cast<std::size_t>(right)]);
+                if (left_distance != right_distance) {
+                  return left_distance < right_distance;
+                }
+                return left < right;
+              });
+    if (receivers.size() >
+        static_cast<std::size_t>(lossless_nearest_neighbor_count_)) {
+      receivers.resize(
+          static_cast<std::size_t>(lossless_nearest_neighbor_count_));
+    }
+    return receivers;
+  }
+
+  std::size_t topicIndex(const std::string &key) const {
+    for (std::size_t index = 0; index < kTopicPolicies.size(); ++index) {
+      if (kTopicPolicies[index].key == key) return index;
+    }
+    throw std::logic_error("missing communication topic policy: " + key);
+  }
+
+  void onApRecoveryCommand(
+      std::size_t topic_index,
+      std::shared_ptr<rclcpp::SerializedMessage> message) {
+    if (!ap_enabled_ || !message) return;
+    racer_recovery_core::msg::RecoveryCommand command;
+    if (!deserialize(message, command) || command.drone_id < 1 ||
+        command.drone_id > drone_count_) {
+      RCLCPP_WARN(get_logger(), "drop malformed AP recovery command");
+      return;
+    }
+    const int receiver = command.drone_id - 1;
+    const double stamp = now().seconds();
+    const std::size_t bytes = 64U + message->size();
+    auto flow = std::make_shared<DeliveryFlow>();
+    flow->origin_sender = ap_node_id_;
+    flow->topic_index = topic_index;
+    flow->born_at = stamp;
+    flow->bytes = bytes;
+    flow->delivered.assign(static_cast<std::size_t>(drone_count_), false);
+    ++logical_attempted_packets_;
+    logical_attempted_bytes_ += bytes;
+    enqueue(ap_node_id_, receiver, topic_index, std::move(message), flow,
+            RouteStage::kApDownlink, receiver, stamp);
   }
 
   int packetPriority(RouteStage route, std::size_t topic_index) const {
@@ -759,6 +1123,19 @@ class CommunicationProxy final : public rclcpp::Node {
     }
 
     ++ap_uplink_delivered_packets_;
+    if (kTopicPolicies.at(packet.topic_index).key == "recovery_status") {
+      if (ap_recovery_status_publisher_ && packet.message) {
+        ap_recovery_status_publisher_->publish(*packet.message);
+        ++ap_global_updates_received_;
+        ++logical_delivered_packets_;
+        logical_delivered_bytes_ += packet.bytes;
+        if (packet.flow) {
+          cumulative_end_to_end_delay_s_ +=
+              stamp - packet.flow->born_at;
+        }
+      }
+      return;
+    }
     if (!packet.flow || packet.flow->ap_received) return;
     packet.flow->ap_received = true;
     ++ap_global_updates_received_;
@@ -813,7 +1190,11 @@ class CommunicationProxy final : public rclcpp::Node {
             per;
         const bool reliable = front.route == RouteStage::kBsControl ||
                               kTopicPolicies[front.topic_index].reliable;
-        if (failed && reliable && front.attempts < max_retries_) {
+        const bool bs_route = front.route == RouteStage::kBsControl ||
+                              front.route == RouteStage::kBsUplink ||
+                              front.route == RouteStage::kBsDownlink;
+        const int retry_limit = bs_route ? bs_max_retries_ : max_retries_;
+        if (failed && reliable && front.attempts < retry_limit) {
           ++front.attempts;
           ++retried_packets_;
           front.transmitting = false;
@@ -881,7 +1262,31 @@ class CommunicationProxy final : public rclcpp::Node {
     const auto &phy = model_.config();
     std::ostringstream json;
     json << "{\"network_topology\":\"" << topology_
-         << "\",\"ap_enabled\":" << (ap_enabled_ ? "true" : "false")
+         << "\",\"nearest_neighbor_count\":" << nearest_neighbor_count_
+         << ",\"lossless_nearest_neighbor_count\":"
+         << lossless_nearest_neighbor_count_
+         << ",\"communication_range_m\":" << communication_range_m_
+         << ",\"ideal_direct_enabled\":"
+         << (ideal_direct_enabled_ ? "true" : "false")
+         << ",\"ideal_coalesce_window_ms\":"
+         << 1000.0 * ideal_coalesce_window_s_
+         << ",\"ideal_coalesced_messages\":"
+         << ideal_coalesced_messages_
+         << ",\"ideal_direct_forwarded_packets\":"
+         << ideal_direct_forwarded_packets_
+         << ",\"lossless_nearest_forwarded_packets\":"
+         << lossless_nearest_forwarded_packets_
+         << ",\"lossless_nearest_position_unavailable_events\":"
+         << lossless_nearest_position_unavailable_events_
+         << ",\"sionna_direct_attempted_packets\":"
+         << (direct_attempted_packets_ - lossless_nearest_forwarded_packets_)
+         << ",\"nearest_filtered_receivers\":" << nearest_filtered_receivers_
+         << ",\"range_filtered_receivers\":" << range_filtered_receivers_
+         << ",\"nearest_position_unavailable\":"
+         << position_unavailable_receivers_
+         << ",\"position_unavailable_receivers\":"
+         << position_unavailable_receivers_
+         << ",\"ap_enabled\":" << (ap_enabled_ ? "true" : "false")
          << ",\"ap_node_id\":" << (ap_enabled_ ? ap_node_id_ : -1)
          << ",\"attempted_packets\":" << attempted_packets_
          << ",\"delivered_packets\":" << delivered_packets_
@@ -959,6 +1364,9 @@ class CommunicationProxy final : public rclcpp::Node {
          << ",\"channel_small_scale_fading\":\"none\""
          << ",\"bs_tx_power_dbm\":" << bs_tx_power_dbm_
          << ",\"uav_tx_power_dbm\":" << uav_tx_power_dbm_
+         << ",\"max_retries\":" << max_retries_
+         << ",\"bs_max_retries\":" << bs_max_retries_
+         << ",\"random_seed\":" << random_seed_
          << ",\"bs_upa\":\"" << bs_array_rows_ << "x"
          << bs_array_cols_ << "\""
          << ",\"uav_upa\":\"" << uav_array_rows_ << "x"
@@ -982,6 +1390,10 @@ class CommunicationProxy final : public rclcpp::Node {
   std::string mode_;
   int drone_count_{};
   std::string topology_;
+  int nearest_neighbor_count_{};
+  int lossless_nearest_neighbor_count_{};
+  double communication_range_m_{};
+  double ideal_coalesce_window_s_{};
   double carrier_frequency_hz_{};
   double bs_tx_power_dbm_{};
   double uav_tx_power_dbm_{};
@@ -991,6 +1403,9 @@ class CommunicationProxy final : public rclcpp::Node {
   int uav_array_cols_{};
   bool ap_enabled_{false};
   bool bs_round_robin_enabled_{false};
+  bool nearest_neighbors_enabled_{false};
+  bool distance_radius_enabled_{false};
+  bool ideal_direct_enabled_{false};
   int ap_node_id_{};
   int radio_node_count_{};
   int random_seed_{};
@@ -998,6 +1413,7 @@ class CommunicationProxy final : public rclcpp::Node {
   double jitter_s_{};
   std::size_t queue_capacity_bytes_{};
   int max_retries_{};
+  int bs_max_retries_{};
   double retry_backoff_s_{};
   double bs_min_turn_s_{};
   std::size_t bs_control_bytes_{};
@@ -1012,15 +1428,25 @@ class CommunicationProxy final : public rclcpp::Node {
   std::unordered_map<std::string, std::uint64_t> mcs_counts_;
   std::unordered_map<ChunkKey, CachedChunk, ChunkKeyHash> chunk_repository_;
   std::vector<std::unordered_set<ChunkKey, ChunkKeyHash>> uav_chunks_;
+  std::vector<std::array<double, 3>> uav_positions_;
+  std::vector<bool> uav_position_valid_;
   std::unordered_set<ChunkKey, ChunkKeyHash> bs_chunks_;
   std::vector<std::vector<rclcpp::GenericPublisher::SharedPtr>> publishers_;
   std::vector<rclcpp::GenericSubscription::SharedPtr> subscriptions_;
   std::vector<std::vector<std::shared_ptr<rclcpp::SerializedMessage>>>
       ap_latest_messages_;
+  std::vector<std::vector<std::shared_ptr<rclcpp::SerializedMessage>>>
+      ideal_latest_messages_;
+  std::vector<std::vector<double>> ideal_latest_born_at_;
   rclcpp::Subscription<LinkQualityArray>::SharedPtr link_subscription_;
+  std::vector<rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr>
+      odometry_subscriptions_;
   rclcpp::Publisher<racer_sionna_interfaces::msg::CommStatistics>::SharedPtr
       statistics_publisher_;
+  rclcpp::GenericPublisher::SharedPtr ap_recovery_status_publisher_;
+  rclcpp::GenericSubscription::SharedPtr ap_recovery_command_subscription_;
   rclcpp::TimerBase::SharedPtr scheduler_timer_;
+  rclcpp::TimerBase::SharedPtr ideal_coalesce_timer_;
   rclcpp::TimerBase::SharedPtr statistics_timer_;
 
   bool bs_turn_active_{false};
@@ -1057,6 +1483,13 @@ class CommunicationProxy final : public rclcpp::Node {
   std::uint64_t ap_relay_wins_{};
   std::uint64_t direct_delivery_wins_{};
   std::uint64_t duplicates_suppressed_{};
+  std::uint64_t nearest_filtered_receivers_{};
+  std::uint64_t range_filtered_receivers_{};
+  std::uint64_t position_unavailable_receivers_{};
+  std::uint64_t ideal_coalesced_messages_{};
+  std::uint64_t ideal_direct_forwarded_packets_{};
+  std::uint64_t lossless_nearest_forwarded_packets_{};
+  std::uint64_t lossless_nearest_position_unavailable_events_{};
   double cumulative_initial_tbler_{};
   std::uint64_t initial_tbler_samples_{};
   std::uint64_t bs_round_robin_turns_{};

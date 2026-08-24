@@ -31,7 +31,20 @@ communication_share="$(ros2 pkg prefix racer_sionna_comm)/share/racer_sionna_com
 repo_root="$(realpath "${workspace_dir}/..")"
 isaac_root="${ISAAC_SIM_ROOT:-/home/jiazheng/software/isaacsim}"
 communication_mode="${RACER_COMMUNICATION_MODE:-sionna}"
+if [[ -n "${RACER_REQUIRE_SIONNA:-}" ]]; then
+  require_sionna="${RACER_REQUIRE_SIONNA}"
+else
+  require_sionna=$([[ "${communication_mode}" == "ideal" ]] && printf false || printf true)
+fi
 network_topology="${RACER_NETWORK_TOPOLOGY:-distributed}"
+nearest_neighbor_count="${RACER_NEAREST_NEIGHBOR_COUNT:-0}"
+lossless_nearest_neighbor_count="${RACER_LOSSLESS_NEAREST_NEIGHBOR_COUNT:-0}"
+communication_range_m="${RACER_COMMUNICATION_RANGE_M:-4.0}"
+ideal_coalesce_window_ms="${RACER_IDEAL_COALESCE_WINDOW_MS:-20.0}"
+launch_package="${RACER_LAUNCH_PACKAGE:-racer_sionna_comm}"
+launch_file="${RACER_LAUNCH_FILE:-original_racer_warehouse_sionna.launch.py}"
+algorithm_label="${RACER_ALGORITHM_LABEL:-original_racer_ros1_source_faithful_ros2_cpp_sionna_rt}"
+lkh_dir="${RACER_LKH_DIR:-/tmp/racer_original_fidelity_sionna_lkh}"
 sionna_runtime="${SIONNA_RUNTIME_DIR:-${workspace_dir}/.sionna_runtime}"
 duration="${RACER_FIDELITY_DURATION:-900}"
 wall_time_multiplier="${RACER_WALL_TIME_MULTIPLIER:-20}"
@@ -50,21 +63,76 @@ coverage_target="${RACER_MAPPING_COVERAGE_TARGET:-0}"
 ray_budget="${RACER_CAMERA_RAY_BUDGET:-76800}"
 physics_hz="${RACER_PHYSICS_RATE_HZ:-1000}"
 sensor_hz="${RACER_SENSOR_RATE_HZ:-30}"
+sensor_worker_count="${RACER_SENSOR_WORKER_COUNT:-1}"
+scene_query_rate_hz="${RACER_SCENE_QUERY_RATE_HZ:-50.0}"
 depth_width="${RACER_DEPTH_WIDTH:-640}"
 depth_height="${RACER_DEPTH_HEIGHT:-480}"
 interactive_hz="${RACER_INTERACTIVE_RENDER_HZ:-30}"
 map_points="${RACER_VISUALIZATION_MAX_MAP_POINTS:-12000}"
 record_trajectory_history="${RACER_RECORD_TRAJECTORY_HISTORY:-0}"
 result_dir="${RACER_RESULT_DIR:-${workspace_dir}/validation}"
-if [[ "${network_topology}" != "distributed" && "${network_topology}" != "ap_assisted" && "${network_topology}" != "bs_round_robin" ]]; then
-  printf 'RACER_NETWORK_TOPOLOGY must be distributed, ap_assisted, or bs_round_robin.\n' >&2
+bs_tx_power_dbm="${RACER_BS_TX_POWER_DBM:-33.0}"
+uav_tx_power_dbm="${RACER_UAV_TX_POWER_DBM:-23.0}"
+max_retries="${RACER_MAX_RETRIES:-3}"
+bs_max_retries="${RACER_BS_MAX_RETRIES:-3}"
+random_seed="${RACER_RANDOM_SEED:-42}"
+start_positions="${RACER_START_POSITIONS:-}"
+if [[ "${network_topology}" != "distributed" && "${network_topology}" != "nearest_neighbors" && "${network_topology}" != "distance_radius" && "${network_topology}" != "ap_assisted" && "${network_topology}" != "bs_round_robin" ]]; then
+  printf 'RACER_NETWORK_TOPOLOGY must be distributed, nearest_neighbors, distance_radius, ap_assisted, or bs_round_robin.\n' >&2
+  exit 2
+fi
+if [[ "${require_sionna}" != "true" && "${require_sionna}" != "false" ]]; then
+  printf 'RACER_REQUIRE_SIONNA must be true or false.\n' >&2
+  exit 2
+fi
+if [[ "${communication_mode}" == "ideal" && "${require_sionna}" != "false" ]]; then
+  printf 'Ideal communication mode cannot require Sionna.\n' >&2
+  exit 2
+fi
+if ! python3 -c 'import math,sys; value=float(sys.argv[1]); raise SystemExit(not (math.isfinite(value) and value > 0.0))' "${ideal_coalesce_window_ms}"; then
+  printf 'RACER_IDEAL_COALESCE_WINDOW_MS must be a positive finite number.\n' >&2
+  exit 2
+fi
+if [[ "${network_topology}" == "nearest_neighbors" ]] &&
+   { [[ ! "${nearest_neighbor_count}" =~ ^[1-9][0-9]*$ ]] ||
+     (( nearest_neighbor_count >= drone_count )); }; then
+  printf 'RACER_NEAREST_NEIGHBOR_COUNT must be in [1, drone_count - 1].\n' >&2
+  exit 2
+fi
+if [[ ! "${lossless_nearest_neighbor_count}" =~ ^[0-9]+$ ]] ||
+   (( lossless_nearest_neighbor_count >= drone_count )); then
+  printf 'RACER_LOSSLESS_NEAREST_NEIGHBOR_COUNT must be in [0, drone_count - 1].\n' >&2
+  exit 2
+fi
+if (( lossless_nearest_neighbor_count > 0 )) &&
+   { [[ "${communication_mode}" == "ideal" ]] ||
+     [[ "${network_topology}" != "distributed" ]]; }; then
+  printf 'Lossless nearest-neighbor overrides require non-ideal distributed communication.\n' >&2
+  exit 2
+fi
+if [[ "${network_topology}" == "distance_radius" ]] &&
+   ! python3 -c 'import math,sys; value=float(sys.argv[1]); raise SystemExit(not (math.isfinite(value) and value > 0.0))' "${communication_range_m}"; then
+  printf 'RACER_COMMUNICATION_RANGE_M must be a positive finite number.\n' >&2
   exit 2
 fi
 if [[ ! "${wall_time_multiplier}" =~ ^[1-9][0-9]*$ || ! "${wall_time_grace}" =~ ^[0-9]+$ ]]; then
   printf 'RACER_WALL_TIME_MULTIPLIER must be a positive integer and grace must be non-negative.\n' >&2
   exit 2
 fi
-mkdir -p "${result_dir}" /tmp/racer_original_fidelity_sionna_lkh
+if [[ ! "${max_retries}" =~ ^[0-9]+$ || ! "${bs_max_retries}" =~ ^[0-9]+$ ]]; then
+  printf 'RACER_MAX_RETRIES and RACER_BS_MAX_RETRIES must be non-negative integers.\n' >&2
+  exit 2
+fi
+if [[ ! "${sensor_worker_count}" =~ ^[1-9][0-9]*$ ]] ||
+   (( sensor_worker_count > drone_count )); then
+  printf 'RACER_SENSOR_WORKER_COUNT must be in [1, drone_count].\n' >&2
+  exit 2
+fi
+if ! python3 -c 'import math,sys; value=float(sys.argv[1]); raise SystemExit(not (math.isfinite(value) and value > 0.0))' "${scene_query_rate_hz}"; then
+  printf 'RACER_SCENE_QUERY_RATE_HZ must be a positive finite number.\n' >&2
+  exit 2
+fi
+mkdir -p "${result_dir}" "${lkh_dir}"
 run_tag="${scenario}_${network_topology}"
 launch_log="${result_dir}/${run_tag}_launch.log"
 isaac_log="${result_dir}/${run_tag}_isaac.log"
@@ -72,7 +140,18 @@ result_file="${result_dir}/${run_tag}_result.json"
 : > "${launch_log}"
 : > "${isaac_log}"
 
-if [[ "${scenario}" == "warehouse_loaded" || "${scenario}" == "warehouse_loaded_center" ]]; then
+if [[ "${scenario}" == "warehouse_full" ]]; then
+  default_scene_usd="${repo_root}/warehouse_scenes/isaac/warehouse_full_with_industrial_ap.usda"
+  default_sionna_scene_xml="${repo_root}/warehouse_scenes/sionna/warehouse_full_with_industrial_ap/warehouse.xml"
+  default_radio_map_cache="${repo_root}/warehouse_scenes/sionna/warehouse_full_with_industrial_ap/hybrid_radio_cache.npz"
+  default_ap_position_x="-10.02891489217081"
+  default_ap_position_y="14.888611215255622"
+  default_ap_position_z="7.55"
+elif [[ "${scenario}" == "warehouse_loaded_full" ]]; then
+  default_scene_usd="${repo_root}/warehouse_scenes/isaac/warehouse_loaded_full_with_industrial_ap.usda"
+  default_sionna_scene_xml="${workspace_dir}/src/racer_sionna_comm/assets/warehouse_loaded_sionna/warehouse.xml"
+  default_radio_map_cache="${workspace_dir}/src/racer_sionna_comm/assets/warehouse_loaded_sionna/hybrid_radio_cache.npz"
+elif [[ "${scenario}" == "warehouse_loaded" || "${scenario}" == "warehouse_loaded_center" ]]; then
   # This layer lives next to its relative warehouse.usd dependency.
   default_scene_usd="${repo_root}/ros2_3d_py_ws/warehouse_loaded_with_industrial_ap.usda"
   default_sionna_scene_xml="${workspace_dir}/src/racer_sionna_comm/assets/warehouse_loaded_sionna/warehouse.xml"
@@ -85,6 +164,9 @@ else
   printf 'Unsupported RACER_FIDELITY_SCENARIO: %s\n' "${scenario}" >&2
   exit 2
 fi
+ap_position_x="${RACER_AP_POSITION_X:-${default_ap_position_x:-}}"
+ap_position_y="${RACER_AP_POSITION_Y:-${default_ap_position_y:-}}"
+ap_position_z="${RACER_AP_POSITION_Z:-${default_ap_position_z:-}}"
 scene_usd="${RACER_SCENE_USD:-${default_scene_usd}}"
 sionna_scene_xml="${RACER_SIONNA_SCENE_XML:-${default_sionna_scene_xml}}"
 radio_map_cache="${RACER_SIONNA_RADIO_MAP_CACHE:-${default_radio_map_cache}}"
@@ -106,9 +188,25 @@ export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-176}"
 launch_communication_args=(
   communication_mode:="${communication_mode}"
   network_topology:="${network_topology}"
-  require_sionna:=$([[ "${communication_mode}" == "ideal" ]] && printf false || printf true)
+  nearest_neighbor_count:="${nearest_neighbor_count}"
+  lossless_nearest_neighbor_count:="${lossless_nearest_neighbor_count}"
+  communication_range_m:="${communication_range_m}"
+  ideal_coalesce_window_ms:="${ideal_coalesce_window_ms}"
+  require_sionna:="${require_sionna}"
   sionna_scene_xml:="${sionna_scene_xml}"
+  ap_tx_power_dbm:="${bs_tx_power_dbm}"
+  uav_tx_power_dbm:="${uav_tx_power_dbm}"
+  max_retries:="${max_retries}"
+  bs_max_retries:="${bs_max_retries}"
+  random_seed:="${random_seed}"
 )
+if [[ -n "${ap_position_x}" ]]; then
+  launch_communication_args+=(
+    ap_position_x:="${ap_position_x}"
+    ap_position_y:="${ap_position_y}"
+    ap_position_z:="${ap_position_z}"
+  )
+fi
 if [[ -f "${radio_map_cache}" ]]; then
   launch_communication_args+=(radio_map_cache:="${radio_map_cache}")
 fi
@@ -122,10 +220,10 @@ if [[ -n "${RACER_DEBUG_LAUNCH_PREFIX:-}" ]]; then
   fi
 fi
 setsid ros2 launch "${launch_debug_args[@]}" \
-  racer_sionna_comm original_racer_warehouse_sionna.launch.py \
+  "${launch_package}" "${launch_file}" \
   drone_count:="${drone_count}" \
   scenario:="${scenario}" \
-  lkh_dir:=/tmp/racer_original_fidelity_sionna_lkh \
+  lkh_dir:="${lkh_dir}" \
   "${launch_communication_args[@]}" \
   >"${launch_log}" 2>&1 &
 launch_pid=$!
@@ -167,11 +265,30 @@ isaac_args=(
   --camera-ray-budget "${ray_budget}"
   --physics-rate-hz "${physics_hz}"
   --sensor-rate-hz "${sensor_hz}"
+  --sensor-worker-count "${sensor_worker_count}"
+  --scene-query-rate-hz "${scene_query_rate_hz}"
   --depth-width "${depth_width}"
   --depth-height "${depth_height}"
   --diagnostics
   --mapping-coverage-target "${coverage_target}"
 )
+if [[ -n "${start_positions}" ]]; then
+  read -r -a start_values <<< "${start_positions}"
+  if ! python3 - "${drone_count}" "${start_values[@]}" <<'PY'
+import math
+import sys
+
+drone_count = int(sys.argv[1])
+values = [float(value) for value in sys.argv[2:]]
+if len(values) != 3 * drone_count or not all(math.isfinite(value) for value in values):
+    raise SystemExit(1)
+PY
+  then
+    printf 'RACER_START_POSITIONS must contain exactly three finite values per UAV.\n' >&2
+    exit 2
+  fi
+  isaac_args+=(--starts "${start_values[@]}")
+fi
 if [[ "${headless}" == "1" && "${visualize}" != "1" ]]; then
   isaac_args+=(--headless --no-animate-propellers)
 else
@@ -212,7 +329,9 @@ wait "${launch_pid}" 2>/dev/null || true
 python3 - "${isaac_log}" "${launch_log}" "${result_file}" \
   "${drone_count}" "${require_completion}" "${isaac_status}" \
   "${communication_mode}" "${scenario}" "${network_topology}" \
-  "${scene_usd}" "${sionna_scene_xml}" <<'PY'
+  "${lossless_nearest_neighbor_count}" \
+  "${scene_usd}" "${sionna_scene_xml}" "${algorithm_label}" \
+  "${random_seed}" "${communication_range_m}" <<'PY'
 import json
 import math
 from pathlib import Path
@@ -226,8 +345,12 @@ isaac_status = int(sys.argv[6])
 communication_mode = sys.argv[7]
 scenario = sys.argv[8]
 network_topology = sys.argv[9]
-scene_usd = sys.argv[10]
-sionna_scene_xml = sys.argv[11]
+lossless_nearest_neighbor_count = int(sys.argv[10])
+scene_usd = sys.argv[11]
+sionna_scene_xml = sys.argv[12]
+algorithm_label = sys.argv[13]
+random_seed = int(sys.argv[14])
+communication_range_m = float(sys.argv[15])
 lines = isaac_log.read_text(errors="replace").splitlines()
 prefix = "RACER_3D_ISAAC_RESULT "
 matches = [line[len(prefix):] for line in lines if line.startswith(prefix)]
@@ -257,6 +380,19 @@ topology_active = (
     and (
         network_topology == "distributed"
         or (
+            network_topology == "nearest_neighbors"
+            and communication_statistics.get("nearest_neighbor_count", 0) > 0
+            and communication_statistics.get("nearest_filtered_receivers", 0) > 0
+        )
+        or (
+            network_topology == "distance_radius"
+            and math.isclose(
+                communication_statistics.get("communication_range_m", 0.0),
+                communication_range_m,
+            )
+            and communication_statistics.get("range_filtered_receivers", 0) > 0
+        )
+        or (
             network_topology == "ap_assisted"
             and communication_statistics.get("ap_global_updates_received", 0) > 0
         )
@@ -268,23 +404,39 @@ topology_active = (
         )
     )
 )
+lossless_nearest_override_active = (
+    lossless_nearest_neighbor_count == 0
+    or (
+        communication_mode != "ideal"
+        and network_topology == "distributed"
+        and communication_statistics.get(
+            "lossless_nearest_neighbor_count", 0
+        ) == lossless_nearest_neighbor_count
+        and communication_statistics.get(
+            "lossless_nearest_forwarded_packets", 0
+        ) > 0
+        and communication_statistics.get(
+            "sionna_direct_attempted_packets", 0
+        ) > 0
+    )
+)
 finished = sorted({
     int(value)
     for value in re.findall(
-        r"racer_original_exploration_(\d+).*(?:finish exploration|state: FINISH)",
+        r"racer_(?:original|recovery)_exploration_(\d+).*(?:finish exploration|state: FINISH)",
         launch_text,
     )
 })
 returned = sorted({
     int(value)
     for value in re.findall(
-        r"racer_original_exploration_(\d+).*Go back to", launch_text
+        r"racer_(?:original|recovery)_exploration_(\d+).*Go back to", launch_text
     )
 })
 executed = sorted({
     int(value)
     for value in re.findall(
-        r"racer_original_exploration_(\d+).*from PUB_TRAJ to EXEC_TRAJ",
+        r"racer_(?:original|recovery)_exploration_(\d+).*from PUB_TRAJ to EXEC_TRAJ",
         launch_text,
     )
 })
@@ -304,6 +456,12 @@ evidence = {
     "lkh_call_failures": count(r"Fail to solve (?:ATSP|ACVRP)"),
     "process_crashes": count(r"process has died|exit code -11|Segmentation"),
     "tracking_recoveries": count(r"\[trackingLostCallback\]"),
+    "bounded_recovery_fail_windows": count(r"RACER_RECOVERY plan_fail"),
+    "local_reselections": count(r"RACER_RECOVERY local_(?:viewpoint_)?reselect"),
+    "local_escapes": count(r"RACER_RECOVERY local_escape"),
+    "ap_repartition_requests": count(r"RACER_RECOVERY request_ap_repartition"),
+    "ap_repartition_commands": count(r"RACER_RECOVERY command episode="),
+    "completed_recoveries": count(r"RACER_RECOVERY complete episode="),
 }
 normal_completion = len(finished) == drone_count and len(returned) == drone_count
 algorithm_pipeline_ok = (
@@ -348,6 +506,7 @@ acceptance = {
     "physical_return_within_original_1m_threshold": physical_return_ok,
     "communication_proxy_active": communication_active,
     "requested_network_topology_active": topology_active,
+    "lossless_nearest_override_active": lossless_nearest_override_active,
     "sionna_rt_active": communication_mode == "ideal" or (
         sionna_ready and exact_link_samples > 0
     ),
@@ -360,7 +519,8 @@ passed = all(
     )
 )
 result = {
-    "algorithm": "original_racer_ros1_source_faithful_ros2_cpp_sionna_rt",
+    "algorithm": algorithm_label,
+    "random_seed": random_seed,
     "scene": scene_usd,
     "sionna_scene": sionna_scene_xml,
     "vehicle": "crazyflie_with_racer_dynamics.usd",
@@ -375,6 +535,8 @@ result = {
     "communication": {
         "mode": communication_mode,
         "network_topology": network_topology,
+        "lossless_nearest_neighbor_count": lossless_nearest_neighbor_count,
+        "communication_range_m": communication_range_m,
         "sionna_ready": sionna_ready,
         "exact_link_samples": exact_link_samples,
         "statistics": communication_statistics,

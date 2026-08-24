@@ -112,6 +112,7 @@ struct ExplorationParam {
   // Swarm
   int drone_num_;
   int drone_id_;
+  int random_seed_;
 };
 
 }  // namespace fast_planner

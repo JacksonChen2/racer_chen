@@ -13,7 +13,9 @@ TopologyPRM::~TopologyPRM() {
 
 void TopologyPRM::init(ros::NodeHandle& nh) {
   graph_.clear();
-  eng_ = default_random_engine(rd_());
+  int random_seed;
+  nh.param("topo_prm/random_seed", random_seed, 42);
+  eng_ = default_random_engine(static_cast<unsigned int>(random_seed));
   rand_pos_ = uniform_real_distribution<double>(-1.0, 1.0);
 
   // init parameter

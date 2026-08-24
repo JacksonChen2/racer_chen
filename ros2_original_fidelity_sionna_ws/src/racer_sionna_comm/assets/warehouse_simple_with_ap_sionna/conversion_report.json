@@ -11,14 +11,14 @@
     -18.036365509033203,
     -6.869831850053743e-05
   ],
-  "exported_mesh_prim_count": 1878,
+  "exported_mesh_prim_count": 1877,
   "geometry_mode": "oriented_bbox_proxy",
-  "input_usd": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/ros2_3d_py_ws/warehouse_simple_with_industrial_ap.usda",
-  "mesh_prim_count": 1879,
+  "input_usd": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/ros2_3d_py_ws/warehouse_simple_with_industrial_ap.usda",
+  "mesh_prim_count": 1878,
   "output_units": "meter",
   "output_up_axis": "Z",
-  "output_xml": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_simple_with_ap_sionna/warehouse.xml",
-  "prim_count": 8155,
+  "output_xml": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_simple_with_ap_sionna/warehouse.xml",
+  "prim_count": 8154,
   "rf_material_groups": {
     "ceiling_board": {
       "bounds_max_m": [
@@ -31,7 +31,7 @@
         -18.036365509033203,
         3.0
       ],
-      "file": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_simple_with_ap_sionna/meshes/warehouse_ceiling_board.ply",
+      "file": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_simple_with_ap_sionna/meshes/warehouse_ceiling_board.ply",
       "file_size_bytes": 19871,
       "source_meshes": 78,
       "triangles": 936,
@@ -48,7 +48,7 @@
         17.549335479736328,
         1.2044651157339104e-05
       ],
-      "file": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_simple_with_ap_sionna/meshes/warehouse_chipboard.ply",
+      "file": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_simple_with_ap_sionna/meshes/warehouse_chipboard.ply",
       "file_size_bytes": 717,
       "source_meshes": 2,
       "triangles": 24,
@@ -65,7 +65,7 @@
         -18.036365509033203,
         -8.583068478174027e-08
       ],
-      "file": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_simple_with_ap_sionna/meshes/warehouse_concrete.ply",
+      "file": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_simple_with_ap_sionna/meshes/warehouse_concrete.ply",
       "file_size_bytes": 18359,
       "source_meshes": 72,
       "triangles": 864,
@@ -82,11 +82,11 @@
         -12.236495971679688,
         -6.869831850053743e-05
       ],
-      "file": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_simple_with_ap_sionna/meshes/warehouse_metal.ply",
-      "file_size_bytes": 435171,
-      "source_meshes": 1726,
-      "triangles": 20712,
-      "vertices": 13808
+      "file": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/ros2_original_fidelity_sionna_ws/src/racer_sionna_comm/assets/warehouse_simple_with_ap_sionna/meshes/warehouse_metal.ply",
+      "file_size_bytes": 434919,
+      "source_meshes": 1725,
+      "triangles": 20700,
+      "vertices": 13800
     }
   },
   "rf_material_note": "USD visual materials were heuristically mapped to Sionna ITU radio materials. Plastic/rubber is approximated as plywood; unrecognized geometry uses concrete.",
@@ -231,12 +231,8 @@
     [
       "MI_CratePlasticC_05",
       1
-    ],
-    [
-      "<unbound>",
-      1
     ]
   ],
-  "triangle_count": 22536,
+  "triangle_count": 22524,
   "unresolved_dependencies": []
 }

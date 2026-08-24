@@ -16,6 +16,8 @@ racer_sionna_communication_proxy:
     retry_backoff_ms: 0.125
     random_seed: 42
     network_topology: distributed
+    lossless_nearest_neighbor_count: 0
+    communication_range_m: 4.0
     bs_min_turn_ms: 10.0
     bs_control_bytes: 32
     bs_max_downlink_chunks_per_turn: 32
@@ -43,7 +45,7 @@ racer_sionna_channel:
     ap_array_cols: 8
     directional_beamforming: true
     small_scale_fading: none
-    ap_position: [-0.5, 2.85, 8.10]
+    ap_position: [0.0, 3.0, 8.10]
     network_topology: distributed
     receiver_noise_figure_db: 7.0
     temperature_k: 290.0

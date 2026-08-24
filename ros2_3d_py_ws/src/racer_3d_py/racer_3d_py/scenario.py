@@ -213,15 +213,46 @@ def warehouse_loaded_scene() -> Scenario3D:
     )
 
 
+def warehouse_loaded_full_scene() -> Scenario3D:
+    """Complete enclosed factory volume in the cargo-populated Warehouse.
+
+    Unlike ``warehouse_loaded``, this profile includes the southern rack and
+    production areas (including y < 1).  The remote exterior loading apron is
+    intentionally excluded.  Starts were verified against the composed USD
+    with a 0.25 m PhysX overlap box.
+    """
+
+    return Scenario3D(
+        name="warehouse_loaded_full",
+        map_min=(-27.0, -23.0, 0.0),
+        map_max=(6.0, 30.0, 8.5),
+        starts=(
+            (-20.0, 0.0, 0.80),
+            (-16.0, 0.0, 1.50),
+            (-12.0, 0.0, 2.20),
+            (-8.0, 0.0, 1.15),
+            (-4.0, 0.0, 1.85),
+        ),
+        obstacles=(),
+        # Four by eight by two top-level regions over the long factory axis.
+        coarse_grid_size=(8.25, 6.625, 4.25),
+        truth_mode="observed_volume",
+        safety_min=(-27.25, -23.25, 0.0),
+        safety_max=(6.25, 30.25, 8.8),
+    )
+
+
 DEFAULT_SCENARIO = acceptance_scene()
 LARGE_SCENARIO = large_acceptance_scene()
 WAREHOUSE_SCENARIO = warehouse_simple_scene()
 WAREHOUSE_LOADED_SCENARIO = warehouse_loaded_scene()
+WAREHOUSE_LOADED_FULL_SCENARIO = warehouse_loaded_full_scene()
 SCENARIOS: Dict[str, Scenario3D] = {
     DEFAULT_SCENARIO.name: DEFAULT_SCENARIO,
     LARGE_SCENARIO.name: LARGE_SCENARIO,
     WAREHOUSE_SCENARIO.name: WAREHOUSE_SCENARIO,
     WAREHOUSE_LOADED_SCENARIO.name: WAREHOUSE_LOADED_SCENARIO,
+    WAREHOUSE_LOADED_FULL_SCENARIO.name: WAREHOUSE_LOADED_FULL_SCENARIO,
 }
 
 

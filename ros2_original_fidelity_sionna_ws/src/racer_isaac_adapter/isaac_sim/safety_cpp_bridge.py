@@ -212,10 +212,47 @@ def pointcloud_obstacle_filter(
     Points are kept in the shared world frame by the Isaac bridge.
     """
 
-    result = np.asarray(limit_norm(preferred, speed_limit), dtype=float)
+    constraints = pointcloud_obstacle_constraints(
+        position,
+        points_world,
+        clearance,
+        current_velocity=current_velocity,
+        alpha=alpha,
+        guaranteed_deceleration=guaranteed_deceleration,
+        response_time=response_time,
+        activation_distance=activation_distance,
+        maximum_constraints=maximum_constraints,
+    )
+    return project_velocity_constraints(
+        preferred,
+        constraints,
+        speed_limit,
+        iterations=iterations,
+    )
+
+
+def pointcloud_obstacle_constraints(
+    position: Sequence[float],
+    points_world: Sequence[Sequence[float]],
+    clearance: float,
+    current_velocity: Sequence[float] = (0.0, 0.0, 0.0),
+    alpha: float = 0.8,
+    guaranteed_deceleration: float = 0.6,
+    response_time: float = 0.20,
+    activation_distance: float = 2.2,
+    maximum_constraints: int = 64,
+):
+    """Build the point-cloud half spaces independently of a command.
+
+    A control tick projects first the planner command and then the swarm-safe
+    command against the same obstacle geometry.  Keeping construction
+    separate avoids sorting the same point cloud twice while preserving the
+    original projection order and numerical result.
+    """
+
     points = np.asarray(points_world, dtype=float).reshape((-1, 3))
     if not len(points):
-        return tuple(float(value) for value in result)
+        return []
     own = np.asarray(position, dtype=float)
     velocity = np.asarray(current_velocity, dtype=float)
     delta = own - points
@@ -227,7 +264,7 @@ def pointcloud_obstacle_filter(
     )
     indices = np.flatnonzero(valid)
     if not len(indices):
-        return tuple(float(value) for value in result)
+        return []
     indices = indices[np.argsort(distances[indices])[:maximum_constraints]]
     constraints = []
     for index in indices:
@@ -246,6 +283,18 @@ def pointcloud_obstacle_filter(
     # Preserve the nearest observed surface as the final constraint when a
     # conservative clearance cannot fit between two opposing surfaces.
     constraints.sort(key=lambda item: item[0], reverse=True)
+    return constraints
+
+
+def project_velocity_constraints(
+    preferred: Sequence[float],
+    constraints,
+    speed_limit: float,
+    iterations: int = 4,
+) -> Vector3:
+    """Project a velocity through precomputed obstacle half spaces."""
+
+    result = np.asarray(limit_norm(preferred, speed_limit), dtype=float)
     for _ in range(iterations):
         for _, normal, lower_bound in constraints:
             violation = lower_bound - float(np.dot(normal, result))

@@ -10,7 +10,9 @@ find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_gtest REQUIRED)
 find_package(ament_cmake_pytest REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(racer_fidelity_msgs REQUIRED)
+find_package(racer_recovery_core REQUIRED)
 find_package(racer_sionna_interfaces REQUIRED)
 
 add_library(racer_sionna_link_model src/link_model.cpp)
@@ -23,7 +25,7 @@ add_executable(racer_sionna_communication_proxy
 target_link_libraries(racer_sionna_communication_proxy racer_sionna_link_model)
 target_include_directories(racer_sionna_communication_proxy PRIVATE include)
 ament_target_dependencies(racer_sionna_communication_proxy
-  rclcpp racer_fidelity_msgs racer_sionna_interfaces)
+  rclcpp nav_msgs racer_fidelity_msgs racer_recovery_core racer_sionna_interfaces)
 
 install(TARGETS
   racer_sionna_link_model
@@ -44,7 +46,7 @@ if(BUILD_TESTING)
   target_link_libraries(racer_sionna_link_model_test racer_sionna_link_model)
   target_include_directories(racer_sionna_link_model_test PRIVATE include)
   ament_add_pytest_test(racer_sionna_ideal_proxy_test
-    test/test_ideal_proxy.py TIMEOUT 40)
+    test/test_ideal_proxy.py TIMEOUT 70)
 endif()
 
 ament_export_include_directories(include)

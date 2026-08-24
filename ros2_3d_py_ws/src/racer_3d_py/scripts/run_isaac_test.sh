@@ -10,7 +10,7 @@ scene_usd="${RACER_3D_PY_SCENE_USD:-}"
 if [[ -z "${scene_usd}" && "${scenario}" == "warehouse_simple" ]]; then
   scene_usd="${workspace_dir}/warehouse_simple.usd"
 fi
-if [[ -z "${scene_usd}" && "${scenario}" == "warehouse_loaded" ]]; then
+if [[ -z "${scene_usd}" && ( "${scenario}" == "warehouse_loaded" || "${scenario}" == "warehouse_loaded_full" ) ]]; then
   scene_usd="${workspace_dir}/warehouse_loaded.usd"
 fi
 scene_arguments=()

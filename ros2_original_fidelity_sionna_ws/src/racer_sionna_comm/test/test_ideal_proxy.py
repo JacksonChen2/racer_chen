@@ -11,7 +11,9 @@ import time
 
 import pytest
 import rclpy
+from nav_msgs.msg import Odometry
 from racer_fidelity_msgs.msg import ChunkData, DroneState
+from racer_recovery_core.msg import RecoveryCommand, RecoveryStatus
 from racer_sionna_interfaces.msg import LinkQuality, LinkQualityArray
 from rclpy.duration import Duration
 from rclpy.node import Node
@@ -30,7 +32,7 @@ def configure_ros_domain(test_offset: int, random_low: int, random_high: int) ->
 
 
 @pytest.mark.timeout(30)
-def test_ideal_proxy_preserves_order_and_excludes_self():
+def test_ideal_proxy_coalesces_latest_state_and_excludes_self():
     configure_ros_domain(0, 201, 229)
     process = subprocess.Popen(
         [
@@ -38,6 +40,7 @@ def test_ideal_proxy_preserves_order_and_excludes_self():
             "racer_sionna_communication_proxy", "--ros-args",
             "-p", "mode:=ideal", "-p", "drone_count:=2",
             "-p", "base_latency_ms:=0.0", "-p", "jitter_ms:=0.0",
+            "-p", "ideal_coalesce_window_ms:=200.0",
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -77,16 +80,11 @@ def test_ideal_proxy_preserves_order_and_excludes_self():
             message.stamp = float(sequence)
             message.grid_ids = [sequence, sequence + 10]
             publisher.publish(message)
-            time.sleep(0.03)
 
         deadline = time.monotonic() + 8.0
-        while len(received) < 3 and time.monotonic() < deadline:
+        while not received and time.monotonic() < deadline:
             rclpy.spin_once(node, timeout_sec=0.05)
-        assert received == [
-            (1.0, [1, 11]),
-            (2.0, [2, 12]),
-            (3.0, [3, 13]),
-        ]
+        assert received == [(3.0, [3, 13])]
         assert self_received == []
     finally:
         node.destroy_node()
@@ -97,6 +95,280 @@ def test_ideal_proxy_preserves_order_and_excludes_self():
         except subprocess.TimeoutExpired:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=5)
+
+
+@pytest.mark.timeout(30)
+def test_nearest_neighbor_topology_delivers_only_to_closest_uav():
+    configure_ros_domain(5, 90, 119)
+    process = subprocess.Popen(
+        [
+            "ros2", "run", "racer_sionna_comm",
+            "racer_sionna_communication_proxy", "--ros-args",
+            "-p", "mode:=ideal", "-p", "drone_count:=4",
+            "-p", "network_topology:=nearest_neighbors",
+            "-p", "nearest_neighbor_count:=1",
+            "-p", "base_latency_ms:=0.0", "-p", "jitter_ms:=0.0",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=os.environ.copy(),
+        start_new_session=True,
+    )
+    rclpy.init()
+    node = Node("racer_sionna_nearest_neighbor_test")
+    qos = QoSProfile(depth=100, reliability=ReliabilityPolicy.RELIABLE)
+    received = {receiver: [] for receiver in (1, 2, 3)}
+    for receiver in received:
+        node.create_subscription(
+            DroneState,
+            f"/racer_sionna/rx/drone_{receiver}/drone_state",
+            lambda message, receiver=receiver: received[receiver].append(
+                message.stamp
+            ),
+            qos,
+        )
+    state_publisher = node.create_publisher(
+        DroneState, "/racer_sionna/tx/drone_0/drone_state", qos
+    )
+    odometry_publishers = [
+        node.create_publisher(Odometry, f"/drone_{drone}/odom", 10)
+        for drone in range(4)
+    ]
+    output = ""
+    try:
+        deadline = time.monotonic() + 10.0
+        while state_publisher.get_subscription_count() < 1 and time.monotonic() < deadline:
+            rclpy.spin_once(node, timeout_sec=0.05)
+        assert state_publisher.get_subscription_count() == 1
+        for _ in range(10):
+            for drone, x_position in enumerate((0.0, 1.0, 3.0, 10.0)):
+                odometry = Odometry()
+                odometry.pose.pose.position.x = x_position
+                odometry_publishers[drone].publish(odometry)
+            rclpy.spin_once(node, timeout_sec=0.05)
+        message = DroneState()
+        message.drone_id = 1
+        message.stamp = 23.0
+        state_publisher.publish(message)
+        deadline = time.monotonic() + 5.0
+        while not received[1] and time.monotonic() < deadline:
+            rclpy.spin_once(node, timeout_sec=0.05)
+        time.sleep(1.0)
+        assert received == {1: [23.0], 2: [], 3: []}
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+        os.killpg(process.pid, signal.SIGINT)
+        try:
+            output, _ = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            output, _ = process.communicate(timeout=5)
+    matches = re.findall(r"RACER_SIONNA_STATS (\{[^\n]+\})", output)
+    assert matches
+    statistics = json.loads(matches[-1])
+    assert statistics["nearest_neighbor_count"] == 1
+    assert statistics["nearest_filtered_receivers"] >= 2
+    assert statistics["dropped_per"] == 0
+
+
+@pytest.mark.timeout(30)
+def test_lossless_nearest_override_keeps_other_receivers_on_sionna_path():
+    configure_ros_domain(7, 30, 59)
+    process = subprocess.Popen(
+        [
+            "ros2", "run", "racer_sionna_comm",
+            "racer_sionna_communication_proxy", "--ros-args",
+            "-p", "mode:=sionna", "-p", "drone_count:=4",
+            "-p", "network_topology:=distributed",
+            "-p", "lossless_nearest_neighbor_count:=1",
+            "-p", "max_retries:=0",
+            "-p", "base_latency_ms:=0.0", "-p", "jitter_ms:=0.0",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=os.environ.copy(),
+        start_new_session=True,
+    )
+    rclpy.init()
+    node = Node("racer_sionna_lossless_nearest_override_test")
+    qos = QoSProfile(depth=100, reliability=ReliabilityPolicy.RELIABLE)
+    received = {receiver: [] for receiver in (1, 2, 3)}
+    for receiver in received:
+        node.create_subscription(
+            DroneState,
+            f"/racer_sionna/rx/drone_{receiver}/drone_state",
+            lambda message, receiver=receiver: received[receiver].append(
+                message.stamp
+            ),
+            qos,
+        )
+    state_publisher = node.create_publisher(
+        DroneState, "/racer_sionna/tx/drone_0/drone_state", qos
+    )
+    link_publisher = node.create_publisher(
+        LinkQualityArray, "/racer_sionna/link_quality", qos
+    )
+    odometry_publishers = [
+        node.create_publisher(Odometry, f"/drone_{drone}/odom", 10)
+        for drone in range(4)
+    ]
+
+    def publish_sionna_link():
+        now = node.get_clock().now()
+        links = LinkQualityArray()
+        links.stamp = now.to_msg()
+        link = LinkQuality()
+        link.stamp = links.stamp
+        link.valid_until = (now + Duration(seconds=1.0)).to_msg()
+        link.sender_id = 0
+        link.receiver_id = 3
+        link.snr_db = 100.0
+        link.model = "sionna_exact"
+        links.links.append(link)
+        # Receiver 2 intentionally has no Sionna link. Receiver 1 is closest
+        # and must be delivered losslessly without any link-quality sample.
+        link_publisher.publish(links)
+
+    output = ""
+    try:
+        deadline = time.monotonic() + 10.0
+        while (
+            state_publisher.get_subscription_count() < 1
+            or link_publisher.get_subscription_count() < 1
+        ) and time.monotonic() < deadline:
+            publish_sionna_link()
+            rclpy.spin_once(node, timeout_sec=0.05)
+        assert state_publisher.get_subscription_count() == 1
+        assert link_publisher.get_subscription_count() == 1
+        for _ in range(10):
+            for drone, x_position in enumerate((0.0, 1.0, 3.0, 10.0)):
+                odometry = Odometry()
+                odometry.pose.pose.position.x = x_position
+                odometry_publishers[drone].publish(odometry)
+            publish_sionna_link()
+            rclpy.spin_once(node, timeout_sec=0.05)
+        message = DroneState()
+        message.drone_id = 1
+        message.stamp = 67.0
+        state_publisher.publish(message)
+        deadline = time.monotonic() + 5.0
+        while (
+            (not received[1] or not received[3])
+            and time.monotonic() < deadline
+        ):
+            publish_sionna_link()
+            rclpy.spin_once(node, timeout_sec=0.02)
+        time.sleep(1.0)
+        assert received == {1: [67.0], 2: [], 3: [67.0]}
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+        os.killpg(process.pid, signal.SIGINT)
+        try:
+            output, _ = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            output, _ = process.communicate(timeout=5)
+    matches = re.findall(r"RACER_SIONNA_STATS (\{[^\n]+\})", output)
+    assert matches
+    statistics = json.loads(matches[-1])
+    assert statistics["lossless_nearest_neighbor_count"] == 1
+    assert statistics["lossless_nearest_forwarded_packets"] == 1
+    assert statistics["sionna_direct_attempted_packets"] == 2
+    assert statistics["direct_attempted_packets"] == 3
+    assert statistics["direct_delivered_packets"] == 2
+    assert statistics["dropped_no_link"] == 1
+    assert statistics["sionna_exact_samples"] > 0
+
+
+@pytest.mark.timeout(30)
+def test_distance_radius_topology_enforces_hard_3d_range():
+    configure_ros_domain(6, 60, 89)
+    process = subprocess.Popen(
+        [
+            "ros2", "run", "racer_sionna_comm",
+            "racer_sionna_communication_proxy", "--ros-args",
+            "-p", "mode:=ideal", "-p", "drone_count:=4",
+            "-p", "network_topology:=distance_radius",
+            "-p", "communication_range_m:=4.0",
+            "-p", "base_latency_ms:=0.0", "-p", "jitter_ms:=0.0",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=os.environ.copy(),
+        start_new_session=True,
+    )
+    rclpy.init()
+    node = Node("racer_sionna_distance_radius_test")
+    qos = QoSProfile(depth=100, reliability=ReliabilityPolicy.RELIABLE)
+    received = {receiver: [] for receiver in (1, 2, 3)}
+    for receiver in received:
+        node.create_subscription(
+            DroneState,
+            f"/racer_sionna/rx/drone_{receiver}/drone_state",
+            lambda message, receiver=receiver: received[receiver].append(
+                message.stamp
+            ),
+            qos,
+        )
+    state_publisher = node.create_publisher(
+        DroneState, "/racer_sionna/tx/drone_0/drone_state", qos
+    )
+    odometry_publishers = [
+        node.create_publisher(Odometry, f"/drone_{drone}/odom", 10)
+        for drone in range(4)
+    ]
+    positions = (
+        (0.0, 0.0, 0.0),
+        (0.0, 0.0, 4.0),
+        (2.4, 2.4, 2.4),
+        (4.01, 0.0, 0.0),
+    )
+    output = ""
+    try:
+        deadline = time.monotonic() + 10.0
+        while state_publisher.get_subscription_count() < 1 and time.monotonic() < deadline:
+            rclpy.spin_once(node, timeout_sec=0.05)
+        assert state_publisher.get_subscription_count() == 1
+        for _ in range(10):
+            for publisher, (x_position, y_position, z_position) in zip(
+                odometry_publishers, positions
+            ):
+                odometry = Odometry()
+                odometry.pose.pose.position.x = x_position
+                odometry.pose.pose.position.y = y_position
+                odometry.pose.pose.position.z = z_position
+                publisher.publish(odometry)
+            rclpy.spin_once(node, timeout_sec=0.05)
+        message = DroneState()
+        message.drone_id = 1
+        message.stamp = 41.0
+        state_publisher.publish(message)
+        deadline = time.monotonic() + 5.0
+        while not received[1] and time.monotonic() < deadline:
+            rclpy.spin_once(node, timeout_sec=0.05)
+        time.sleep(1.0)
+        assert received == {1: [41.0], 2: [], 3: []}
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+        os.killpg(process.pid, signal.SIGINT)
+        try:
+            output, _ = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            output, _ = process.communicate(timeout=5)
+    matches = re.findall(r"RACER_SIONNA_STATS (\{[^\n]+\})", output)
+    assert matches
+    statistics = json.loads(matches[-1])
+    assert statistics["network_topology"] == "distance_radius"
+    assert statistics["communication_range_m"] == 4.0
+    assert statistics["range_filtered_receivers"] >= 2
+    assert statistics["dropped_queue"] == 0
 
 
 @pytest.mark.timeout(30)
@@ -326,3 +598,95 @@ def test_bs_round_robin_repairs_a_missing_direct_map_chunk():
     assert statistics["direct_delivered_packets"] == 0
     assert statistics["bs_incremental_chunks_received_uplink"] == 1
     assert statistics["bs_missing_chunks_delivered_downlink"] == 1
+
+
+@pytest.mark.timeout(30)
+def test_bs_round_robin_routes_recovery_control_through_ap_links():
+    configure_ros_domain(4, 120, 139)
+    process = subprocess.Popen(
+        [
+            "ros2", "run", "racer_sionna_comm",
+            "racer_sionna_communication_proxy", "--ros-args",
+            "-p", "mode:=ideal", "-p", "drone_count:=2",
+            "-p", "network_topology:=bs_round_robin",
+            "-p", "base_latency_ms:=0.0", "-p", "jitter_ms:=0.0",
+            "-p", "bs_min_turn_ms:=5.0",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=os.environ.copy(),
+        start_new_session=True,
+    )
+    rclpy.init()
+    node = Node("racer_sionna_recovery_control_test")
+    qos = QoSProfile(depth=100, reliability=ReliabilityPolicy.RELIABLE)
+    status_received = []
+    command_received = []
+    node.create_subscription(
+        RecoveryStatus,
+        "/racer_ap_recovery/status_uplink",
+        lambda message: status_received.append(
+            (message.drone_id, message.episode_id)
+        ),
+        qos,
+    )
+    node.create_subscription(
+        RecoveryCommand,
+        "/racer_sionna/rx/drone_0/recovery_command",
+        lambda message: command_received.append(
+            (message.drone_id, message.partner_id)
+        ),
+        qos,
+    )
+    status_publisher = node.create_publisher(
+        RecoveryStatus,
+        "/racer_sionna/tx/drone_0/recovery_status",
+        qos,
+    )
+    command_publisher = node.create_publisher(
+        RecoveryCommand,
+        "/racer_ap_recovery/command_downlink",
+        qos,
+    )
+    try:
+        deadline = time.monotonic() + 10.0
+        while (
+            status_publisher.get_subscription_count() < 1
+            or command_publisher.get_subscription_count() < 1
+        ) and time.monotonic() < deadline:
+            rclpy.spin_once(node, timeout_sec=0.05)
+        assert status_publisher.get_subscription_count() == 1
+        assert command_publisher.get_subscription_count() == 1
+
+        status = RecoveryStatus()
+        status.drone_id = 1
+        status.episode_id = 9
+        status.phase = RecoveryStatus.PHASE_WAITING_FOR_AP
+        status.request_repartition = True
+        status_publisher.publish(status)
+
+        command = RecoveryCommand()
+        command.drone_id = 1
+        command.episode_id = 9
+        command.assignment_epoch = 3
+        command.action = RecoveryCommand.ACTION_REALLOCATE
+        command.partner_id = 2
+        command_publisher.publish(command)
+
+        deadline = time.monotonic() + 8.0
+        while (
+            not status_received or not command_received
+        ) and time.monotonic() < deadline:
+            rclpy.spin_once(node, timeout_sec=0.02)
+        assert status_received == [(1, 9)]
+        assert command_received == [(1, 2)]
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+        os.killpg(process.pid, signal.SIGINT)
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=5)

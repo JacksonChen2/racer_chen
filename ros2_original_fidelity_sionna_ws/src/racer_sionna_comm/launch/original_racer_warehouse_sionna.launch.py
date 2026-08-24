@@ -30,17 +30,33 @@ def _shared_remappings(zero_id):
 def _launch_nodes(context):
     drone_count = int(LaunchConfiguration("drone_count").perform(context))
     scenario = LaunchConfiguration("scenario").perform(context)
-    if scenario not in ("warehouse_simple", "warehouse_loaded", "warehouse_loaded_center"):
+    if scenario not in (
+        "warehouse_simple", "warehouse_loaded", "warehouse_loaded_center",
+        "warehouse_loaded_full", "warehouse_full",
+    ):
         raise RuntimeError(f"unsupported warehouse scenario: {scenario}")
     communication_mode = LaunchConfiguration("communication_mode").perform(context)
     network_topology = LaunchConfiguration("network_topology").perform(context)
     if network_topology not in (
-        "distributed", "ap_assisted", "bs_round_robin"
+        "distributed", "nearest_neighbors", "distance_radius", "ap_assisted",
+        "bs_round_robin",
     ):
         raise RuntimeError(
-            "network_topology must be distributed, ap_assisted, or "
-            "bs_round_robin"
+            "network_topology must be distributed, nearest_neighbors, "
+            "distance_radius, ap_assisted, or bs_round_robin"
         )
+    nearest_neighbor_count = int(
+        LaunchConfiguration("nearest_neighbor_count").perform(context)
+    )
+    lossless_nearest_neighbor_count = int(
+        LaunchConfiguration("lossless_nearest_neighbor_count").perform(context)
+    )
+    communication_range_m = float(
+        LaunchConfiguration("communication_range_m").perform(context)
+    )
+    ideal_coalesce_window_ms = float(
+        LaunchConfiguration("ideal_coalesce_window_ms").perform(context)
+    )
     require_sionna = LaunchConfiguration("require_sionna").perform(context).lower() in (
         "1", "true", "yes", "on"
     )
@@ -52,8 +68,10 @@ def _launch_nodes(context):
         / "original_warehouse_simple.yaml"
     )
     scenario_parameters = {}
-    ap_position = [-0.5, 2.85, 8.10]
-    if scenario in ("warehouse_loaded", "warehouse_loaded_center"):
+    ap_position = [0.0, 3.0, 8.10]
+    if scenario in (
+        "warehouse_loaded", "warehouse_loaded_center", "warehouse_loaded_full"
+    ):
         # Coordinate/storage adaptation only; all upstream RACER planning
         # modules continue to consume the same parameters and code paths.
         scenario_parameters = {
@@ -68,9 +86,59 @@ def _launch_nodes(context):
             "sdf_map.box_max_y": 26.2,
             "sdf_map.box_max_z": 8.4,
         }
-        # Centre of the loaded RACER flight volume, mounted with the same
-        # enclosure/phase-centre offset as the Warehouse Simple BS.
-        ap_position = [-10.5, 16.7, 8.10]
+        # Sionna radio-map optimum across the complete factory footprint and
+        # the loaded RACER rack zone.  The enclosure hangs from z=9.0 m and
+        # retains the same 0.45 m mounting-to-phase-centre offset.
+        ap_position = [-13.5, 16.0, 8.55]
+    if scenario == "warehouse_loaded_full":
+        # Expand both the storage volume and coverage box to the complete
+        # enclosed factory.  The original rack-zone profile remains unchanged.
+        scenario_parameters = {
+            "sdf_map.map_size_x": 56.2,
+            "sdf_map.map_size_y": 64.0,
+            "sdf_map.map_size_z": 9.0,
+            "sdf_map.virtual_ceil_height": 8.4,
+            "sdf_map.box_min_x": -27.0,
+            "sdf_map.box_min_y": -23.0,
+            "sdf_map.box_min_z": 0.4,
+            "sdf_map.box_max_x": 6.0,
+            "sdf_map.box_max_y": 30.0,
+            "sdf_map.box_max_z": 8.4,
+        }
+    if scenario == "warehouse_full":
+        scenario_parameters = {
+            "sdf_map.map_size_x": 56.2,
+            "sdf_map.map_size_y": 54.0,
+            "sdf_map.map_size_z": 9.0,
+            "sdf_map.virtual_ceil_height": 8.4,
+            "sdf_map.box_min_x": -27.0,
+            "sdf_map.box_min_y": 0.6,
+            "sdf_map.box_min_z": 0.4,
+            "sdf_map.box_max_x": 6.0,
+            "sdf_map.box_max_y": 30.6,
+            "sdf_map.box_max_z": 8.4,
+        }
+        ap_position = [-10.02891489217081, 14.888611215255622, 7.55]
+
+    ap_overrides = [
+        LaunchConfiguration(name).perform(context)
+        for name in ("ap_position_x", "ap_position_y", "ap_position_z")
+    ]
+    if any(ap_overrides):
+        if not all(ap_overrides):
+            raise RuntimeError("all three ap_position overrides must be supplied")
+        ap_position = [float(value) for value in ap_overrides]
+    ap_tx_power_dbm = float(
+        LaunchConfiguration("ap_tx_power_dbm").perform(context)
+    )
+    uav_tx_power_dbm = float(
+        LaunchConfiguration("uav_tx_power_dbm").perform(context)
+    )
+    bs_max_retries = int(
+        LaunchConfiguration("bs_max_retries").perform(context)
+    )
+    max_retries = int(LaunchConfiguration("max_retries").perform(context))
+    random_seed = int(LaunchConfiguration("random_seed").perform(context))
     lkh_executable = str(
         Path(get_package_prefix("racer_original_core"))
         / "lib"
@@ -90,6 +158,8 @@ def _launch_nodes(context):
                 "exploration.vis_drone_id": 1,
                 "exploration.tsp_dir": str(lkh_dir),
                 "exploration.mtsp_dir": str(lkh_dir),
+                "exploration.random_seed": random_seed,
+                "topo_prm.random_seed": random_seed,
                 "traj_server.drone_id": drone_id,
                 "traj_server.drone_num": drone_count,
             },
@@ -216,6 +286,15 @@ def _launch_nodes(context):
                     "drone_count": drone_count,
                     "mode": communication_mode,
                     "network_topology": network_topology,
+                    "nearest_neighbor_count": nearest_neighbor_count,
+                    "lossless_nearest_neighbor_count": lossless_nearest_neighbor_count,
+                    "communication_range_m": communication_range_m,
+                    "ideal_coalesce_window_ms": ideal_coalesce_window_ms,
+                    "ap_tx_power_dbm": ap_tx_power_dbm,
+                    "tx_power_dbm": uav_tx_power_dbm,
+                    "max_retries": max_retries,
+                    "bs_max_retries": bs_max_retries,
+                    "random_seed": random_seed,
                 },
             ],
         )
@@ -234,6 +313,9 @@ def _launch_nodes(context):
                         "drone_count": drone_count,
                         "network_topology": network_topology,
                         "ap_position": ap_position,
+                        "ap_tx_power_dbm": ap_tx_power_dbm,
+                        "tx_power_dbm": uav_tx_power_dbm,
+                        "random_seed": random_seed,
                         "scene_xml": LaunchConfiguration("sionna_scene_xml").perform(context),
                         "radio_map_cache": LaunchConfiguration("radio_map_cache").perform(context),
                         "require_sionna": require_sionna,
@@ -251,9 +333,23 @@ def generate_launch_description():
             DeclareLaunchArgument("scenario", default_value="warehouse_simple"),
             DeclareLaunchArgument("communication_mode", default_value="sionna"),
             DeclareLaunchArgument("network_topology", default_value="distributed"),
+            DeclareLaunchArgument("nearest_neighbor_count", default_value="0"),
+            DeclareLaunchArgument(
+                "lossless_nearest_neighbor_count", default_value="0"
+            ),
+            DeclareLaunchArgument("communication_range_m", default_value="4.0"),
+            DeclareLaunchArgument("ideal_coalesce_window_ms", default_value="20.0"),
             DeclareLaunchArgument("require_sionna", default_value="true"),
             DeclareLaunchArgument("sionna_scene_xml", default_value=""),
             DeclareLaunchArgument("radio_map_cache", default_value=""),
+            DeclareLaunchArgument("ap_position_x", default_value=""),
+            DeclareLaunchArgument("ap_position_y", default_value=""),
+            DeclareLaunchArgument("ap_position_z", default_value=""),
+            DeclareLaunchArgument("ap_tx_power_dbm", default_value="33.0"),
+            DeclareLaunchArgument("uav_tx_power_dbm", default_value="23.0"),
+            DeclareLaunchArgument("max_retries", default_value="3"),
+            DeclareLaunchArgument("bs_max_retries", default_value="3"),
+            DeclareLaunchArgument("random_seed", default_value="42"),
             DeclareLaunchArgument(
                 "lkh_dir", default_value="/tmp/racer_original_fidelity_lkh"
             ),

@@ -92,6 +92,9 @@
     exploration.ydd: 1.5707963
     exploration.w_dir: 1.5
     exploration.init_plan_num: 2
+    exploration.random_seed: 42
+
+    topo_prm.random_seed: 42
 
     frontier.cluster_min: 100
     frontier.cluster_size_xy: 2.0

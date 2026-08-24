@@ -1,0 +1,74 @@
+{
+  "suite": "warehouse_full_10uav_two_wall_batches_five_way",
+  "scene": "warehouse_full_with_industrial_ap",
+  "drone_count": 10,
+  "duration_s": 1200,
+  "physics_rate_hz": 50,
+  "sensor_rate_hz": 10,
+  "camera_ray_budget": 19200,
+  "sensor_worker_count": 8,
+  "scene_query_rate_hz": 20,
+  "scene_query_safety_margin_m": 0.12,
+  "random_seed": 42,
+  "layout": {
+    "name": "two_five_uav_batches_near_opposite_y_walls",
+    "description": "Five UAVs near the middle of the upper wall and five near the middle of the lower wall",
+    "upper_batch_drone_ids": [1, 2, 3, 4, 5],
+    "lower_batch_drone_ids": [6, 7, 8, 9, 10],
+    "upper_batch_center_x_m": -9.76,
+    "lower_batch_center_x_m": -10.5,
+    "upper_y_m": 23.4,
+    "lower_y_m": 1.3,
+    "minimum_pairwise_start_distance_m": 1.3892443989449805,
+    "start_positions": [
+      [-12.9, 23.4, 0.8],
+      [-11.7, 23.4, 1.5],
+      [-9.3, 23.4, 2.2],
+      [-8.1, 23.4, 1.15],
+      [-6.8, 23.4, 1.85],
+      [-12.9, 1.3, 0.8],
+      [-11.7, 1.3, 1.5],
+      [-10.5, 1.3, 2.2],
+      [-9.3, 1.3, 1.15],
+      [-8.1, 1.3, 1.85]
+    ]
+  },
+  "communication_invariants": {
+    "network_topology": "distributed except blackout transport gate",
+    "uav_max_retries": 0,
+    "bs_max_retries": 0,
+    "original_racer_application_communication_unchanged": true,
+    "non_lossless_nearest_links_use_sionna": true
+  },
+  "cases_in_order": [
+    {
+      "case": "ideal_no_loss_original_broadcast",
+      "communication_mode": "ideal",
+      "network_topology": "distributed"
+    },
+    {
+      "case": "sionna_distributed_original_comm_no_retries",
+      "communication_mode": "sionna",
+      "network_topology": "distributed",
+      "lossless_nearest_neighbor_count": 0
+    },
+    {
+      "case": "sionna_with_nearest_2_lossless",
+      "communication_mode": "sionna",
+      "network_topology": "distributed",
+      "lossless_nearest_neighbor_count": 2
+    },
+    {
+      "case": "sionna_with_nearest_4_lossless",
+      "communication_mode": "sionna",
+      "network_topology": "distributed",
+      "lossless_nearest_neighbor_count": 4
+    },
+    {
+      "case": "no_uav_communication",
+      "communication_mode": "ideal",
+      "network_topology": "distance_radius",
+      "communication_range_m": 1e-12
+    }
+  ]
+}

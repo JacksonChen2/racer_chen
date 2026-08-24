@@ -1,0 +1,69 @@
+{
+  "camera_ray_budget": 19200,
+  "cases": [
+    {
+      "case": "ideal_no_loss_original_broadcast",
+      "communication_mode": "ideal",
+      "ideal_coalesce_window_ms": 20,
+      "network_topology": "distributed",
+      "ros_domain_id": 41,
+      "runs_sionna": false
+    },
+    {
+      "case": "sionna_distributed_original_comm_no_link_retries",
+      "communication_mode": "sionna",
+      "network_topology": "distributed",
+      "proxy_bs_max_retries": 0,
+      "proxy_uav_max_retries": 0,
+      "ros_domain_id": 42,
+      "runs_sionna": true
+    }
+  ],
+  "drone_count": 10,
+  "duration_s": 1200,
+  "isaac_scene_sha256": "4117e0aff0f130bee626d58eeaafcfaae954da7ea3ecf7f8fbb2de1869d6b382",
+  "layout": {
+    "adaptation": "translated to the collision-free central aisle and expanded to a 1.2 m minimum start separation",
+    "center_xy_m": [-7.8, 15.68],
+    "name": "original_RACER_3x3_plus_centerline_tenth",
+    "source_pattern_xy": [
+      [0, 0],
+      [0, -1],
+      [1, -1],
+      [1, 0],
+      [1, 1],
+      [0, 1],
+      [-1, 1],
+      [-1, 0],
+      [-1, -1],
+      [0, -5]
+    ]
+  },
+  "original_racer_application_communication": {
+    "chunk_repair_via_periodic_stamp_exchange": true,
+    "drone_state_period_s": 0.04,
+    "pair_opt_repeat_send_num": 10,
+    "trajectory_broadcast_period_s": 0.1
+  },
+  "physics_rate_hz": 50,
+  "random_seed": 42,
+  "scene": "warehouse_full_with_industrial_ap_updated_20260823",
+  "scene_query_rate_hz": 20,
+  "scene_query_safety_margin_m": 0.12,
+  "sensor_rate_hz": 10,
+  "sensor_worker_count": 8,
+  "sionna_geometry_mode": "oriented_bbox_proxy",
+  "sionna_scene_sha256": "b8837c2124d49cd34cce025eebdbf6d22e8196ed609a3d28205f9d1b4c6ee168",
+  "start_positions": [
+    [-7.8, 16.2, 0.8],
+    [-7.8, 15.0, 1.5],
+    [-6.6, 15.0, 2.2],
+    [-6.6, 16.2, 1.15],
+    [-6.6, 17.4, 1.85],
+    [-7.8, 17.4, 0.8],
+    [-9.0, 17.4, 1.5],
+    [-9.0, 16.2, 2.2],
+    [-9.0, 15.0, 1.15],
+    [-7.8, 11.0, 1.85]
+  ]
+}

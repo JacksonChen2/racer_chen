@@ -62,6 +62,7 @@ void FastExplorationManager::initialize(ros::NodeHandle& nh) {
   nh.param("exploration/relax_time", ep_->relax_time_, 1.0);
   nh.param("exploration/drone_num", ep_->drone_num_, 1);
   nh.param("exploration/drone_id", ep_->drone_id_, 1);
+  nh.param("exploration/random_seed", ep_->random_seed_, 42);
   nh.param("exploration/init_plan_num", ep_->init_plan_num_, 2);
 
   ed_->swarm_state_.resize(ep_->drone_num_);
@@ -512,6 +513,7 @@ void FastExplorationManager::findGlobalTour(const Vector3d& cur_pos, const Vecto
   ofstream par_file(ep_->tsp_dir_ + "/drone_" + to_string(ep_->drone_id_) + ".par");
   par_file << "PROBLEM_FILE = " << ep_->tsp_dir_ + "/drone_" + to_string(ep_->drone_id_) + ".tsp\n";
   par_file << "GAIN23 = NO\n";
+  par_file << "SEED = " << ep_->random_seed_ << "\n";
   par_file << "OUTPUT_TOUR_FILE ="
            << ep_->tsp_dir_ + "/drone_" + to_string(ep_->drone_id_) + ".tou"
                                                                       "r\n";
@@ -774,7 +776,7 @@ void FastExplorationManager::allocateGrids(const vector<Eigen::Vector3d>& positi
     file << "TRACE_LEVEL = 0\n";
   } else if (prob_type == 2) {
     file << "TRACE_LEVEL = 1\n";  // ACVRP
-    file << "SEED = 0\n";         // ACVRP
+    file << "SEED = " << ep_->random_seed_ << "\n";  // ACVRP
   }
   file << "RUNS = 1\n";
   file << "TOUR_FILE = " + ep_->mtsp_dir_ + "/amtsp3_" + to_string(ep_->drone_id_) + ".tour\n";
@@ -939,6 +941,7 @@ bool FastExplorationManager::findGlobalTourOfGrid(const vector<Eigen::Vector3d>&
   file << "PROBLEM_FILE = " + ep_->mtsp_dir_ + "/amtsp2_" + to_string(ep_->drone_id_) + ".atsp\n";
   file << "SALESMEN = " << to_string(drone_num) << "\n";
   file << "MTSP_OBJECTIVE = MINSUM\n";
+  file << "SEED = " << ep_->random_seed_ << "\n";
   // file << "MTSP_MIN_SIZE = " << to_string(min(int(ed_->frontiers_.size()) / drone_num, 4)) <<
   // "\n"; file << "MTSP_MAX_SIZE = "
   //      << to_string(max(1, int(ed_->frontiers_.size()) / max(1, drone_num - 1))) << "\n";
@@ -1076,6 +1079,7 @@ void FastExplorationManager::findTourOfFrontier(const Vector3d& cur_pos, const V
   file << "PROBLEM_FILE = " + ep_->mtsp_dir_ + "/amtsp_" + to_string(ep_->drone_id_) + ".atsp\n";
   file << "SALESMEN = " << to_string(drone_num) << "\n";
   file << "MTSP_OBJECTIVE = MINSUM\n";
+  file << "SEED = " << ep_->random_seed_ << "\n";
   file << "MTSP_MIN_SIZE = " << to_string(min(int(ed_->frontiers_.size()) / drone_num, 4)) << "\n";
   file << "MTSP_MAX_SIZE = "
        << to_string(max(1, int(ed_->frontiers_.size()) / max(1, drone_num - 1))) << "\n";

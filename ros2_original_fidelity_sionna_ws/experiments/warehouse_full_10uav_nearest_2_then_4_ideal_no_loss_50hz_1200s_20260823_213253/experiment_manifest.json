@@ -1,0 +1,42 @@
+{
+  "description": "Queued 10-UAV directional nearest-neighbor and no-UAV-communication experiments",
+  "depends_on_suite": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/ros2_original_fidelity_sionna_ws/experiments/warehouse_full_10uav_center_racer_layout_ideal_vs_sionna_no_retries_50hz_1200s_20260823_203213",
+  "execution_policy": "strictly serial; stop only on dependency or experiment-integrity failure, while preserving each scientific acceptance result",
+  "dependency_resume_policy": "User authorized continuation on 2026-08-24 after both dependency simulations reached 1200 seconds with zero collisions; scientific acceptance failures and the ideal postprocessing-only failure are preserved but do not block this suite",
+  "scene": "warehouse_full_with_industrial_ap.usda",
+  "drone_count": 10,
+  "duration_s": 1200,
+  "physics_rate_hz": 50,
+  "sensor_rate_hz": 10,
+  "sensor_worker_count": 8,
+  "scene_query_rate_hz": 20,
+  "camera_ray_budget": 19200,
+  "random_seed": 42,
+  "cases": [
+    {
+      "case": "sionna_with_nearest_2_lossless",
+      "communication_mode": "sionna",
+      "network_topology": "distributed",
+      "lossless_nearest_neighbor_count": 2,
+      "semantics": "Original RACER broadcasts are unchanged; each sender's two nearest directed receiver links bypass loss while every other receiver link uses Sionna propagation, packet error, and retry processing",
+      "ros_domain_id": 43
+    },
+    {
+      "case": "sionna_with_nearest_4_lossless",
+      "communication_mode": "sionna",
+      "network_topology": "distributed",
+      "lossless_nearest_neighbor_count": 4,
+      "semantics": "Original RACER broadcasts are unchanged; each sender's four nearest directed receiver links bypass loss while every other receiver link uses Sionna propagation, packet error, and retry processing",
+      "ros_domain_id": 44
+    },
+    {
+      "case": "no_uav_communication",
+      "communication_mode": "ideal",
+      "network_topology": "distance_radius",
+      "communication_range_m": 1e-12,
+      "expected_delivered_packets": 0,
+      "semantics": "Effective zero-range communication blackout; post-run validation requires zero attempted and zero delivered inter-UAV packets",
+      "ros_domain_id": 45
+    }
+  ]
+}

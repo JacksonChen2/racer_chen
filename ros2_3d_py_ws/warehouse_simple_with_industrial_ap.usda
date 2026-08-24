@@ -1,5 +1,31 @@
 #usda 1.0
 (
+    customLayerData = {
+        dictionary cameraSettings = {
+            dictionary Front = {
+                double3 position = (5, 0, 0)
+                double radius = 5
+            }
+            dictionary Perspective = {
+                double3 position = (-6.223204174576194, -0.4692024542029608, 7.331128760054023)
+                double3 target = (2.287033229641432, 12.257613506434852, 6.303459815451429)
+            }
+            dictionary Right = {
+                double3 position = (0, -5, 0)
+                double radius = 5
+            }
+            dictionary Top = {
+                double3 position = (0, 0, 5)
+                double radius = 5
+            }
+            string boundCamera = "/OmniverseKit_Persp"
+        }
+        dictionary omni_layer = {
+            string authoring_layer = "./warehouse_simple_with_industrial_ap.usda"
+        }
+        dictionary renderSettings = {
+        }
+    }
     defaultPrim = "World"
     metersPerUnit = 1
     subLayers = [
@@ -15,8 +41,104 @@ over "World"
     )
     {
         custom string experiment:role = "visible_and_rf_access_point"
-        custom double3 radio:phaseCenter = (-0.5, 2.85, 8.10)
-        double3 xformOp:translate = (-0.5, 2.85, 8.55)
+        custom double3 radio:phaseCenter = (0, 3, 8.1)
+        double3 xformOp:translate = (0, 3, 8.55)
         uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        over "MetalRadioObstacleProxy" (
+            active = false
+        )
+        {
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            double3 xformOp:translate = (0, 0, -1)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+    }
+
+    over "warehouse_multiple_shelves"
+    {
+        over "GroundPlane"
+        {
+            over "CollisionMesh"
+            {
+                token visibility = "invisible"
+            }
+        }
+
+        over "SM_LampCeilingA_24"
+        {
+            over "SM_LampCeilingA_04"
+            {
+                over "Section0"
+                {
+                    quatf xformOp:orient = (1, 0, 0, 0)
+                    float3 xformOp:scale = (0.01, 0.01, 0.01)
+                    double3 xformOp:translate = (0, 0, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+            }
+        }
+
+        over "SM_PillarPartA_9M9_1472"
+        {
+            over "SM_PillarPartA_9M"
+            {
+                over "Section0"
+                {
+                    quatf xformOp:orient = (1, 0, 0, 0)
+                    float3 xformOp:scale = (0.01, 0.01, 0.01)
+                    double3 xformOp:translate = (0, 0, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                over "Section1"
+                {
+                    quatf xformOp:orient = (1, 0, 0, 0)
+                    float3 xformOp:scale = (0.01, 0.01, 0.01)
+                    double3 xformOp:translate = (0, 0, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+            }
+        }
+
+        over "SM_WallA_3M27"
+        {
+            over "SM_WallB_6M"
+            {
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (0.01, 0.01, 0.01)
+                double3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+        }
+
+        over "SM_WallA_3M28"
+        {
+            over "SM_WallB_6M"
+            {
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (0.01, 0.01, 0.01)
+                double3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+        }
+    }
+}
+
+over "Render"
+{
+    over "OmniverseKit"
+    {
+        over "HydraTextures"
+        {
+            over "omni_kit_widget_viewport_ViewportTexture_0"
+            {
+                rel camera = </OmniverseKit_Persp>
+                rel orderedVars = </Render/Vars/LdrColor>
+                custom bool overrideClipRange = 0
+                uniform int2 resolution = (1280, 720)
+            }
+        }
     }
 }

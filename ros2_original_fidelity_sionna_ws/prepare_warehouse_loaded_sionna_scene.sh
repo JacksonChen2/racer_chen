@@ -3,7 +3,7 @@ set -euo pipefail
 
 workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(realpath "${workspace_dir}/..")"
-isaac_root="${ISAAC_SIM_ROOT:-/home/jackson/isaacsim}"
+isaac_root="${ISAAC_SIM_ROOT:-/home/jiazheng/software/isaacsim}"
 scene_usd="${RACER_SCENE_USD:-${repo_root}/ros2_3d_py_ws/warehouse_loaded_with_industrial_ap.usda}"
 output_dir="${RACER_SIONNA_SCENE_OUTPUT_DIR:-${workspace_dir}/src/racer_sionna_comm/assets/warehouse_loaded_sionna}"
 
