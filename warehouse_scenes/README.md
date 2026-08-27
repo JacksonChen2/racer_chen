@@ -41,6 +41,10 @@
   `isaac/warehouse_loaded_full_with_industrial_ap.usda`
 - Warehouse Full（天花板中心 BS）：
   `isaac/warehouse_full_with_industrial_ap.usda`
+- Warehouse Full 3（强货架遮挡）：`isaac/warehouse_full3.usd`。该组合层在 7 排
+  原货架内部加入 `8.25 m` 高的连续金属密集货物，专门降低 20 dBm UAV 跨货架
+  链路质量；货架间通道和货架两端绕行空间保持开放。为使通信仿真采用同一几何，
+  生成 Sionna 场景或 radio map 时应以此 USD 重新烘焙，不能复用旧缓存。
 
 带 BS 的两份 USDA 使用相对引用；不要只复制单个文件，应同时保留当前
 `isaac/` 与 `isaac_assets/` 的目录层级。
