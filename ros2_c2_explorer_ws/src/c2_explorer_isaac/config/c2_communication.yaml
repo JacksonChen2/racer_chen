@@ -1,0 +1,47 @@
+c2_communication_proxy:
+  ros__parameters:
+    mode: ideal
+    bandwidth_hz: 100000000.0
+    subcarrier_spacing_hz: 120000.0
+    resource_blocks: 66
+    data_re_efficiency: 0.82
+    target_initial_tbler: 0.10
+    tbler_slope_db: 1.35
+    transport_block_bytes: 1200
+    base_latency_ms: 0.5
+    jitter_ms: 0.1
+    queue_capacity_bytes: 16777216
+    max_retries: 0
+    retry_backoff_ms: 0.125
+    random_seed: 42
+
+racer_sionna_channel:
+  ros__parameters:
+    require_sionna: true
+    allow_analytic_fallback: false
+    carrier_frequency_hz: 28000000000.0
+    bandwidth_hz: 100000000.0
+    tx_power_dbm: 23.0
+    uav_antenna_gain_dbi: 0.0
+    ap_tx_power_dbm: 33.0
+    ap_antenna_gain_dbi: 0.0
+    uav_array_rows: 4
+    uav_array_cols: 4
+    ap_array_rows: 8
+    ap_array_cols: 8
+    directional_beamforming: true
+    small_scale_fading: none
+    network_topology: distributed
+    receiver_noise_figure_db: 7.0
+    temperature_k: 290.0
+    solver_rate_hz: 0.5
+    publish_rate_hz: 10.0
+    link_validity_s: 0.5
+    max_exact_age_s: 5.0
+    recompute_distance_m: 0.4
+    max_depth: 2
+    samples_per_source: 100000
+    diffuse_reflection: false
+    refraction: true
+    random_seed: 42
+    fallback_path_loss_exponent: 2.2

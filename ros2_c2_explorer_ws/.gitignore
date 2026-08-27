@@ -1,0 +1,10 @@
+/build/
+/install/
+/log/
+/validation/
+/experiments/
+/.sionna_runtime/
+/third_party/nlopt-build/
+/third_party/install/
+__pycache__/
+*.pyc
