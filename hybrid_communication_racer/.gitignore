@@ -1,0 +1,9 @@
+build/
+install/
+log/
+experiments/
+.sionna_runtime/
+third_party/install/
+**/__pycache__/
+**/.pytest_cache/
+*.pyc

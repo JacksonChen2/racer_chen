@@ -1,0 +1,10 @@
+int32 drone_id
+int32[] grid_ids
+uint64 assignment_epoch
+float64 commitment_until
+bool requesting_work
+float64 recent_attempt_time
+float64 stamp
+float32[] pos
+float32[] vel
+float32 yaw
