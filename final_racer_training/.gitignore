@@ -1,0 +1,9 @@
+agentic_crpo/*.egg-info/
+agentic_crpo/**/__pycache__/
+agentic_crpo/.pytest_cache/
+results/*
+!results/.gitkeep
+training_overlay_ws/build/
+training_overlay_ws/install/
+training_overlay_ws/log/
+validation/

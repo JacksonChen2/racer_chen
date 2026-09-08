@@ -1,0 +1,125 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+# Dense, nearly ceiling-height metal cargo used to turn every rack row into a
+# strong RF shadowing obstacle.  The rack aisles themselves remain open.
+class Xform "_RFBlockingRackPrototype"
+{
+    def Mesh "MetalDenseCargoRFBarrier" (
+        prepend apiSchemas = ["MaterialBindingAPI", "PhysicsCollisionAPI", "PhysicsMeshCollisionAPI", "PhysxCollisionAPI"]
+    )
+    {
+        uniform bool doubleSided = 1
+        float3[] extent = [(-0.55, -7.9, 0.15), (0.55, 7.9, 8.25)]
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 3, 2, 1, 4, 5, 6, 7, 0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 3, 0, 4, 7]
+        point3f[] points = [
+            (-0.55, -7.9, 0.15),
+            (0.55, -7.9, 0.15),
+            (0.55, 7.9, 0.15),
+            (-0.55, 7.9, 0.15),
+            (-0.55, -7.9, 8.25),
+            (0.55, -7.9, 8.25),
+            (0.55, 7.9, 8.25),
+            (-0.55, 7.9, 8.25)
+        ]
+        uniform token orientation = "rightHanded"
+        rel material:binding = </World/Looks/RFBlockingRackMetal>
+        uniform token physics:approximation = "convexHull"
+        bool physics:collisionEnabled = 1
+    }
+}
+
+def Xform "World"
+{
+    def Scope "Looks"
+    {
+        def Material "RFBlockingRackMetal"
+        {
+            token outputs:surface.connect = </World/Looks/RFBlockingRackMetal/PBR.outputs:surface>
+
+            def Shader "PBR"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.12, 0.15, 0.18)
+                float inputs:metallic = 0.95
+                float inputs:roughness = 0.28
+                token outputs:surface
+            }
+        }
+    }
+
+    def Xform "RFBlockingCargoRackRows" (
+        customData = {
+            string designIntent = "Dense metal-loaded rack rows for poor cross-rack UAV links at 20 dBm"
+            string rfMaterial = "metal"
+        }
+    )
+    {
+        def Xform "RackRow_01" (
+            instanceable = true
+            prepend references = </_RFBlockingRackPrototype>
+        )
+        {
+            double3 xformOp:translate = (-25.32, 16.9, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Xform "RackRow_02" (
+            instanceable = true
+            prepend references = </_RFBlockingRackPrototype>
+        )
+        {
+            double3 xformOp:translate = (-20.3663, 16.9, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Xform "RackRow_03" (
+            instanceable = true
+            prepend references = </_RFBlockingRackPrototype>
+        )
+        {
+            double3 xformOp:translate = (-15.413, 16.9, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Xform "RackRow_04" (
+            instanceable = true
+            prepend references = </_RFBlockingRackPrototype>
+        )
+        {
+            double3 xformOp:translate = (-10.46, 16.9, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Xform "RackRow_05" (
+            instanceable = true
+            prepend references = </_RFBlockingRackPrototype>
+        )
+        {
+            double3 xformOp:translate = (-5.5, 16.85, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Xform "RackRow_06" (
+            instanceable = true
+            prepend references = </_RFBlockingRackPrototype>
+        )
+        {
+            double3 xformOp:translate = (-0.55, 16.9, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Xform "RackRow_07" (
+            instanceable = true
+            prepend references = </_RFBlockingRackPrototype>
+        )
+        {
+            double3 xformOp:translate = (4.4137, 16.9, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+    }
+}

@@ -1,0 +1,16 @@
+# Experiment output and packaged reference runs
+results/
+reference_result/
+
+# Generated package inventory
+SHA256SUMS
+
+# Compiled artifacts bundled in upstream workspaces
+*.so
+*.a
+*.o
+bin/
+*.cfgc
+
+# Editor backup files
+*~

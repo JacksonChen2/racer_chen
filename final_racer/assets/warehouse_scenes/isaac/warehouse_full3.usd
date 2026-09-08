@@ -1,0 +1,14 @@
+#usda 1.0
+(
+    customLayerData = {
+        string description = "Warehouse Full 3 with dense metal-loaded RF-blocking rack rows"
+    }
+    defaultPrim = "World"
+    metersPerUnit = 1
+    subLayers = [
+        @warehouse_full3_rf_blocking_racks.usda@,
+        @warehouse_full.usd@
+    ]
+    timeCodesPerSecond = 60
+    upAxis = "Z"
+)

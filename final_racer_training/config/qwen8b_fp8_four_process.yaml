@@ -1,0 +1,115 @@
+algorithm:
+  variant: final_racer_qwen8b_fp8_crpo_four_process_shared_memory
+
+seed: 42
+n_uavs: 10
+
+qwen:
+  enabled: true
+  model_path: /home/jiazheng/ai_models/Qwen3-8B-FP8
+  backend: vllm
+  device: auto
+  dtype: bfloat16
+  local_files_only: true
+  max_new_tokens: 1024
+  normalize_omega: true
+  dequantize_fp8: false
+  async_llm: false  # one synchronous inference at a time in the LLM process
+  load_in_8bit: false
+  load_in_4bit: false
+  prompt_variant: compact_nonzero_schema
+  vllm:
+    quantization: fp8
+    linear_backend: cutlass
+    gpu_memory_utilization: 0.25
+    max_model_len: 8192
+    max_num_seqs: 1
+    enforce_eager: false
+    enable_prefix_caching: false
+    disable_deep_gemm: true
+    disable_flashinfer_sampler: true
+    seed: 42
+  single_gpu_pause:
+    enabled: false  # four-process mode never pauses Isaac for Qwen
+    request_path: /tmp/final_racer_training_qwen8b_fp8/pause_request.json
+    acknowledgement_path: /tmp/final_racer_training_qwen8b_fp8/pause_ack.json
+    timeout_s: 600.0
+    poll_interval_s: 0.01
+
+environment:
+  include_global_guidance: true
+  high_level_interval: 250
+  channel_history: 50
+  bs_resource_normalizer: 1650.0
+  backend:
+    kind: shared_memory
+    # Supplied per episode through RACER_SHARED_MEMORY_ROOT by the supervisor.
+    shared_memory_root: null
+    perfect_reference_result: /home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/final_racer/reference_result/formal_300s/warehouse_full_distributed_result.json
+    require_perfect_reference: true
+    redundancy_cell_m: 1.0
+    fixed_exploration_time_s: 300.0
+    require_auxiliary_reference_metrics: true
+    horizon: 128
+    mock_direct_u2u_resource: 11.0
+  normalization:
+    position_min: [-27.0, 0.6, 0.4]
+    position_max: [6.0, 30.6, 8.4]
+    snr_min_db: -20.0
+    snr_max_db: 40.0
+    max_aoi_s: 30.0
+    max_missing_bytes: 4000000.0
+    max_queue_bytes: 4000000.0
+
+reward:
+  type: negative_bs_resource
+  scale: 1.0
+
+task_loss:
+  alpha_traj: 0.30
+  alpha_cov: 0.30
+  alpha_red: 0.10
+  alpha_map: 0.30
+
+constraint:
+  type: task_loss
+  calibration_mode: manual
+  rho: 0.25
+  gamma_task: 0.25
+  eta: 0.0
+  distributed_only_results: []
+  full_bs_results: []
+  telescoping_tolerance: 1.0e-6
+
+crpo:
+  gamma_reward: 1.0
+  gamma_cost: 1.0
+  gae_lambda_reward: 0.95
+  gae_lambda_cost: 0.95
+  constraint_estimator: episode_return
+  episode_cost_window: 30
+  ppo:
+    learning_rate: 0.0002
+    n_steps: 384
+    batch_size: 64
+    n_epochs: 10
+    activation_fn: silu
+    clip_range: 0.2
+    ent_coef: 0.01
+    reward_vf_coef: 0.5
+    cost_vf_coef: 0.5
+    max_grad_norm: 0.5
+    target_kl: 0.03
+    normalize_advantage: true
+    net_arch:
+      pi: [128]
+      vf: [128]
+
+training:
+  mode: train
+  device: cpu
+  total_timesteps: 100000
+  smoke_timesteps: 64
+  checkpoint_interval: 10000
+  output_dir: ./results/qwen8b_fp8_latest/training
+  verbose: 1
