@@ -98,8 +98,16 @@ def qwen_config_from_mapping(
     """Build one validated model configuration for either process topology."""
 
     vllm = value.get("vllm", {})
+    # Checkpoints are intentionally external to Git.  Both names are accepted
+    # so the same cloned framework can be moved between machines without
+    # editing every experiment YAML.  The generic name wins when both exist.
+    model_path = (
+        os.environ.get("RACER_QWEN_MODEL_PATH", "").strip()
+        or os.environ.get("RACER_QWEN8_MODEL_PATH", "").strip()
+        or str(value["model_path"])
+    )
     return QwenConfig(
-        model_path=str(value["model_path"]),
+        model_path=model_path,
         backend=str(value.get("backend", "transformers")),
         device=str(value.get("device", "auto")),
         dtype=str(value.get("dtype", "bfloat16")),

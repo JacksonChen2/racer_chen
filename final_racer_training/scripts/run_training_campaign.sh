@@ -2,7 +2,7 @@
 set -euo pipefail
 
 training_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-final_root="${RACER_FINAL_RACER_ROOT:-$(realpath "${training_root}/../final_racer")}" 
+final_root="${RACER_FINAL_RACER_ROOT:-$(realpath "${training_root}/../final_racer")}"
 workspace="${final_root}/ros2_ws"
 communication_overlay="${final_root}/sionna_distributed_overlay_ws/install/setup.bash"
 adapter_overlay="${training_root}/training_overlay_ws/install/setup.bash"
@@ -23,7 +23,9 @@ selection="${final_root}/config/warehouse_full_10uav_five_sites_layout.json"
 scene_usd="${final_root}/assets/warehouse_scenes/isaac/warehouse_full_with_industrial_ap.usda"
 sionna_scene_xml="${final_root}/assets/sionna_scene/warehouse.xml"
 sionna_runtime="${final_root}/ros2_ws/.sionna_runtime"
-python_env="/home/jiazheng/ai_envs/racer-crpo/bin/python"
+python_env="${RACER_CRPO_PYTHON:-/home/jiazheng/ai_envs/racer-crpo/bin/python}"
+qwen_model_path="${RACER_QWEN_MODEL_PATH:-${RACER_QWEN8_MODEL_PATH:-/home/jiazheng/ai_models/Qwen3-8B-FP8}}"
+export RACER_QWEN_MODEL_PATH="${qwen_model_path}"
 nvidia_runtime_helper="${training_root}/scripts/configure_nvidia_driver_runtime.sh"
 episodes="${RACER_QWEN8_EPISODES:-30}"
 episode_duration="${RACER_QWEN8_DURATION:-300}"
@@ -119,7 +121,7 @@ if [[ "${require_sionna}" == "true" ]] &&
   exit 2
 fi
 if [[ "${require_qwen_model}" == "true" &&
-      ! -d "/home/jiazheng/ai_models/Qwen3-8B-FP8" ]]; then
+      ! -d "${qwen_model_path}" ]]; then
   printf '%s\n' "blocked:missing_qwen_model" >"${campaign}/run_state.txt"
   exit 2
 fi

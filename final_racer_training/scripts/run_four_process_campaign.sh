@@ -2,7 +2,7 @@
 set -euo pipefail
 
 training_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-final_root="${RACER_FINAL_RACER_ROOT:-$(realpath "${training_root}/../final_racer")}" 
+final_root="${RACER_FINAL_RACER_ROOT:-$(realpath "${training_root}/../final_racer")}"
 python_env="${RACER_CRPO_PYTHON:-/home/jiazheng/ai_envs/racer-crpo/bin/python}"
 config="${RACER_QWEN8_CONFIG:-${training_root}/config/qwen8b_fp8_four_process.yaml}"
 campaign="${RACER_QWEN8_CAMPAIGN:-${training_root}/results/four_process_$(date +%Y%m%d_%H%M%S)}"
@@ -15,6 +15,10 @@ scene_usd="${final_root}/assets/warehouse_scenes/isaac/warehouse_full_with_indus
 sionna_xml="${final_root}/assets/sionna_scene/warehouse.xml"
 gt_path="${RACER_QWEN8_GT_PATH:-${final_root}/data/gt_occupied_voxels.txt}"
 nvidia_runtime_helper="${training_root}/scripts/configure_nvidia_driver_runtime.sh"
+
+if [[ -n "${RACER_QWEN8_MODEL_PATH:-}" ]]; then
+  export RACER_QWEN_MODEL_PATH="${RACER_QWEN8_MODEL_PATH}"
+fi
 
 if ! [[ "${episodes}" =~ ^[1-9][0-9]*$ ]] ||
    ! [[ "${duration}" =~ ^[1-9][0-9]*$ ]]; then

@@ -11,6 +11,7 @@ from agentic_crpo.qwen_global_agent import (
     QwenConfig,
     QwenGlobalAgent,
     parse_guidance,
+    qwen_config_from_mapping,
 )
 from agentic_crpo.config import load_config
 from agentic_crpo.schemas import GlobalGuidance
@@ -106,6 +107,24 @@ def test_latest_qwen8_fp8_config_and_compact_prompt():
         assert forbidden_key not in prompt
     assert "velocities" not in prompt
     assert "headings_cos_sin" not in prompt
+
+
+def test_qwen_model_path_can_be_overridden_for_a_portable_checkout(
+    tmp_path, monkeypatch
+):
+    portable_checkpoint = tmp_path / "Qwen3-8B-FP8"
+    monkeypatch.setenv("RACER_QWEN8_MODEL_PATH", str(portable_checkpoint))
+    config = qwen_config_from_mapping(
+        {"model_path": "/machine-specific/checkpoint"}, seed=42
+    )
+    assert config.model_path == str(portable_checkpoint)
+
+    generic_checkpoint = tmp_path / "generic-Qwen3-8B-FP8"
+    monkeypatch.setenv("RACER_QWEN_MODEL_PATH", str(generic_checkpoint))
+    config = qwen_config_from_mapping(
+        {"model_path": "/machine-specific/checkpoint"}, seed=42
+    )
+    assert config.model_path == str(generic_checkpoint)
 
 
 def test_vllm_fp8_backend_uses_cutlass_and_native_sampler(

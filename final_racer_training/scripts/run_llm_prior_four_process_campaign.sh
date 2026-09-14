@@ -19,6 +19,10 @@ sionna_xml="${final_root}/assets/sionna_scene/warehouse.xml"
 gt_path="${RACER_QWEN8_GT_PATH:-${final_root}/data/gt_occupied_voxels.txt}"
 nvidia_runtime_helper="${training_root}/scripts/configure_nvidia_driver_runtime.sh"
 
+if [[ -n "${RACER_QWEN8_MODEL_PATH:-}" ]]; then
+  export RACER_QWEN_MODEL_PATH="${RACER_QWEN8_MODEL_PATH}"
+fi
+
 if ! [[ "${episodes}" =~ ^[1-9][0-9]*$ ]] ||
    ! [[ "${duration}" =~ ^[1-9][0-9]*$ ]]; then
   printf 'Episode count and duration must be positive integers.\n' >&2

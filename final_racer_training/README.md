@@ -1,6 +1,10 @@
 # final_racer_training
 
 This is the isolated training layer for the frozen `../final_racer` baseline.
+For the end-to-end large-model/small-model algorithm map, implementation-file
+index, one-shot invariants, and portable runtime inputs, see
+[COMPLETE_ALGORITHM_FRAMEWORK.md](COMPLETE_ALGORITHM_FRAMEWORK.md).
+
 The default runtime uses four independent top-level process groups:
 
 1. Isaac Sim (physical simulation and sensors)
