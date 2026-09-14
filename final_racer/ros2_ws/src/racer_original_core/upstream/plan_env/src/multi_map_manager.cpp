@@ -22,6 +22,8 @@ void MultiMapManager::init() {
   node_.param("exploration/vis_drone_id", vis_drone_id_, -1);
   node_.param("exploration/drone_num", map_num_, 2);
   node_.param("multi_map_manager/chunk_size", chunk_size_, 200);
+  node_.param("multi_map_manager/push_chunk_payload_cache",
+      push_chunk_payload_cache_, false);
 
 #ifdef RACER_ORACLE_VARIANT
   node_.param("oracle_shared_map/stamp_period", stamp_period_s_, 0.05);
@@ -43,6 +45,8 @@ void MultiMapManager::init() {
 
   stamp_pub_ = node_.advertise<plan_env::ChunkStamps>("/multi_map_manager/chunk_stamps_send", 10);
   chunk_pub_ = node_.advertise<plan_env::ChunkData>("/multi_map_manager/chunk_data_send", 5000);
+  payload_cache_pub_ = node_.advertise<plan_env::ChunkData>(
+      "/multi_map_manager/chunk_payload_cache", 50000);
   marker_pub_ = node_.advertise<visualization_msgs::Marker>(
       "/multi_map_manager/marker_" + std::to_string(drone_id_), 10);
 
@@ -138,15 +142,22 @@ void MultiMapManager::updateMapChunk(const vector<uint32_t>& adrs) {
     vector<uint32_t> tmp;
     tmp.insert(tmp.end(), adr_buffer_.begin() + i, adr_buffer_.end());
     adr_buffer_ = tmp;
-#ifdef RACER_ORACLE_VARIANT
     const int last_new_chunk = multi_map_chunks_[drone_id_ - 1].chunks_.size();
     if (last_new_chunk >= first_new_chunk) {
+#ifdef RACER_ORACLE_VARIANT
       // Ideal shared-map semantics: publish every completed local delta as
       // soon as it exists. The ideal proxy fans it out losslessly to every
       // peer; the original stamp-based anti-entropy path remains as backup.
       sendChunks(drone_id_, 0, { first_new_chunk, last_new_chunk });
-    }
+#else
+      if (push_chunk_payload_cache_) {
+        // Publish on a dedicated process-local data path so payload caching
+        // cannot queue behind ordinary radio traffic. Stamp anti-entropy and
+        // action-time requests remain available to repair a missed push.
+        pushLocalChunkPayloads(first_new_chunk, last_new_chunk);
+      }
 #endif
+    }
   }
 }
 
@@ -361,6 +372,26 @@ void MultiMapManager::sendChunks(
 
   // for (int i = idx; i < data.chunks_.size(); ++i) {
   // }
+}
+
+void MultiMapManager::pushLocalChunkPayloads(
+    const int& first_idx, const int& last_idx) {
+  auto& data = multi_map_chunks_[drone_id_ - 1];
+  for (int index = first_idx; index <= last_idx; ++index) {
+    auto& chunk = data.chunks_[index - 1];
+    if (chunk.need_query_) {
+      getOccOfChunk(chunk.voxel_adrs_, chunk.voxel_occ_);
+      chunk.need_query_ = false;
+    }
+    plan_env::ChunkData msg;
+    msg.from_drone_id = drone_id_;
+    msg.to_drone_id = -1;
+    msg.chunk_drone_id = drone_id_;
+    msg.idx = chunk.idx_;
+    msg.voxel_adrs = chunk.voxel_adrs_;
+    msg.voxel_occ = chunk.voxel_occ_;
+    payload_cache_pub_.publish(msg);
+  }
 }
 
 void MultiMapManager::getOccOfChunk(const vector<uint32_t>& adrs, vector<uint8_t>& occs) {

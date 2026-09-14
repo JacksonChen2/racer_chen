@@ -12,7 +12,7 @@ import time
 import pytest
 import rclpy
 from nav_msgs.msg import Odometry
-from racer_fidelity_msgs.msg import ChunkData, DroneState
+from racer_fidelity_msgs.msg import ChunkData, DroneState, GlobalGridAssignment
 from racer_recovery_core.msg import RecoveryCommand, RecoveryStatus
 from racer_sionna_interfaces.msg import LinkQuality, LinkQualityArray
 from rclpy.duration import Duration
@@ -114,6 +114,137 @@ def test_ideal_proxy_preserves_order_and_excludes_self():
     assert statistics["dropped_per"] == 0
     assert statistics["ideal_statistical_bytes"] == statistics["attempted_bytes"]
     assert statistics["ideal_statistical_transport_blocks"] >= 3
+
+
+@pytest.mark.timeout(30)
+def test_initial_assignment_perfect_window_closes_after_all_epoch_acks():
+    configure_ros_domain(13, 80, 109)
+    process = subprocess.Popen(
+        [
+            "ros2", "run", "racer_sionna_comm",
+            "racer_sionna_communication_proxy", "--ros-args",
+            "-p", "mode:=sionna", "-p", "drone_count:=3",
+            "-p", "network_topology:=distributed",
+            "-p", "initial_assignment_perfect_delivery:=true",
+            "-p", "max_retries:=0", "-p", "base_latency_ms:=0.0",
+            "-p", "jitter_ms:=0.0",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=os.environ.copy(),
+        start_new_session=True,
+    )
+    rclpy.init()
+    node = Node("racer_sionna_initial_assignment_perfect_test")
+    qos = QoSProfile(depth=100, reliability=ReliabilityPolicy.RELIABLE)
+    received_states = {receiver: [] for receiver in range(3)}
+    received_assignments = {receiver: [] for receiver in range(3)}
+    for receiver in range(3):
+        node.create_subscription(
+            DroneState,
+            f"/racer_sionna/rx/drone_{receiver}/drone_state",
+            lambda message, receiver=receiver: received_states[receiver].append(
+                message.stamp
+            ),
+            qos,
+        )
+        node.create_subscription(
+            GlobalGridAssignment,
+            f"/racer_sionna/rx/drone_{receiver}/global_assignment",
+            lambda message, receiver=receiver: received_assignments[receiver].append(
+                message.epoch
+            ),
+            qos,
+        )
+    state_publishers = [
+        node.create_publisher(
+            DroneState, f"/racer_sionna/tx/drone_{sender}/drone_state", qos
+        )
+        for sender in range(3)
+    ]
+    assignment_publisher = node.create_publisher(
+        GlobalGridAssignment,
+        "/racer_sionna/tx/drone_0/global_assignment",
+        qos,
+    )
+
+    output = ""
+    try:
+        deadline = time.monotonic() + 10.0
+        while (
+            any(publisher.get_subscription_count() < 1 for publisher in state_publishers)
+            or assignment_publisher.get_subscription_count() < 1
+        ) and time.monotonic() < deadline:
+            rclpy.spin_once(node, timeout_sec=0.05)
+        assert all(publisher.get_subscription_count() == 1 for publisher in state_publishers)
+        assert assignment_publisher.get_subscription_count() == 1
+
+        for sender, publisher in enumerate(state_publishers):
+            state = DroneState()
+            state.drone_id = sender + 1
+            state.stamp = float(sender + 1)
+            state.assignment_epoch = 0
+            publisher.publish(state)
+
+        assignment = GlobalGridAssignment()
+        assignment.coordinator_id = 1
+        assignment.epoch = 1
+        assignment.offsets = [0, 1, 2, 3]
+        assignment.grid_ids = [10, 20, 30]
+        assignment_publisher.publish(assignment)
+        deadline = time.monotonic() + 5.0
+        while (
+            sum(len(values) for values in received_assignments.values()) < 2
+            and time.monotonic() < deadline
+        ):
+            rclpy.spin_once(node, timeout_sec=0.05)
+        assert received_assignments == {0: [], 1: [1], 2: [1]}
+
+        for sender, publisher in enumerate(state_publishers):
+            state = DroneState()
+            state.drone_id = sender + 1
+            state.stamp = float(sender + 11)
+            state.assignment_epoch = 1
+            publisher.publish(state)
+
+        deadline = time.monotonic() + 5.0
+        while (
+            sum(len(values) for values in received_states.values()) < 12
+        ) and time.monotonic() < deadline:
+            rclpy.spin_once(node, timeout_sec=0.05)
+        assert sum(len(values) for values in received_states.values()) == 12
+
+        post_window = DroneState()
+        post_window.drone_id = 1
+        post_window.stamp = 99.0
+        post_window.assignment_epoch = 1
+        state_publishers[0].publish(post_window)
+        deadline = time.monotonic() + 1.3
+        while time.monotonic() < deadline:
+            rclpy.spin_once(node, timeout_sec=0.05)
+        assert all(99.0 not in values for values in received_states.values())
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+        os.killpg(process.pid, signal.SIGINT)
+        try:
+            output, _ = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            output, _ = process.communicate(timeout=5)
+
+    matches = re.findall(r"RACER_SIONNA_STATS (\{[^\n]+\})", output)
+    assert matches
+    statistics = json.loads(matches[-1])
+    assert statistics["initial_assignment_perfect_delivery_enabled"] is True
+    assert statistics["initial_assignment_perfect_delivery_complete"] is True
+    assert statistics["initial_assignment_perfect_epoch"] == 1
+    assert statistics["initial_assignment_perfect_acks"] == 3
+    assert statistics["initial_assignment_perfect_drone_state_messages"] == 6
+    assert statistics["initial_assignment_perfect_global_assignment_messages"] == 1
+    assert statistics["initial_assignment_perfect_forwarded_packets"] == 14
+    assert statistics["sionna_direct_attempted_packets"] == 2
 
 
 @pytest.mark.timeout(30)
@@ -1084,7 +1215,7 @@ def test_bs_round_robin_repairs_a_missing_direct_map_chunk():
 
 
 @pytest.mark.timeout(30)
-def test_rl_bs_file_bridge_controls_upload_and_owner_specific_relay(tmp_path):
+def test_rl_bs_file_bridge_controls_upload_and_relay(tmp_path):
     configure_ros_domain(11, 90, 119)
     action_path = tmp_path / "action.txt"
     state_path = tmp_path / "communication_state.json"
@@ -1106,6 +1237,7 @@ def test_rl_bs_file_bridge_controls_upload_and_owner_specific_relay(tmp_path):
             "-p", f"ground_truth_occupied_voxels_path:={ground_truth_path}",
             "-p", f"observed_occupied_voxels_path:={observed_path}",
             "-p", "require_ground_truth_map:=true",
+            "-p", "task_metric_observer_mode:=async",
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -1188,7 +1320,7 @@ def test_rl_bs_file_bridge_controls_upload_and_owner_specific_relay(tmp_path):
             ) == [1, 0]
         )
 
-        # N=2 canonical bits: B01, B10, u0, u1. Upload owner 0 once.
+        # N=2 canonical bits: B01, B10, u0, u1. Upload sender 0 once.
         action_path.write_text("1 2 0 0 1 0\n")
         upload_state = wait_for(
             lambda value: value.get("action_epoch") == 1
@@ -1199,7 +1331,7 @@ def test_rl_bs_file_bridge_controls_upload_and_owner_specific_relay(tmp_path):
         assert upload_state["redundant_exploration_ratio"] == 0.0
         assert upload_state["bs_global_map_iou"] == 0.5
 
-        # Relay only owner-0 information to UAV 1; do not upload again.
+        # Select route B[0,1]; BS sends every cached chunk UAV 1 lacks.
         action_path.write_text("2 2 1 0 0 0\n")
         relay_state = wait_for(
             lambda value: value.get("action_epoch") == 2
@@ -1233,6 +1365,12 @@ def test_rl_bs_file_bridge_controls_upload_and_owner_specific_relay(tmp_path):
     assert statistics["redundant_exploration_ratio"] == 0.0
     assert statistics["bs_global_map_iou"] == 0.5
     assert statistics["ground_truth_occupied_voxels"] == 2
+    assert statistics["task_metric_observer_mode"] == "async"
+    assert statistics["task_metric_observer_events_enqueued"] > 0
+    assert (
+        statistics["task_metric_observer_events_processed"]
+        == statistics["task_metric_observer_events_enqueued"]
+    )
     assert statistics["task_quality_history"]
     assert observed_path.read_text().splitlines() == ["7"]
 

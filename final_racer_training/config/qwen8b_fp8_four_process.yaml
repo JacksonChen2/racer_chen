@@ -79,6 +79,7 @@ constraint:
   eta: 0.0
   distributed_only_results: []
   full_bs_results: []
+  episode_duration_s: 300.0
   telescoping_tolerance: 1.0e-6
 
 crpo:
@@ -86,7 +87,7 @@ crpo:
   gamma_cost: 1.0
   gae_lambda_reward: 0.95
   gae_lambda_cost: 0.95
-  constraint_estimator: episode_return
+  constraint_estimator: time_weighted_mean
   episode_cost_window: 30
   ppo:
     learning_rate: 0.0002

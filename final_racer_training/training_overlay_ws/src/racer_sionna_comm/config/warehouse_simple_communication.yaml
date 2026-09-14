@@ -30,6 +30,13 @@ racer_sionna_communication_proxy:
     directed_message_unicast: false
     uav_udp_directed_unicast: true
     uav_udp_header_bytes: 8
+    # The default preserves the existing centralized, collision-free OFDMA
+    # model.  Set csma to use per-UAV random backoff over the complete shared
+    # UAV band, with no scheduler grants or fixed per-UAV subbands.
+    uav_channel_access_mode: ofdma
+    uav_csma_cw_min: 15
+    uav_csma_cw_max: 1023
+    uav_csma_difs_slots: 2
     uav_ofdma_diagnostic_logging: true
     uav_ofdma_log_packet_stride: 1000
     # Optional CRPO file bridge. It is disabled by default, so all existing
@@ -63,8 +70,18 @@ racer_sionna_communication_proxy:
     active_link_publish_period_s: 0.02
     bs_min_turn_ms: 10.0
     bs_control_bytes: 32
-    bs_max_downlink_chunks_per_turn: 32
-    bs_max_uplink_chunks_per_turn: 32
+    # Zero lets the action-bound SNR/MCS quota and the real byte queue control
+    # admission. Positive values remain available as explicit experiment caps.
+    bs_max_downlink_chunks_per_turn: 0
+    bs_max_uplink_chunks_per_turn: 0
+    # Zero derives hard global ceilings from the RL slot and BS PHY.  Within
+    # those ceilings, every slot uses its action-bound channel SNR, adaptive
+    # MCS, NR serialization time and expected retries to choose fewer chunks
+    # on weak links.  At 20 ms and 100 MHz/66 PRBs the ceilings are 64 UL +
+    # 64 DL chunks, with 20% of the shared BS airtime reserved for control and
+    # retry variance.
+    bs_max_uplink_chunks_per_rl_slot: 0
+    bs_max_downlink_chunks_per_rl_slot: 0
     ap_tx_power_dbm: 40.0
     tx_power_dbm: 23.0
     ap_array_rows: 8

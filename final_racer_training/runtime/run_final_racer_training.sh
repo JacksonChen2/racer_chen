@@ -30,6 +30,18 @@ if [[ "$(ros2 pkg prefix racer_original_core)" != "${workspace_dir}/install/race
 fi
 repo_root="${final_root}/assets"
 isaac_root="${ISAAC_SIM_ROOT:-/home/jiazheng/software/isaacsim}"
+driver_library_path="${RACER_NVIDIA_DRIVER_LIBRARY_PATH:-}"
+isaac_bridge_library_path="${isaac_root}/exts/isaacsim.ros2.bridge/humble/lib"
+if [[ -n "${driver_library_path}" ]]; then
+  if [[ ! -d "${driver_library_path}" ]]; then
+    printf 'RACER_NVIDIA_DRIVER_LIBRARY_PATH is not a directory: %s\n' \
+      "${driver_library_path}" >&2
+    exit 2
+  fi
+  isaac_library_path="${driver_library_path}:${isaac_bridge_library_path}"
+else
+  isaac_library_path="${isaac_bridge_library_path}"
+fi
 communication_mode="${RACER_COMMUNICATION_MODE:-sionna}"
 if [[ -n "${RACER_REQUIRE_SIONNA:-}" ]]; then
   require_sionna="${RACER_REQUIRE_SIONNA}"
@@ -42,6 +54,10 @@ lossless_nearest_neighbor_count="${RACER_LOSSLESS_NEAREST_NEIGHBOR_COUNT:-0}"
 lossless_communication_range_m="${RACER_LOSSLESS_COMMUNICATION_RANGE_M:-0.0}"
 lossless_control_only="${RACER_LOSSLESS_CONTROL_ONLY:-false}"
 directed_message_unicast="${RACER_DIRECTED_MESSAGE_UNICAST:-false}"
+uav_channel_access_mode="${RACER_UAV_CHANNEL_ACCESS_MODE:-ofdma}"
+uav_csma_cw_min="${RACER_UAV_CSMA_CW_MIN:-15}"
+uav_csma_cw_max="${RACER_UAV_CSMA_CW_MAX:-1023}"
+uav_csma_difs_slots="${RACER_UAV_CSMA_DIFS_SLOTS:-2}"
 chunk_data_pre_enqueue_dedup="${RACER_CHUNK_DATA_PRE_ENQUEUE_DEDUP:-false}"
 chunk_data_max_pending_per_link="${RACER_CHUNK_DATA_MAX_PENDING_PER_LINK:-0}"
 communication_range_m="${RACER_COMMUNICATION_RANGE_M:-4.0}"
@@ -111,7 +127,18 @@ force_bs_perfect_delivery="${RACER_FORCE_BS_PERFECT_DELIVERY:-false}"
 bs_periodic_upload_request_enabled="${RACER_BS_PERIODIC_UPLOAD_REQUEST_ENABLED:-false}"
 bs_periodic_upload_request_period_ms="${RACER_BS_PERIODIC_UPLOAD_REQUEST_PERIOD_MS:-200.0}"
 bs_periodic_upload_chunks_per_request="${RACER_BS_PERIODIC_UPLOAD_CHUNKS_PER_REQUEST:-8}"
-bs_max_inflight_chunks_per_uav="${RACER_BS_MAX_INFLIGHT_CHUNKS_PER_UAV:-32}"
+# Zero sizes the outstanding window from two current action-bound PHY slots;
+# positive values retain a fixed chunk-count cap for controlled experiments.
+bs_max_inflight_chunks_per_uav="${RACER_BS_MAX_INFLIGHT_CHUNKS_PER_UAV:-0}"
+# Direct generation-time payload pushes are the normal path. This optional
+# stamp-time precache worker is retained only for legacy/fallback experiments;
+# action-time missing-payload requests remain active when it is disabled.
+bs_payload_precache_enabled="${RACER_BS_PAYLOAD_PRECACHE_ENABLED:-false}"
+bs_payload_precache_batch_size="${RACER_BS_PAYLOAD_PRECACHE_BATCH_SIZE:-8}"
+bs_max_payload_precache_inflight="${RACER_BS_MAX_PAYLOAD_PRECACHE_INFLIGHT:-16}"
+bs_payload_precache_timeout_ms="${RACER_BS_PAYLOAD_PRECACHE_TIMEOUT_MS:-5000.0}"
+bs_max_uplink_chunks_per_rl_slot="${RACER_BS_MAX_UPLINK_CHUNKS_PER_RL_SLOT:-0}"
+bs_max_downlink_chunks_per_rl_slot="${RACER_BS_MAX_DOWNLINK_CHUNKS_PER_RL_SLOT:-0}"
 bs_control_ttl_s="${RACER_BS_CONTROL_TTL_S:-2.0}"
 bs_all_to_all_relay_enabled="${RACER_BS_ALL_TO_ALL_RELAY_ENABLED:-false}"
 pair_control_reservation_enabled="${RACER_PAIR_CONTROL_RESERVATION_ENABLED:-false}"
@@ -136,6 +163,7 @@ rl_bs_decision_period_ms="${RACER_RL_BS_DECISION_PERIOD_MS:-20.0}"
 rl_bs_communication_slot_ms="${RACER_RL_BS_COMMUNICATION_SLOT_MS:-20.0}"
 rl_llm_state_period_ms="${RACER_RL_LLM_STATE_PERIOD_MS:-5000.0}"
 rl_sync_enabled="${RACER_RL_SYNC_ENABLED:-false}"
+rl_bs_event_driven_one_shot="${RACER_RL_BS_EVENT_DRIVEN_ONE_SHOT:-false}"
 rl_sync_release_path="${RACER_RL_SYNC_RELEASE_PATH:-}"
 rl_sync_ack_path="${RACER_RL_SYNC_ACK_PATH:-}"
 rl_sync_maximum_wait_s="${RACER_RL_SYNC_MAXIMUM_WAIT_S:-1200.0}"
@@ -179,9 +207,11 @@ if ! python3 -c 'import math,sys; value=float(sys.argv[1]); raise SystemExit(not
   exit 2
 fi
 if ! [[ "${bs_periodic_upload_chunks_per_request}" =~ ^[1-9][0-9]*$ ]] ||
-   ! [[ "${bs_max_inflight_chunks_per_uav}" =~ ^[1-9][0-9]*$ ]] ||
-   (( bs_periodic_upload_chunks_per_request > bs_max_inflight_chunks_per_uav )); then
-  printf 'Periodic upload chunk budget and in-flight limit must be positive, with budget <= limit.\n' >&2
+   ! [[ "${bs_max_inflight_chunks_per_uav}" =~ ^[0-9]+$ ]] ||
+   ! [[ "${bs_max_uplink_chunks_per_rl_slot}" =~ ^[0-9]+$ ]] ||
+   ! [[ "${bs_max_downlink_chunks_per_rl_slot}" =~ ^[0-9]+$ ]] ||
+   (( bs_max_inflight_chunks_per_uav > 0 && bs_periodic_upload_chunks_per_request > bs_max_inflight_chunks_per_uav )); then
+  printf 'BS fixed budgets must be nonnegative; zero selects automatic sizing; periodic chunk budget must be <= a positive per-UAV in-flight limit.\n' >&2
   exit 2
 fi
 if ! python3 -c 'import math,sys; value=float(sys.argv[1]); raise SystemExit(not (math.isfinite(value) and value > 0.0))' \
@@ -269,6 +299,18 @@ if [[ "${rl_sync_enabled}" != "true" && "${rl_sync_enabled}" != "false" ]]; then
   printf 'RACER_RL_SYNC_ENABLED must be true or false.\n' >&2
   exit 2
 fi
+if [[ "${rl_bs_event_driven_one_shot}" != "true" &&
+      "${rl_bs_event_driven_one_shot}" != "false" ]]; then
+  printf 'RACER_RL_BS_EVENT_DRIVEN_ONE_SHOT must be true or false.\n' >&2
+  exit 2
+fi
+if [[ "${rl_bs_event_driven_one_shot}" == "true" &&
+      ( "${rl_bs_scheduler_enabled}" != "true" ||
+        "${rl_sync_enabled}" == "true" ||
+        -z "${shared_memory_root}" ) ]]; then
+  printf 'Event-driven one-shot mode requires shared-memory RL scheduling and cannot use fixed-clock synchronous mode.\n' >&2
+  exit 2
+fi
 if [[ "${rl_sync_enabled}" == "true" ]]; then
   if [[ "${rl_bs_scheduler_enabled}" != "true" ||
         "${stop_on_completion}" != "0" ]]; then
@@ -332,6 +374,21 @@ if [[ "${rl_bs_scheduler_enabled}" == "true" && "${network_topology}" != "bs_rou
   printf 'RACER_RL_BS_SCHEDULER_ENABLED=true requires RACER_NETWORK_TOPOLOGY=bs_round_robin.\n' >&2
   exit 2
 fi
+if [[ "${bs_payload_precache_enabled}" != "true" &&
+      "${bs_payload_precache_enabled}" != "false" ]]; then
+  printf 'RACER_BS_PAYLOAD_PRECACHE_ENABLED must be true or false.\n' >&2
+  exit 2
+fi
+if ! [[ "${bs_payload_precache_batch_size}" =~ ^[1-9][0-9]*$ ]] ||
+   ! [[ "${bs_max_payload_precache_inflight}" =~ ^[1-9][0-9]*$ ]] ||
+   (( bs_payload_precache_batch_size > bs_max_payload_precache_inflight )); then
+  printf 'Payload precache batch/in-flight limits must be positive and batch must not exceed in-flight.\n' >&2
+  exit 2
+fi
+if ! python3 -c 'import math,sys; value=float(sys.argv[1]); raise SystemExit(not (math.isfinite(value) and value > 0.0))' "${bs_payload_precache_timeout_ms}"; then
+  printf 'RACER_BS_PAYLOAD_PRECACHE_TIMEOUT_MS must be positive and finite.\n' >&2
+  exit 2
+fi
 if [[ "${require_sionna}" != "true" && "${require_sionna}" != "false" ]]; then
   printf 'RACER_REQUIRE_SIONNA must be true or false.\n' >&2
   exit 2
@@ -365,6 +422,18 @@ if [[ "${lossless_control_only}" != "true" && "${lossless_control_only}" != "fal
 fi
 if [[ "${directed_message_unicast}" != "true" && "${directed_message_unicast}" != "false" ]]; then
   printf 'RACER_DIRECTED_MESSAGE_UNICAST must be true or false.\n' >&2
+  exit 2
+fi
+if [[ "${uav_channel_access_mode}" != "ofdma" &&
+      "${uav_channel_access_mode}" != "csma" ]]; then
+  printf 'RACER_UAV_CHANNEL_ACCESS_MODE must be ofdma or csma.\n' >&2
+  exit 2
+fi
+if [[ ! "${uav_csma_cw_min}" =~ ^[0-9]+$ ||
+      ! "${uav_csma_cw_max}" =~ ^[0-9]+$ ||
+      ! "${uav_csma_difs_slots}" =~ ^[0-9]+$ ]] ||
+   (( uav_csma_cw_max < uav_csma_cw_min )); then
+  printf 'CSMA contention windows and DIFS slots must be non-negative integers with CWmax >= CWmin.\n' >&2
   exit 2
 fi
 if [[ "${chunk_data_pre_enqueue_dedup}" != "true" && "${chunk_data_pre_enqueue_dedup}" != "false" ]]; then
@@ -532,6 +601,10 @@ launch_communication_args=(
   lossless_communication_range_m:="${lossless_communication_range_m}"
   lossless_control_only:="${lossless_control_only}"
   directed_message_unicast:="${directed_message_unicast}"
+  uav_channel_access_mode:="${uav_channel_access_mode}"
+  uav_csma_cw_min:="${uav_csma_cw_min}"
+  uav_csma_cw_max:="${uav_csma_cw_max}"
+  uav_csma_difs_slots:="${uav_csma_difs_slots}"
   chunk_data_pre_enqueue_dedup:="${chunk_data_pre_enqueue_dedup}"
   chunk_data_max_pending_per_link:="${chunk_data_max_pending_per_link}"
   communication_range_m:="${communication_range_m}"
@@ -560,6 +633,12 @@ launch_communication_args=(
   bs_periodic_upload_request_period_ms:="${bs_periodic_upload_request_period_ms}"
   bs_periodic_upload_chunks_per_request:="${bs_periodic_upload_chunks_per_request}"
   bs_max_inflight_chunks_per_uav:="${bs_max_inflight_chunks_per_uav}"
+  bs_payload_precache_enabled:="${bs_payload_precache_enabled}"
+  bs_payload_precache_batch_size:="${bs_payload_precache_batch_size}"
+  bs_max_payload_precache_inflight:="${bs_max_payload_precache_inflight}"
+  bs_payload_precache_timeout_ms:="${bs_payload_precache_timeout_ms}"
+  bs_max_uplink_chunks_per_rl_slot:="${bs_max_uplink_chunks_per_rl_slot}"
+  bs_max_downlink_chunks_per_rl_slot:="${bs_max_downlink_chunks_per_rl_slot}"
   bs_control_ttl_s:="${bs_control_ttl_s}"
   bs_all_to_all_relay_enabled:="${bs_all_to_all_relay_enabled}"
   pair_control_reservation_enabled:="${pair_control_reservation_enabled}"
@@ -570,6 +649,7 @@ launch_communication_args=(
   bs_event_global_balance_weight_m:="${bs_event_global_balance_weight_m}"
   bs_event_global_load_gap:="${bs_event_global_load_gap}"
   rl_bs_synchronous_mode:="${rl_sync_enabled}"
+  rl_bs_event_driven_one_shot:="${rl_bs_event_driven_one_shot}"
   rl_bs_action_path:="${rl_bs_action_path}"
   rl_bs_state_path:="${rl_bs_state_path}"
   rl_bs_communication_slot_ms:="${rl_bs_communication_slot_ms}"
@@ -577,9 +657,13 @@ launch_communication_args=(
   task_metric_observer_mode:="${task_metric_observer_mode}"
   rl_bs_decision_period_ms:="${rl_bs_decision_period_ms}"
   rl_llm_state_period_ms:="${rl_llm_state_period_ms}"
-  rl_shared_memory_root:="${shared_memory_root}"
   random_seed:="${random_seed}"
 )
+if [[ -n "${shared_memory_root}" ]]; then
+  launch_communication_args+=(
+    rl_shared_memory_root:="${shared_memory_root}"
+  )
+fi
 if [[ -n "${ground_truth_occupied_voxels_path}" ]]; then
   launch_communication_args+=(
     ground_truth_occupied_voxels_path:="${ground_truth_occupied_voxels_path}"
@@ -763,7 +847,7 @@ if [[ "${process_role}" == "isaac" ]]; then
     ROS_DOMAIN_ID="${ROS_DOMAIN_ID}" ROS_DISTRO=humble \
     RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
     PYTHONPATH="${training_root}/agentic_crpo" \
-    LD_LIBRARY_PATH="${isaac_root}/exts/isaacsim.ros2.bridge/humble/lib" \
+    LD_LIBRARY_PATH="${isaac_library_path}" \
     "${isaac_root}/python.sh" \
     "${adapter_share}/isaac_sim/original_racer_isaac.py" \
     "${isaac_args[@]}"
@@ -772,7 +856,7 @@ set +e
 env -u AMENT_PREFIX_PATH -u CMAKE_PREFIX_PATH -u COLCON_PREFIX_PATH -u PYTHONPATH \
   ROS_DOMAIN_ID="${ROS_DOMAIN_ID}" ROS_DISTRO=humble \
   RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
-  LD_LIBRARY_PATH="${isaac_root}/exts/isaacsim.ros2.bridge/humble/lib" \
+  LD_LIBRARY_PATH="${isaac_library_path}" \
   timeout "$((duration_ceiling * wall_time_multiplier + wall_time_grace))" \
   "${isaac_root}/python.sh" "${adapter_share}/isaac_sim/original_racer_isaac.py" \
   "${isaac_args[@]}" 2>&1 | tee "${isaac_log}"

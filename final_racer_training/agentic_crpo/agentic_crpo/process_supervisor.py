@@ -73,6 +73,17 @@ def _signal_group(child: Child, sig: signal.Signals) -> None:
         pass
 
 
+def _is_clean_boundary_exit(name: str, status: int | None) -> bool:
+    """Return whether a process can normally finish a finite episode.
+
+    Isaac owns the simulation horizon, while RL owns consumption of the
+    terminal transition.  Once both clocks reach the final boundary, either
+    process may be reaped first by the supervisor.
+    """
+
+    return status == 0 and name in {"isaac", "rl"}
+
+
 def _spawn(
     name: str,
     command: list[str],
@@ -269,10 +280,11 @@ def run(args: argparse.Namespace) -> int:
                     reason = failure
                     print(f"RACER_RUNTIME_FAILURE {failure}", flush=True)
 
-        # Isaac force-publishes its terminal physical state before exiting.
-        # Give the independently running proxy a bounded chance to commit the
-        # matching final 100 ms boundary before shutdown wakes the RL reader.
-        if first_name == "isaac" and first_status == 0:
+        # Isaac force-publishes its terminal physical state before exiting,
+        # and RL may consume that terminal boundary and exit before Isaac is
+        # reaped. Give the independently running proxy a bounded chance to
+        # commit the matching final 100 ms boundary in either ordering.
+        if _is_clean_boundary_exit(first_name, first_status):
             final_boundary_sync["attempted"] = True
             physical_value = blocks["physical"].snapshot_json()
             if physical_value is not None:
@@ -394,12 +406,12 @@ def run(args: argparse.Namespace) -> int:
         _atomic_json(output_dir / "supervisor_result.json", final)
         if interrupted:
             return 130
-        # A normal episode is ended by Isaac or by the trainer after reaching
-        # its explicit target. Other first exits indicate a failed worker.
+        # A normal episode is ended by Isaac or by RL after consuming the
+        # terminal transition/reaching its explicit target. Their independent
+        # process teardown order must not change the campaign result.
         return (
             0
-            if first_name == "isaac"
-            and first_status == 0
+            if _is_clean_boundary_exit(first_name, first_status)
             and children["rl"].process.returncode == 0
             and result_path is not None
             else 1

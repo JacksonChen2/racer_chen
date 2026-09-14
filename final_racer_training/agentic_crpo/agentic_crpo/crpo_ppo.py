@@ -26,9 +26,16 @@ from stable_baselines3.common.utils import explained_variance, obs_as_tensor
 from stable_baselines3.common.vec_env import VecEnv
 
 from .crpo_buffer import CRPORolloutBuffer
-from .crpo_policy import CRPOActorCriticPolicy, DUAL_ENCODER_ARCHITECTURE
+from .crpo_policy import (
+    CRPOActorCriticPolicy,
+    DUAL_ENCODER_ARCHITECTURE,
+    TASK_PHASE_DUAL_CRITIC_ARCHITECTURE,
+)
 from .backend import MissionEndedError
 from .episode_tracker import EpisodeCostTracker
+
+
+CONSTRAINT_COST_VERSION = "time_weighted_trapezoid_fixed_horizon_v1"
 
 
 @dataclass(frozen=True)
@@ -41,6 +48,7 @@ class _CRPODecisionRecord:
     old_log_prob: np.ndarray
     reward_value: np.ndarray
     cost_value: np.ndarray
+    critic_tau: np.ndarray
     masked_logits: np.ndarray
     action_version: np.ndarray
     step_id: np.ndarray
@@ -416,6 +424,19 @@ class CRPOPPO(PPO):
     policy: CRPOActorCriticPolicy
     rollout_buffer: CRPORolloutBuffer
 
+    def _bootstrap_discount(
+        self, gamma: float, info: dict[str, Any]
+    ) -> float:
+        """Discount one truncated-transition bootstrap target.
+
+        The fixed-clock implementation intentionally returns the configured
+        per-transition discount unchanged. Experimental variable-time
+        algorithms may override this hook without changing the baseline.
+        """
+
+        del info
+        return float(gamma)
+
     @classmethod
     def load(
         cls,
@@ -490,6 +511,110 @@ class CRPOPPO(PPO):
         model._initialize_policy_runtime(force=True)
         return model
 
+    @staticmethod
+    def _migrate_legacy_optimizer_state(
+        policy: CRPOActorCriticPolicy,
+        saved_optimizer_state: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Retain actor optimizer moments while adding fresh critic params.
+
+        Pre-phase checkpoints have no independent critic parameters. Parameter
+        names provide the stable mapping because the LLM-prior subclass adds
+        its gate after the legacy critic modules but before the new critics in
+        optimizer order.
+        """
+
+        current = policy.optimizer.state_dict()
+        saved_groups = saved_optimizer_state.get("param_groups", [])
+        current_groups = current.get("param_groups", [])
+        if len(saved_groups) != len(current_groups):
+            return current
+
+        legacy_names = [
+            name
+            for name, _parameter in policy.named_parameters()
+            if not name.startswith(("reward_critic.", "constraint_critic."))
+        ]
+        saved_ids = [
+            parameter_id
+            for group in saved_groups
+            for parameter_id in group.get("params", [])
+        ]
+        if len(saved_ids) != len(legacy_names):
+            return current
+        saved_name_by_id = dict(zip(saved_ids, legacy_names))
+
+        name_by_parameter_id = {
+            id(parameter): name for name, parameter in policy.named_parameters()
+        }
+        current_name_by_id: dict[int, str] = {}
+        for optimizer_group, state_group in zip(
+            policy.optimizer.param_groups, current_groups
+        ):
+            for parameter, parameter_id in zip(
+                optimizer_group["params"], state_group["params"]
+            ):
+                name = name_by_parameter_id.get(id(parameter))
+                if name is not None:
+                    current_name_by_id[int(parameter_id)] = name
+        current_id_by_name = {
+            name: parameter_id
+            for parameter_id, name in current_name_by_id.items()
+        }
+
+        migrated_state: dict[int, Any] = {}
+        for saved_id, value in saved_optimizer_state.get("state", {}).items():
+            name = saved_name_by_id.get(saved_id)
+            current_id = current_id_by_name.get(name) if name else None
+            if current_id is not None:
+                migrated_state[current_id] = value
+        migrated_groups = []
+        for saved_group, current_group in zip(saved_groups, current_groups):
+            migrated_group = dict(saved_group)
+            migrated_group["params"] = list(current_group["params"])
+            migrated_groups.append(migrated_group)
+        return {"state": migrated_state, "param_groups": migrated_groups}
+
+    def set_parameters(
+        self,
+        load_path_or_dict: str | dict[str, Any],
+        exact_match: bool = True,
+        device: th.device | str = "auto",
+    ) -> None:
+        """Migrate pre-phase checkpoints without weakening exact loading."""
+
+        if not isinstance(load_path_or_dict, dict):
+            super().set_parameters(load_path_or_dict, exact_match, device)
+            return
+        policy_state = load_path_or_dict.get("policy")
+        legacy_critics = isinstance(policy_state, dict) and not any(
+            key.startswith("reward_critic.") for key in policy_state
+        )
+        if not legacy_critics:
+            super().set_parameters(load_path_or_dict, exact_match, device)
+            return
+        migrated = dict(load_path_or_dict)
+        saved_optimizer = migrated.get("policy.optimizer")
+        if isinstance(saved_optimizer, dict):
+            migrated["policy.optimizer"] = self._migrate_legacy_optimizer_state(
+                self.policy, saved_optimizer
+            )
+        super().set_parameters(migrated, exact_match, device)
+        print(
+            "RACER_CHECKPOINT_CRITIC_MIGRATION "
+            + json.dumps(
+                {
+                    "critic_architecture": (
+                        TASK_PHASE_DUAL_CRITIC_ARCHITECTURE
+                    ),
+                    "legacy_actor_optimizer_state_preserved": True,
+                    "new_critic_optimizer_state": "fresh",
+                },
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
+
     def __init__(
         self,
         env: GymEnv | str,
@@ -505,7 +630,7 @@ class CRPOPPO(PPO):
         eta: float = 0.0,
         episode_cost_window: int = 20,
         telescoping_tolerance: float = 1.0e-6,
-        constraint_estimator: str = "episode_return",
+        constraint_estimator: str = "time_weighted_mean",
         cost_vf_coef: float = 0.5,
         policy_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
@@ -514,20 +639,35 @@ class CRPOPPO(PPO):
             "episode_return",
             "critic_estimate",
             "mean_step_cost",
+            "time_weighted_mean",
         ):
             raise ValueError(
                 "constraint_estimator must be episode_return, "
-                "critic_estimate, or mean_step_cost"
+                "critic_estimate, mean_step_cost, or time_weighted_mean"
             )
         self.gamma_cost = float(gamma_cost)
+        if (
+            constraint_estimator == "time_weighted_mean"
+            and not np.isclose(self.gamma_cost, 1.0)
+        ):
+            raise ValueError(
+                "time_weighted_mean requires gamma_cost=1 so the fixed-horizon "
+                "constraint return remains undiscounted"
+            )
         self.gae_lambda_cost = float(gae_lambda_cost)
         self.gamma_task = float(gamma_task)
         self.eta = float(eta)
         self.episode_cost_window = int(episode_cost_window)
         self.telescoping_tolerance = float(telescoping_tolerance)
         self.constraint_estimator = constraint_estimator
+        self.constraint_cost_version = (
+            None
+            if kwargs.get("_init_setup_model", True) is False
+            else CONSTRAINT_COST_VERSION
+        )
         self.cost_vf_coef = float(cost_vf_coef)
         self.policy_architecture_version = DUAL_ENCODER_ARCHITECTURE
+        self.critic_architecture_version = TASK_PHASE_DUAL_CRITIC_ARCHITECTURE
         self.reward_updates = 0
         self.cost_updates = 0
         self.crpo_mode = "reward"
@@ -944,6 +1084,7 @@ class CRPOPPO(PPO):
             rollout_observations = self._last_obs.copy()
             reward_values_np = fallback_cache.reward_value.copy()
             cost_values_np = fallback_cache.cost_value.copy()
+            critic_taus_np = fallback_cache.critic_tau.copy()
             log_probs_np = fallback_cache.old_log_prob.copy()
             masked_logits_np = fallback_cache.masked_logits.copy()
             selected_records: list[_CRPODecisionRecord] = []
@@ -996,6 +1137,7 @@ class CRPOPPO(PPO):
                     rollout_observations[index] = selected.observation[index]
                     reward_values_np[index] = selected.reward_value[index]
                     cost_values_np[index] = selected.cost_value[index]
+                    critic_taus_np[index] = selected.critic_tau[index]
                     log_probs_np[index] = selected.old_log_prob[index]
                     masked_logits_np[index] = selected.masked_logits[index]
                     selected_records.append(selected)
@@ -1111,9 +1253,28 @@ class CRPOPPO(PPO):
                     "constraint/D_red": info.get("D_red", 0.0),
                     "constraint/D_map": info.get("D_map", 0.0),
                     "constraint/L_task": info.get("L_task", 0.0),
+                    "constraint/L_task_previous": info.get(
+                        "L_task_previous", 0.0
+                    ),
+                    "constraint/delta_t_s": info.get("delta_t_s", 0.0),
+                    "constraint/L_task_interval_mean": info.get(
+                        "tilde_L_task", 0.0
+                    ),
+                    "constraint/L_task_time_weighted": info.get(
+                        "L_task_time_weighted", 0.0
+                    ),
+                    "constraint/elapsed_time_s": info.get(
+                        "constraint_elapsed_time_s", 0.0
+                    ),
                     "constraint/Gamma_task": self.gamma_task,
                     "constraint/value": info.get("constraint_value", 0.0),
                     "constraint/step_cost": info.get("cost", 0.0),
+                    "constraint/per_transition_cost": info.get(
+                        "constraint_cost", 0.0
+                    ),
+                    "constraint/cumulative_return": info.get(
+                        "constraint_return_cumulative", 0.0
+                    ),
                     "constraint/violation": info.get("constraint_value", 0.0)
                     - self.gamma_task,
                     "constraint/relay_fanout_proposed_max": info.get(
@@ -1149,10 +1310,35 @@ class CRPOPPO(PPO):
                     "communication/C_BS": info.get("C_BS", 0.0),
                     "communication/C_U2U": info.get("C_U2U", 0.0),
                 }
-                if dones[info_index]:
+                if cost_pending[info_index]:
+                    # Async task metrics are exact only after the existing
+                    # rollout-end backfill. Avoid averaging placeholders with
+                    # the resolved constraint statistics below.
+                    for name in (
+                        "training/L_task",
+                        "constraint/L_task",
+                        "constraint/L_task_previous",
+                        "constraint/delta_t_s",
+                        "constraint/L_task_interval_mean",
+                        "constraint/L_task_time_weighted",
+                        "constraint/elapsed_time_s",
+                        "constraint/value",
+                        "constraint/step_cost",
+                        "constraint/per_transition_cost",
+                        "constraint/cumulative_return",
+                        "constraint/violation",
+                    ):
+                        mapping.pop(name, None)
+                if dones[info_index] and not cost_pending[info_index]:
                     mapping.update(
                         {
                             "episode/L_task_final": info.get("L_task", 0.0),
+                            "episode/L_task_time_weighted": info.get(
+                                "L_task_time_weighted", 0.0
+                            ),
+                            "episode/constraint_return": info.get(
+                                "constraint_return_cumulative", 0.0
+                            ),
                             "episode/sum_CRPO_cost": (
                                 self.episode_cost_tracker.records[-1].sum_cost
                                 if self.episode_cost_tracker.records
@@ -1163,12 +1349,10 @@ class CRPOPPO(PPO):
                                 if self.episode_cost_tracker.records
                                 else 0.0
                             ),
-                            "episode/constraint_mean_step_cost": (
-                                self.episode_cost_tracker.records[-1].sum_cost
-                                / max(
-                                    1,
-                                    self.episode_cost_tracker.records[-1].episode_length,
-                                )
+                            "episode/constraint_elapsed_time_s": (
+                                self.episode_cost_tracker.records[
+                                    -1
+                                ].constraint_elapsed_time_s
                                 if self.episode_cost_tracker.records
                                 else 0.0
                             ),
@@ -1189,13 +1373,27 @@ class CRPOPPO(PPO):
                     terminal_obs = self.policy.obs_to_tensor(
                         infos[index]["terminal_observation"]
                     )[0]
+                    terminal_tau = th.as_tensor(
+                        [self._critic_tau_from_info(infos[index])],
+                        device=self.device,
+                        dtype=terminal_obs.dtype,
+                    )
                     with th.no_grad():
-                        rewards[index] += self.gamma * self.policy.predict_values(
-                            terminal_obs
-                        )[0]
+                        rewards[index] += (
+                            self._bootstrap_discount(
+                                self.gamma, infos[index]
+                            )
+                            * self.policy.predict_reward_values(
+                                terminal_obs, terminal_tau
+                            )[0]
+                        )
                         costs[index] += (
-                            self.gamma_cost
-                            * self.policy.predict_cost_values(terminal_obs)[0]
+                            self._bootstrap_discount(
+                                self.gamma_cost, infos[index]
+                            )
+                            * self.policy.predict_cost_values(
+                                terminal_obs, terminal_tau
+                            )[0]
                         )
 
             buffer_position = rollout_buffer.pos
@@ -1208,6 +1406,7 @@ class CRPOPPO(PPO):
                 reward_values_np,
                 cost_values_np,
                 log_probs_np,
+                critic_tau=critic_taus_np,
                 action_version=np.asarray(
                     [info.get("action_version", 0) for info in infos],
                     dtype=np.int64,
@@ -1491,6 +1690,16 @@ class CRPOPPO(PPO):
             )
             self._last_obs = new_obs
             self._last_episode_starts = dones
+            if np.any(dones):
+                # A four-process campaign owns one finite Isaac mission.  Its
+                # VecEnv reset can expose the final snapshot again while the
+                # producer shuts down, so close the rollout at the first real
+                # terminal transition instead of recording that snapshot as
+                # a sequence of one-step episodes.
+                self.ended_on_mission_boundary = True
+                partial_rollout = n_steps < n_rollout_steps
+                self._stop_before_next_rollout = True
+                break
 
         if inference_worker is not None:
             inference_worker.close()
@@ -1520,6 +1729,7 @@ class CRPOPPO(PPO):
                     resolved[(int(row["position"]), env_index)] = value
             for row in pending_rollout_rows:
                 row_costs = rollout_buffer.costs[int(row["position"])].copy()
+                tracker_costs = row_costs.copy()
                 for env_index in range(env.num_envs):
                     if not bool(row["pending"][env_index]):
                         continue
@@ -1532,6 +1742,7 @@ class CRPOPPO(PPO):
                         int(row["position"]), env_index, backfilled
                     )
                     row_costs[env_index] = backfilled
+                    tracker_costs[env_index] = float(value["cost"])
                     for name, key in (
                         ("training/L_task", "L_task"),
                         ("training/D_traj", "D_traj"),
@@ -1541,18 +1752,78 @@ class CRPOPPO(PPO):
                         ("task/C_joint_coverage", "C_joint_map"),
                         ("task/C_BS_coverage", "C_BS_map"),
                         ("constraint/step_cost", "cost"),
+                        ("constraint/L_task", "L_task"),
+                        (
+                            "constraint/L_task_previous",
+                            "L_task_previous",
+                        ),
+                        ("constraint/delta_t_s", "delta_t_s"),
+                        (
+                            "constraint/L_task_interval_mean",
+                            "tilde_L_task",
+                        ),
                         ("constraint/value", "constraint_value"),
+                        (
+                            "constraint/per_transition_cost",
+                            "constraint_cost",
+                        ),
+                        (
+                            "constraint/cumulative_return",
+                            "constraint_return_cumulative",
+                        ),
+                        (
+                            "constraint/L_task_time_weighted",
+                            "L_task_time_weighted",
+                        ),
+                        (
+                            "constraint/elapsed_time_s",
+                            "constraint_elapsed_time_s",
+                        ),
                     ):
                         metric_values[name].append(float(value.get(key, 0.0)))
+                    metric_values["constraint/violation"].append(
+                        float(value["constraint_value"]) - self.gamma_task
+                    )
                 self.episode_cost_tracker.observe(
-                    row_costs, row["dones"], row["infos"]
+                    tracker_costs, row["dones"], row["infos"]
                 )
+                for env_index, done in enumerate(row["dones"]):
+                    if not done or not bool(row["pending"][env_index]):
+                        continue
+                    record = self.episode_cost_tracker.records[-1]
+                    metric_values["episode/L_task_final"].append(
+                        record.final_task_loss
+                    )
+                    metric_values["episode/L_task_time_weighted"].append(
+                        record.time_weighted_task_loss
+                    )
+                    metric_values["episode/constraint_return"].append(
+                        record.sum_cost
+                    )
+                    metric_values["episode/sum_CRPO_cost"].append(
+                        record.sum_cost
+                    )
+                    metric_values["episode/C_BS_total"].append(
+                        record.total_bs_resource
+                    )
+                    metric_values["episode/constraint_elapsed_time_s"].append(
+                        record.constraint_elapsed_time_s
+                    )
             rollout_buffer.assert_costs_ready()
 
         with th.no_grad():
             last_obs = obs_as_tensor(new_obs, self.device)
-            values = self.policy.predict_values(last_obs)
-            cost_values = self.policy.predict_cost_values(last_obs)
+            last_critic_taus = th.as_tensor(
+                [self._critic_tau_from_info(info) for info in infos],
+                device=self.device,
+                dtype=last_obs.dtype,
+            )
+            values = self.policy.predict_reward_values(
+                last_obs, last_critic_taus
+            )
+            cost_values = self.policy.predict_cost_values(
+                last_obs, last_critic_taus
+            )
         self._last_cost_value_estimate = cost_values.cpu().numpy().flatten()
         rollout_buffer.compute_returns_and_advantage(
             last_values=values,
@@ -1595,6 +1866,19 @@ class CRPOPPO(PPO):
 
     def _constraint_estimate(self) -> tuple[float, str]:
         tracker = self.episode_cost_tracker
+        if self.constraint_estimator == "time_weighted_mean":
+            active = tracker.lengths > 0
+            if np.any(active):
+                return (
+                    float(np.mean(tracker.constraint_values[active])),
+                    "partial_time_weighted_mean",
+                )
+            if tracker.records:
+                return (
+                    float(tracker.records[-1].time_weighted_task_loss),
+                    "time_weighted_mean",
+                )
+            return 0.0, "partial_time_weighted_mean"
         if self.constraint_estimator == "mean_step_cost":
             if tracker.records:
                 values = [
@@ -1640,6 +1924,45 @@ class CRPOPPO(PPO):
             return {}
         return dict(values[0])
 
+    @staticmethod
+    def _normalized_critic_tau(
+        elapsed_episode_time: float, episode_duration: float
+    ) -> float:
+        if not np.isfinite(elapsed_episode_time):
+            raise FloatingPointError("episode elapsed time is NaN or Inf")
+        if not np.isfinite(episode_duration) or episode_duration <= 0.0:
+            raise ValueError("episode duration must be finite and positive")
+        return float(np.clip(elapsed_episode_time / episode_duration, 0.0, 1.0))
+
+    @classmethod
+    def _critic_tau_from_cycle_status(
+        cls, cycle_status: dict[str, Any], batch_size: int
+    ) -> np.ndarray:
+        elapsed = float(
+            cycle_status.get(
+                "elapsed_episode_time_s",
+                cycle_status.get(
+                    "task_time_s", cycle_status.get("sim_time_s", 0.0)
+                ),
+            )
+        )
+        duration = float(cycle_status.get("episode_duration_s", 300.0))
+        tau = cls._normalized_critic_tau(elapsed, duration)
+        return np.full(batch_size, tau, dtype=np.float32)
+
+    @classmethod
+    def _critic_tau_from_info(cls, info: dict[str, Any]) -> float:
+        elapsed = float(
+            info.get(
+                "simulation_time_s",
+                info.get("constraint_elapsed_time_s", 0.0),
+            )
+        )
+        duration = float(
+            info.get("constraint_episode_duration_s", 300.0)
+        )
+        return cls._normalized_critic_tau(elapsed, duration)
+
     def _perform_policy_inference(
         self,
         observation: np.ndarray,
@@ -1671,6 +1994,9 @@ class CRPOPPO(PPO):
             cycle_status.get(
                 "task_step", cycle_status.get("rl_decision_index", -1)
             )
+        )
+        critic_tau = self._critic_tau_from_cycle_status(
+            cycle_status, observation.shape[0]
         )
         print(
             "RACER_RL_CYCLE_BEGIN "
@@ -1710,6 +2036,11 @@ class CRPOPPO(PPO):
                     obs_tensor = obs_as_tensor(
                         observation, behavior_policy.device
                     )
+                    critic_tau_tensor = th.as_tensor(
+                        critic_tau,
+                        device=behavior_policy.device,
+                        dtype=obs_tensor.dtype,
+                    )
                     (
                         actions,
                         values,
@@ -1717,7 +2048,7 @@ class CRPOPPO(PPO):
                         log_probs,
                         masked_logits,
                     ) = behavior_policy.forward_crpo_with_masked_logits(
-                        obs_tensor
+                        obs_tensor, critic_tau=critic_tau_tensor
                     )
                     action_columns = int(
                         actions.reshape(actions.shape[0], -1).shape[1]
@@ -1739,6 +2070,11 @@ class CRPOPPO(PPO):
                     obs_tensor = obs_as_tensor(
                         observation, behavior_policy.device
                     )
+                    critic_tau_tensor = th.as_tensor(
+                        critic_tau,
+                        device=behavior_policy.device,
+                        dtype=obs_tensor.dtype,
+                    )
                     (
                         actions,
                         values,
@@ -1746,7 +2082,7 @@ class CRPOPPO(PPO):
                         log_probs,
                         masked_logits,
                     ) = behavior_policy.forward_crpo_with_masked_logits(
-                        obs_tensor
+                        obs_tensor, critic_tau=critic_tau_tensor
                     )
                     action_columns = int(
                         actions.reshape(actions.shape[0], -1).shape[1]
@@ -1924,6 +2260,7 @@ class CRPOPPO(PPO):
             observation=np.asarray(observation).copy(),
             reward_value=rollout_cpu[:, action_columns],
             cost_value=rollout_cpu[:, action_columns + 1],
+            critic_tau=critic_tau.copy(),
             old_log_prob=rollout_cpu[:, action_columns + 2],
             masked_logits=rollout_cpu[
                 :, action_columns + 3 : action_columns * 2 + 3
@@ -2004,9 +2341,9 @@ class CRPOPPO(PPO):
         self.j_cost_hat, self.constraint_estimator_source = (
             self._constraint_estimate()
         )
-        violation = self.j_cost_hat - (self.gamma_task + self.eta)
+        violation = self.j_cost_hat - self.gamma_task
         self.crpo_mode = select_crpo_mode(
-            self.j_cost_hat, self.gamma_task, self.eta
+            self.j_cost_hat, self.gamma_task, 0.0
         )
         if self.crpo_mode == "reward":
             self.reward_updates += 1
@@ -2033,20 +2370,18 @@ class CRPOPPO(PPO):
                     actions = actions.long().flatten()
                 reward_values, cost_values, log_prob, entropy = (
                     self.policy.evaluate_actions_crpo(
-                        rollout_data.observations, actions
+                        rollout_data.observations,
+                        actions,
+                        critic_tau=rollout_data.critic_taus,
                     )
                 )
                 reward_values = reward_values.flatten()
                 cost_values = cost_values.flatten()
                 advantages = (
-                    rollout_data.advantages
+                    rollout_data.normalized_advantages
                     if self.crpo_mode == "reward"
-                    else -rollout_data.cost_advantages
+                    else -rollout_data.normalized_cost_advantages
                 )
-                if self.normalize_advantage and len(advantages) > 1:
-                    advantages = (advantages - advantages.mean()) / (
-                        advantages.std() + 1.0e-8
-                    )
                 ratio = th.exp(log_prob - rollout_data.old_log_prob)
                 objective_1 = advantages * ratio
                 objective_2 = advantages * th.clamp(
@@ -2140,7 +2475,28 @@ class CRPOPPO(PPO):
         self.logger.record("train/entropy_loss", mean(entropy_losses))
         self.logger.record("train/policy_gradient_loss", mean(policy_losses))
         self.logger.record("train/reward_value_loss", mean(reward_value_losses))
+        self.logger.record(
+            "train/constraint_value_loss", mean(cost_value_losses)
+        )
+        # Preserve the established key for existing dashboards/checkpoints.
         self.logger.record("train/cost_value_loss", mean(cost_value_losses))
+        self.logger.record(
+            "train/reward_adv_mean", self.rollout_buffer.reward_adv_mean
+        )
+        self.logger.record(
+            "train/reward_adv_std", self.rollout_buffer.reward_adv_std
+        )
+        self.logger.record(
+            "train/constraint_adv_mean",
+            self.rollout_buffer.constraint_adv_mean,
+        )
+        self.logger.record(
+            "train/constraint_adv_std", self.rollout_buffer.constraint_adv_std
+        )
+        self.logger.record(
+            "train/critic_tau_mean",
+            float(np.mean(self.rollout_buffer.critic_taus)),
+        )
         self.logger.record("train/approx_kl", mean(approx_kl_divs))
         self.logger.record("train/clip_fraction", mean(clip_fractions))
         self.logger.record("train/loss", final_loss.item())
@@ -2149,7 +2505,10 @@ class CRPOPPO(PPO):
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
         self.logger.record("train/clip_range", clip_range)
         self.logger.record("crpo/mode", 0 if self.crpo_mode == "reward" else 1)
-        self.logger.record("crpo/mode_name", self.crpo_mode)
+        self.logger.record(
+            "crpo/mode_name",
+            "reward" if self.crpo_mode == "reward" else "constraint",
+        )
         self.logger.record("crpo/J_C_hat", self.j_cost_hat)
         self.logger.record("crpo/Gamma_task", self.gamma_task)
         self.logger.record("constraint/Gamma_task", self.gamma_task)
@@ -2166,6 +2525,13 @@ class CRPOPPO(PPO):
             int(
                 self.constraint_estimator_source
                 in {"mean_step_cost", "partial_mean_step_cost"}
+            ),
+        )
+        self.logger.record(
+            "crpo/estimator_is_time_weighted_mean",
+            int(
+                self.constraint_estimator_source
+                in {"time_weighted_mean", "partial_time_weighted_mean"}
             ),
         )
         if self.episode_cost_tracker.records:

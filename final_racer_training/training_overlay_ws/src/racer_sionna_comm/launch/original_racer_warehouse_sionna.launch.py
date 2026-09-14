@@ -5,7 +5,7 @@ import yaml
 from ament_index_python.packages import get_package_prefix, get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration
 from launch_ros.actions import Node
 
 
@@ -32,6 +32,7 @@ def _node_ros_parameters(config_path, node_name):
 def _shared_remappings(zero_id):
     tx = f"/racer_sionna/tx/drone_{zero_id}"
     rx = f"/racer_sionna/rx/drone_{zero_id}"
+    cache = f"/racer_sionna/cache/drone_{zero_id}"
     pairs = (
         ("/swarm_expl/drone_state_send", tx + "/drone_state"),
         ("/swarm_expl/drone_state_recv", rx + "/drone_state"),
@@ -45,8 +46,25 @@ def _shared_remappings(zero_id):
         ("/multi_map_manager/chunk_stamps_recv", rx + "/chunk_stamps"),
         ("/multi_map_manager/chunk_data_send", tx + "/chunk_data"),
         ("/multi_map_manager/chunk_data_recv", rx + "/chunk_data"),
+        ("/multi_map_manager/chunk_payload_cache", cache + "/chunk_data"),
         ("/swarm_expl/global_assignment_send", tx + "/global_assignment"),
         ("/swarm_expl/global_assignment_recv", rx + "/global_assignment"),
+        (
+            "/hybrid_communication_racer/drone_state_send",
+            tx + "/hybrid_drone_state",
+        ),
+        (
+            "/hybrid_communication_racer/drone_state_recv",
+            rx + "/hybrid_drone_state",
+        ),
+        (
+            "/hybrid_communication_racer/global_assignment_send",
+            tx + "/hybrid_global_assignment",
+        ),
+        (
+            "/hybrid_communication_racer/global_assignment_recv",
+            rx + "/hybrid_global_assignment",
+        ),
     )
     return list(pairs)
 
@@ -98,6 +116,18 @@ def _launch_nodes(context):
     directed_message_unicast = LaunchConfiguration(
         "directed_message_unicast"
     ).perform(context).lower() in ("1", "true", "yes", "on")
+    uav_channel_access_mode = LaunchConfiguration(
+        "uav_channel_access_mode"
+    ).perform(context)
+    uav_csma_cw_min = int(
+        LaunchConfiguration("uav_csma_cw_min").perform(context)
+    )
+    uav_csma_cw_max = int(
+        LaunchConfiguration("uav_csma_cw_max").perform(context)
+    )
+    uav_csma_difs_slots = int(
+        LaunchConfiguration("uav_csma_difs_slots").perform(context)
+    )
     chunk_data_pre_enqueue_dedup = LaunchConfiguration(
         "chunk_data_pre_enqueue_dedup"
     ).perform(context).lower() in ("1", "true", "yes", "on")
@@ -253,6 +283,24 @@ def _launch_nodes(context):
     bs_max_inflight_chunks_per_uav = int(
         LaunchConfiguration("bs_max_inflight_chunks_per_uav").perform(context)
     )
+    bs_payload_precache_enabled = LaunchConfiguration(
+        "bs_payload_precache_enabled"
+    ).perform(context).lower() in ("1", "true", "yes", "on")
+    bs_payload_precache_batch_size = int(
+        LaunchConfiguration("bs_payload_precache_batch_size").perform(context)
+    )
+    bs_max_payload_precache_inflight = int(
+        LaunchConfiguration("bs_max_payload_precache_inflight").perform(context)
+    )
+    bs_payload_precache_timeout_ms = float(
+        LaunchConfiguration("bs_payload_precache_timeout_ms").perform(context)
+    )
+    bs_max_uplink_chunks_per_rl_slot = int(
+        LaunchConfiguration("bs_max_uplink_chunks_per_rl_slot").perform(context)
+    )
+    bs_max_downlink_chunks_per_rl_slot = int(
+        LaunchConfiguration("bs_max_downlink_chunks_per_rl_slot").perform(context)
+    )
     bs_control_ttl_s = float(
         LaunchConfiguration("bs_control_ttl_s").perform(context)
     )
@@ -260,13 +308,26 @@ def _launch_nodes(context):
         not math.isfinite(bs_periodic_upload_request_period_ms)
         or bs_periodic_upload_request_period_ms <= 0.0
         or bs_periodic_upload_chunks_per_request <= 0
-        or bs_max_inflight_chunks_per_uav <= 0
-        or bs_periodic_upload_chunks_per_request > bs_max_inflight_chunks_per_uav
+        or bs_max_inflight_chunks_per_uav < 0
+        or (
+            bs_max_inflight_chunks_per_uav > 0
+            and bs_periodic_upload_chunks_per_request
+            > bs_max_inflight_chunks_per_uav
+        )
+        or bs_payload_precache_batch_size <= 0
+        or bs_max_payload_precache_inflight <= 0
+        or bs_payload_precache_batch_size > bs_max_payload_precache_inflight
+        or not math.isfinite(bs_payload_precache_timeout_ms)
+        or bs_payload_precache_timeout_ms <= 0.0
+        or bs_max_uplink_chunks_per_rl_slot < 0
+        or bs_max_downlink_chunks_per_rl_slot < 0
         or not math.isfinite(bs_control_ttl_s)
         or bs_control_ttl_s <= 0.0
     ):
         raise RuntimeError(
-            "bs_periodic_upload_request_period_ms must be finite and positive"
+            "BS upload timing must be positive; chunk limits may be zero for "
+            "automatic sizing; periodic chunk budget must not exceed a "
+            "positive per-UAV in-flight limit"
         )
     bs_all_to_all_relay_enabled = LaunchConfiguration(
         "bs_all_to_all_relay_enabled"
@@ -309,6 +370,9 @@ def _launch_nodes(context):
         raise RuntimeError("invalid BS event-global assignment parameters")
     rl_bs_synchronous_mode = LaunchConfiguration(
         "rl_bs_synchronous_mode"
+    ).perform(context).lower() in ("1", "true", "yes", "on")
+    rl_bs_event_driven_one_shot = LaunchConfiguration(
+        "rl_bs_event_driven_one_shot"
     ).perform(context).lower() in ("1", "true", "yes", "on")
     rl_bs_action_path = LaunchConfiguration("rl_bs_action_path").perform(context)
     rl_bs_state_path = LaunchConfiguration("rl_bs_state_path").perform(context)
@@ -396,6 +460,12 @@ def _launch_nodes(context):
                 "traj_server.drone_id": drone_id,
                 "traj_server.drone_num": drone_count,
                 "multi_map_manager.chunk_size": 50 if algorithm_variant == "oracle" else 200,
+                # Push each sealed local ChunkData into the Proxy repository.
+                # The -1 local marker is consumed before radio scheduling;
+                # actual BS delivery still requires an RL-selected PHY upload.
+                "multi_map_manager.push_chunk_payload_cache": (
+                    algorithm_variant != "oracle"
+                ),
                 "fsm.repeat_send_num": 1 if algorithm_variant == "oracle" else 10,
                 "oracle_shared_map.stamp_period": 0.05,
                 "oracle_shared_map.chunk_period": 0.02,
@@ -573,6 +643,10 @@ def _launch_nodes(context):
                     "lossless_communication_range_m": lossless_communication_range_m,
                     "lossless_control_only": lossless_control_only,
                     "directed_message_unicast": directed_message_unicast,
+                    "uav_channel_access_mode": uav_channel_access_mode,
+                    "uav_csma_cw_min": uav_csma_cw_min,
+                    "uav_csma_cw_max": uav_csma_cw_max,
+                    "uav_csma_difs_slots": uav_csma_difs_slots,
                     "chunk_data_pre_enqueue_dedup": chunk_data_pre_enqueue_dedup,
                     "chunk_data_max_pending_per_link": chunk_data_max_pending_per_link,
                     "communication_range_m": communication_range_m,
@@ -612,6 +686,22 @@ def _launch_nodes(context):
                     "bs_max_inflight_chunks_per_uav": (
                         bs_max_inflight_chunks_per_uav
                     ),
+                    "bs_payload_precache_enabled": bs_payload_precache_enabled,
+                    "bs_payload_precache_batch_size": (
+                        bs_payload_precache_batch_size
+                    ),
+                    "bs_max_payload_precache_inflight": (
+                        bs_max_payload_precache_inflight
+                    ),
+                    "bs_payload_precache_timeout_ms": (
+                        bs_payload_precache_timeout_ms
+                    ),
+                    "bs_max_uplink_chunks_per_rl_slot": (
+                        bs_max_uplink_chunks_per_rl_slot
+                    ),
+                    "bs_max_downlink_chunks_per_rl_slot": (
+                        bs_max_downlink_chunks_per_rl_slot
+                    ),
                     "bs_control_ttl_s": bs_control_ttl_s,
                     "bs_all_to_all_relay_enabled": (
                         bs_all_to_all_relay_enabled
@@ -621,6 +711,9 @@ def _launch_nodes(context):
                     ),
                     "pair_control_reservation_s": pair_control_reservation_s,
                     "rl_bs_synchronous_mode": rl_bs_synchronous_mode,
+                    "rl_bs_event_driven_one_shot": (
+                        rl_bs_event_driven_one_shot
+                    ),
                     "rl_bs_action_path": rl_bs_action_path,
                     "rl_bs_state_path": rl_bs_state_path,
                     "rl_shared_memory_root": rl_shared_memory_root,
@@ -702,6 +795,30 @@ def generate_launch_description():
             DeclareLaunchArgument("lossless_control_only", default_value="false"),
             DeclareLaunchArgument("directed_message_unicast", default_value="false"),
             DeclareLaunchArgument(
+                "uav_channel_access_mode",
+                default_value=EnvironmentVariable(
+                    "RACER_UAV_CHANNEL_ACCESS_MODE", default_value="ofdma"
+                ),
+            ),
+            DeclareLaunchArgument(
+                "uav_csma_cw_min",
+                default_value=EnvironmentVariable(
+                    "RACER_UAV_CSMA_CW_MIN", default_value="15"
+                ),
+            ),
+            DeclareLaunchArgument(
+                "uav_csma_cw_max",
+                default_value=EnvironmentVariable(
+                    "RACER_UAV_CSMA_CW_MAX", default_value="1023"
+                ),
+            ),
+            DeclareLaunchArgument(
+                "uav_csma_difs_slots",
+                default_value=EnvironmentVariable(
+                    "RACER_UAV_CSMA_DIFS_SLOTS", default_value="2"
+                ),
+            ),
+            DeclareLaunchArgument(
                 "chunk_data_pre_enqueue_dedup", default_value="false"
             ),
             DeclareLaunchArgument(
@@ -761,7 +878,25 @@ def generate_launch_description():
                 "bs_periodic_upload_chunks_per_request", default_value="8"
             ),
             DeclareLaunchArgument(
-                "bs_max_inflight_chunks_per_uav", default_value="32"
+                "bs_max_inflight_chunks_per_uav", default_value="0"
+            ),
+            DeclareLaunchArgument(
+                "bs_payload_precache_enabled", default_value="false"
+            ),
+            DeclareLaunchArgument(
+                "bs_payload_precache_batch_size", default_value="8"
+            ),
+            DeclareLaunchArgument(
+                "bs_max_payload_precache_inflight", default_value="16"
+            ),
+            DeclareLaunchArgument(
+                "bs_payload_precache_timeout_ms", default_value="5000.0"
+            ),
+            DeclareLaunchArgument(
+                "bs_max_uplink_chunks_per_rl_slot", default_value="0"
+            ),
+            DeclareLaunchArgument(
+                "bs_max_downlink_chunks_per_rl_slot", default_value="0"
             ),
             DeclareLaunchArgument(
                 "bs_control_ttl_s", default_value="2.0"
@@ -792,6 +927,9 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "rl_bs_synchronous_mode", default_value="false"
+            ),
+            DeclareLaunchArgument(
+                "rl_bs_event_driven_one_shot", default_value="false"
             ),
             DeclareLaunchArgument(
                 "rl_bs_action_path",

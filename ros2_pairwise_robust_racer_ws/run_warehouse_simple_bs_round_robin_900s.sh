@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+run_id="${RACER_RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
+
+export RACER_COMMUNICATION_MODE="${RACER_COMMUNICATION_MODE:-sionna}"
+export RACER_NETWORK_TOPOLOGY=bs_round_robin
+export RACER_FIDELITY_DURATION="${RACER_FIDELITY_DURATION:-900}"
+export RACER_FIDELITY_DRONE_COUNT="${RACER_FIDELITY_DRONE_COUNT:-5}"
+export RACER_FIDELITY_SCENARIO=warehouse_simple
+export RACER_FIDELITY_HEADLESS="${RACER_FIDELITY_HEADLESS:-1}"
+export RACER_FIDELITY_VISUALIZE="${RACER_FIDELITY_VISUALIZE:-0}"
+export RACER_REQUIRE_COMPLETION=0
+export RACER_STOP_ON_COMPLETION=1
+export RACER_MAPPING_COVERAGE_TARGET="${RACER_MAPPING_COVERAGE_TARGET:-0}"
+export RACER_PHYSICS_RATE_HZ="${RACER_PHYSICS_RATE_HZ:-100}"
+export RACER_SENSOR_RATE_HZ="${RACER_SENSOR_RATE_HZ:-10}"
+export RACER_DEPTH_WIDTH="${RACER_DEPTH_WIDTH:-320}"
+export RACER_DEPTH_HEIGHT="${RACER_DEPTH_HEIGHT:-240}"
+export RACER_CAMERA_RAY_BUDGET="${RACER_CAMERA_RAY_BUDGET:-19200}"
+export RACER_RECORD_TRAJECTORY_HISTORY="${RACER_RECORD_TRAJECTORY_HISTORY:-1}"
+export RACER_RESULT_DIR="${RACER_RESULT_DIR:-${workspace_dir}/experiments/warehouse_simple_bs_round_robin_${run_id}}"
+export ISAAC_SIM_ROOT="${ISAAC_SIM_ROOT:-/home/jackson/isaacsim}"
+export SIONNA_RUNTIME_DIR="${SIONNA_RUNTIME_DIR:-/home/jackson/racer2/RACER/ros2_3d_sionna_ws/.sionna_runtime}"
+
+exec "${workspace_dir}/run_warehouse_simple_sionna.sh"

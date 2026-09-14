@@ -35,12 +35,21 @@ racer_sionna_communication_proxy:
     # Optional CRPO file bridge. It is disabled by default, so all existing
     # ideal/Sionna/AP/round-robin experiments retain their original behavior.
     rl_bs_scheduler_enabled: false
+    rl_bs_synchronous_mode: false
     rl_bs_action_path: /tmp/racer_agentic_crpo/action.txt
     rl_bs_state_path: /tmp/racer_agentic_crpo/communication_state.json
+    rl_bs_communication_slot_ms: 20.0
     rl_bs_decision_period_ms: 20.0
+    # inline preserves the historical implementation. async keeps exact task
+    # metrics but moves voxel/trajectory bookkeeping off the forwarding path.
+    task_metric_observer_mode: inline
     chunk_data_pre_enqueue_dedup: false
     chunk_data_max_pending_per_link: 0
     communication_range_m: 4.0
+    # Optional experiment control: deliver only the state exchange needed to
+    # form epoch 1 and epoch-1 assignment/ack traffic perfectly. It turns
+    # itself off after every UAV reports applying that epoch.
+    initial_assignment_perfect_delivery: false
     active_link_hold_s: 1.0
     active_link_publish_period_s: 0.02
     bs_min_turn_ms: 10.0

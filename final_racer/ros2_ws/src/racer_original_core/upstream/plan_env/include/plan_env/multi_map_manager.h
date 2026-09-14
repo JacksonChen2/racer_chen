@@ -57,6 +57,7 @@ public:
 
 private:
   void sendChunks(const int& chunk_drone_id, const int& to_drone_id, const vector<int>& idx_list);
+  void pushLocalChunkPayloads(const int& first_idx, const int& last_idx);
   void getOccOfChunk(const vector<uint32_t>& adrs, vector<uint8_t>& occs);
   void insertChunkToMap(const MapChunk& chunk, const int& chunk_drone_id);
   void adrToIndex(const uint32_t& adr, Eigen::Vector3i& idx);
@@ -78,13 +79,14 @@ private:
   int drone_id_, map_num_;
   int vis_drone_id_;  // ONLY use for ground node!
   int chunk_size_;
+  bool push_chunk_payload_cache_;
 #ifdef RACER_ORACLE_VARIANT
   double stamp_period_s_, chunk_period_s_, stamp_throttle_s_;
 #endif
 
   SDFMap* map_;
   ros::NodeHandle node_;
-  ros::Publisher stamp_pub_, chunk_pub_, marker_pub_;
+  ros::Publisher stamp_pub_, chunk_pub_, payload_cache_pub_, marker_pub_;
   ros::Subscriber stamp_sub_, chunk_sub_;
   ros::Timer stamp_timer_, chunk_timer_;
 

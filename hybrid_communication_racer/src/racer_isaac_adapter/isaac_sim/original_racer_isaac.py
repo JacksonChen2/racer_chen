@@ -255,6 +255,74 @@ def parse_arguments() -> argparse.Namespace:
             "Qwen+CRPO trainer; disabled by default"
         ),
     )
+    parser.add_argument(
+        "--single-gpu-pause-request-file",
+        type=Path,
+        help="file request used to freeze Isaac while Qwen owns the GPU",
+    )
+    parser.add_argument(
+        "--single-gpu-pause-ack-file",
+        type=Path,
+        help="atomic Isaac acknowledgement for the single-GPU pause barrier",
+    )
+    parser.add_argument(
+        "--single-gpu-maximum-pause-s",
+        type=float,
+        default=600.0,
+        help="fail-safe wall-time lease for one Qwen pause",
+    )
+    parser.add_argument(
+        "--single-gpu-pause-poll-s",
+        type=float,
+        default=0.01,
+        help="wall-time polling interval while Isaac is frozen",
+    )
+    parser.add_argument(
+        "--rl-sync-state-file",
+        type=Path,
+        help="100 ms boundary state written by the communication proxy",
+    )
+    parser.add_argument(
+        "--rl-sync-action-file",
+        type=Path,
+        help="decision-indexed CRPO action file checked before resume",
+    )
+    parser.add_argument(
+        "--rl-sync-release-file",
+        type=Path,
+        help="trainer release record for a frozen 100 ms RL boundary",
+    )
+    parser.add_argument(
+        "--rl-sync-ack-file",
+        type=Path,
+        help="Isaac acknowledgement that simulation time is frozen",
+    )
+    parser.add_argument(
+        "--rl-sync-communication-slot-s",
+        type=float,
+        default=0.02,
+    )
+    parser.add_argument(
+        "--rl-sync-decision-interval-s",
+        type=float,
+        default=0.1,
+    )
+    parser.add_argument(
+        "--rl-sync-slots-per-decision",
+        type=int,
+        default=5,
+    )
+    parser.add_argument(
+        "--rl-sync-maximum-wait-s",
+        type=float,
+        default=1200.0,
+        help="wall-time fail-safe only; it never defines an RL timestep",
+    )
+    parser.add_argument(
+        "--rl-sync-poll-s",
+        type=float,
+        default=0.002,
+    )
     return parser.parse_args()
 
 
@@ -295,6 +363,49 @@ if ARGS.interactive_render_hz <= 0.0:
     raise SystemExit("--interactive-render-hz must be positive")
 if ARGS.propeller_visual_hz <= 0.0:
     raise SystemExit("--propeller-visual-hz must be positive")
+if (ARGS.single_gpu_pause_request_file is None) != (
+    ARGS.single_gpu_pause_ack_file is None
+):
+    raise SystemExit("both single-GPU pause files must be provided")
+if ARGS.single_gpu_maximum_pause_s <= 0.0:
+    raise SystemExit("--single-gpu-maximum-pause-s must be positive")
+if ARGS.single_gpu_pause_poll_s <= 0.0:
+    raise SystemExit("--single-gpu-pause-poll-s must be positive")
+_RL_SYNC_PATHS = (
+    ARGS.rl_sync_state_file,
+    ARGS.rl_sync_action_file,
+    ARGS.rl_sync_release_file,
+    ARGS.rl_sync_ack_file,
+)
+if any(path is None for path in _RL_SYNC_PATHS) and any(
+    path is not None for path in _RL_SYNC_PATHS
+):
+    raise SystemExit("all four synchronous-RL files must be provided")
+if (
+    ARGS.rl_sync_communication_slot_s <= 0.0
+    or ARGS.rl_sync_decision_interval_s <= 0.0
+    or ARGS.rl_sync_slots_per_decision <= 0
+    or ARGS.rl_sync_maximum_wait_s <= 0.0
+    or ARGS.rl_sync_poll_s <= 0.0
+):
+    raise SystemExit("synchronous-RL intervals must be positive")
+if not math.isclose(
+    ARGS.rl_sync_decision_interval_s,
+    ARGS.rl_sync_communication_slot_s * ARGS.rl_sync_slots_per_decision,
+    rel_tol=0.0,
+    abs_tol=1.0e-12,
+):
+    raise SystemExit(
+        "RL decision interval must equal communication slot times slot count"
+    )
+if ARGS.rl_sync_state_file is not None:
+    episode_intervals = ARGS.duration / ARGS.rl_sync_decision_interval_s
+    if not math.isclose(
+        episode_intervals, round(episode_intervals), rel_tol=0.0, abs_tol=1.0e-9
+    ):
+        raise SystemExit(
+            "synchronous-RL duration must contain an integer number of decisions"
+        )
 if ARGS.headless and ARGS.visualize_exploration:
     raise SystemExit("--visualize-exploration requires an interactive window")
 ANIMATE_PROPELLERS = (
@@ -332,6 +443,8 @@ import numpy as np  # noqa: E402
 import omni.syntheticdata as syntheticdata  # noqa: E402
 import omni.usd  # noqa: E402
 import rclpy  # noqa: E402
+from single_gpu_pause_gate import SingleGpuPauseGate  # noqa: E402
+from synchronous_rl_gate import SynchronousRlBoundaryGate  # noqa: E402
 from geometry_msgs.msg import Twist  # noqa: E402
 from isaacsim.core.api import World  # noqa: E402
 from isaacsim.core.api.objects import FixedCuboid  # noqa: E402
@@ -1251,6 +1364,7 @@ class IsaacRacer3DBridge(Node):
         self.rigid_io_profile = {
             name: {"calls": 0, "total_ms": 0.0, "max_ms": 0.0}
             for name in (
+                "initial_sync_state_batch_read",
                 "pre_state_batch_read",
                 "force_torque_batch_write",
                 "post_state_batch_read",
@@ -2893,6 +3007,41 @@ class IsaacRacer3DBridge(Node):
                 flush=True,
             )
 
+    def publish_initial_time_and_odometry(self) -> None:
+        """Publish s_0 without consuming a physics or communication slot."""
+
+        if self.elapsed != 0.0:
+            raise RuntimeError("initial synchronous state must be published at t=0")
+        clock = Clock()
+        clock.clock.sec = 0
+        clock.clock.nanosec = 0
+        self.clock_publisher.publish(clock)
+        initial_state = self._read_rigid_body_state_batch(
+            "initial_sync_state_batch_read"
+        )
+        self._read_physics(batch_state=initial_state)
+        self._publish_odometry_and_imu(clock.clock)
+        self.last_odom = 0.0
+
+    def publish_current_clock_keepalive(self) -> None:
+        """Repeat the frozen /clock sample without advancing simulation.
+
+        The clock topic is not transient-local.  Repeating the exact boundary
+        timestamp while the synchronous gate waits closes the DDS delivery
+        race in which Isaac has stopped at ``s_t`` but the communication proxy
+        missed the one clock sample that would make it publish ``s_t``.
+        """
+
+        seconds = int(math.floor(self.elapsed))
+        nanoseconds = int(round((self.elapsed - seconds) * 1.0e9))
+        if nanoseconds >= 1_000_000_000:
+            seconds += 1
+            nanoseconds -= 1_000_000_000
+        clock = Clock()
+        clock.clock.sec = seconds
+        clock.clock.nanosec = nanoseconds
+        self.clock_publisher.publish(clock)
+
     def depth_render_due(self) -> bool:
         return self.elapsed - self.last_depth >= DEPTH_PERIOD - PHYSICS_DT
 
@@ -3521,7 +3670,14 @@ class IsaacRacer3DBridge(Node):
                         or self.mapping_coverage_target_reached
                     )
                 ),
-                "truncated": bool(self.elapsed >= ARGS.duration),
+                # Floating-point accumulation can place the exact final
+                # physics tick a few ulps below ARGS.duration.  Use the same
+                # tolerance as the synchronous boundary gate so the final
+                # s_T transition is visibly terminal before Isaac enters its
+                # permanent terminal barrier.
+                "truncated": bool(
+                    self.elapsed >= ARGS.duration - 0.25 * PHYSICS_DT
+                ),
             }
             self.agentic_crpo_last_coverage = coverage
             state_path = ARGS.agentic_crpo_state_file.expanduser().resolve()
@@ -3827,6 +3983,24 @@ def main() -> None:
     main_wall_step_max_ms = 0.0
     main_world_step_sum_ms = 0.0
     main_world_step_max_ms = 0.0
+    single_gpu_pause_gate = SingleGpuPauseGate(
+        ARGS.single_gpu_pause_request_file,
+        ARGS.single_gpu_pause_ack_file,
+        maximum_pause_s=ARGS.single_gpu_maximum_pause_s,
+        poll_interval_s=ARGS.single_gpu_pause_poll_s,
+    )
+    synchronous_rl_gate = SynchronousRlBoundaryGate(
+        ARGS.rl_sync_state_file,
+        ARGS.rl_sync_action_file,
+        ARGS.rl_sync_release_file,
+        ARGS.rl_sync_ack_file,
+        communication_slot_s=ARGS.rl_sync_communication_slot_s,
+        decision_interval_s=ARGS.rl_sync_decision_interval_s,
+        slots_per_decision=ARGS.rl_sync_slots_per_decision,
+        maximum_wait_s=ARGS.rl_sync_maximum_wait_s,
+        poll_interval_s=ARGS.rl_sync_poll_s,
+        boundary_tolerance_s=max(1.0e-9, 0.25 * PHYSICS_DT),
+    )
     print(
         f"RACER_3D_ISAAC_READY drones={len(bodies)} "
         f"duration={ARGS.duration:.1f} vehicle={ARGS.vehicle_model} "
@@ -3849,6 +4023,18 @@ def main() -> None:
         last_render_wall = -math.inf
         render_report_wall = time.monotonic()
         render_report_frames = 0
+        if synchronous_rl_gate.enabled:
+            # State s_0 and the initial mission metrics are published before
+            # any physics or communication interval is allowed to advance.
+            bridge.publish_initial_time_and_odometry()
+            bridge.publish_metrics()
+            last_metrics = bridge.elapsed
+            synchronous_rl_gate.wait_at_boundary(
+                bridge.elapsed,
+                simulation_app.is_running,
+                terminal=False,
+                state_keepalive=bridge.publish_initial_time_and_odometry,
+            )
         while (
             simulation_app.is_running()
             and bridge.elapsed < ARGS.duration
@@ -3862,6 +4048,9 @@ def main() -> None:
             )
         ):
             step_started = time.monotonic()
+            single_gpu_pause_gate.wait_if_requested(
+                bridge.elapsed, simulation_app.is_running
+            )
             rclpy.spin_once(bridge, timeout_sec=0.0)
             bridge.apply_motor_wrenches()
             phase_checkpoint = (
@@ -3960,6 +4149,21 @@ def main() -> None:
                         render_report_wall = report_now
                         render_report_frames = 0
             bridge.step_observations()
+            if synchronous_rl_gate.boundary_due(bridge.elapsed):
+                # Write the mission-side task state at exactly the same 100 ms
+                # boundary as the communication-side state.  World.step and
+                # /clock do not run again until the trainer releases it.
+                bridge.publish_metrics()
+                last_metrics = bridge.elapsed
+                synchronous_rl_gate.wait_at_boundary(
+                    bridge.elapsed,
+                    simulation_app.is_running,
+                    terminal=(
+                        bridge.elapsed
+                        >= ARGS.duration - 0.25 * PHYSICS_DT
+                    ),
+                    state_keepalive=bridge.publish_current_clock_keepalive,
+                )
             if phase_checkpoint:
                 print(
                     f"RACER_3D_PHASE step={bridge.control_steps} "
@@ -4177,6 +4381,8 @@ def main() -> None:
                         ),
                         "max_world_step_ms": main_world_step_max_ms,
                     },
+                    "single_gpu_pause": single_gpu_pause_gate.report(),
+                    "synchronous_rl": synchronous_rl_gate.report(),
                     "physics_rate_hz": 1.0 / PHYSICS_DT,
                     "odometry_rate_hz": 1.0 / ODOM_PERIOD,
                     "sensor_rate_hz": 1.0 / DEPTH_PERIOD,

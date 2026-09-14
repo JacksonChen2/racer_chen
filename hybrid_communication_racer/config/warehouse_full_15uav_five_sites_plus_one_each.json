@@ -1,0 +1,633 @@
+{
+  "scene": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/warehouse_scenes/isaac/warehouse_full_with_industrial_ap.usda",
+  "layout": "five_requested_sites_existing_10_plus_one_checked_uav_per_site",
+  "selection_rule": "preserve all 10 validated starts; add one UAV per site with a 0.55 m clear start box, 0.40 m clear vertical corridor through z=2.75 m, at least three clear cardinal exits, and at least 1.50 m global spacing",
+  "base_layout": "/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/hybrid_communication_racer/config/warehouse_full_10uav_five_sites_layout.json",
+  "drone_count": 15,
+  "start_height_m": 0.75,
+  "minimum_global_spacing_m": 1.5,
+  "validation_ok": true,
+  "regions": [
+    {
+      "name": "site_1_northwest",
+      "requested_center_xy_m": [
+        -20.0,
+        26.0
+      ],
+      "selected_midpoint_xy_m": [
+        -20.0,
+        26.0
+      ],
+      "midpoint_offset_m": 0.0,
+      "pair_spacing_m": 1.5,
+      "uavs": [
+        {
+          "position": [
+            -20.75,
+            26.0,
+            0.75
+          ],
+          "distance_to_requested_center_m": 0.75,
+          "clear_cardinal_exits": 3,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        },
+        {
+          "position": [
+            -19.25,
+            26.0,
+            0.75
+          ],
+          "distance_to_requested_center_m": 0.75,
+          "clear_cardinal_exits": 4,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        },
+        {
+          "position": [
+            -20.0,
+            27.5,
+            0.75
+          ],
+          "distance_to_requested_center_m": 1.5,
+          "distance_to_existing_uavs_m": [
+            1.6770509831248424,
+            1.6770509831248424
+          ],
+          "clear_cardinal_exits": 4,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        }
+      ],
+      "base_uavs": [
+        {
+          "position": [
+            -20.75,
+            26.0,
+            0.75
+          ],
+          "distance_to_requested_center_m": 0.75,
+          "clear_cardinal_exits": 3,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        },
+        {
+          "position": [
+            -19.25,
+            26.0,
+            0.75
+          ],
+          "distance_to_requested_center_m": 0.75,
+          "clear_cardinal_exits": 4,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        }
+      ],
+      "added_uav": {
+        "position": [
+          -20.0,
+          27.5,
+          0.75
+        ],
+        "distance_to_requested_center_m": 1.5,
+        "distance_to_existing_uavs_m": [
+          1.6770509831248424,
+          1.6770509831248424
+        ],
+        "clear_cardinal_exits": 4,
+        "start_box_clear": true,
+        "vertical_takeoff_corridor_clear": true
+      },
+      "candidate_count": 149
+    },
+    {
+      "name": "site_2_southwest",
+      "requested_center_xy_m": [
+        -18.0,
+        5.0
+      ],
+      "selected_midpoint_xy_m": [
+        -18.0,
+        5.0
+      ],
+      "midpoint_offset_m": 0.0,
+      "pair_spacing_m": 1.5,
+      "uavs": [
+        {
+          "position": [
+            -18.75,
+            5.0,
+            0.75
+          ],
+          "distance_to_requested_center_m": 0.75,
+          "clear_cardinal_exits": 4,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        },
+        {
+          "position": [
+            -17.25,
+            5.0,
+            0.75
+          ],
+          "distance_to_requested_center_m": 0.75,
+          "clear_cardinal_exits": 4,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        },
+        {
+          "position": [
+            -18.0,
+            6.5,
+            0.75
+          ],
+          "distance_to_requested_center_m": 1.5,
+          "distance_to_existing_uavs_m": [
+            1.6770509831248424,
+            1.6770509831248424
+          ],
+          "clear_cardinal_exits": 4,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        }
+      ],
+      "base_uavs": [
+        {
+          "position": [
+            -18.75,
+            5.0,
+            0.75
+          ],
+          "distance_to_requested_center_m": 0.75,
+          "clear_cardinal_exits": 4,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        },
+        {
+          "position": [
+            -17.25,
+            5.0,
+            0.75
+          ],
+          "distance_to_requested_center_m": 0.75,
+          "clear_cardinal_exits": 4,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        }
+      ],
+      "added_uav": {
+        "position": [
+          -18.0,
+          6.5,
+          0.75
+        ],
+        "distance_to_requested_center_m": 1.5,
+        "distance_to_existing_uavs_m": [
+          1.6770509831248424,
+          1.6770509831248424
+        ],
+        "clear_cardinal_exits": 4,
+        "start_box_clear": true,
+        "vertical_takeoff_corridor_clear": true
+      },
+      "candidate_count": 173
+    },
+    {
+      "name": "site_3_center",
+      "requested_center_xy_m": [
+        -11.0,
+        15.0
+      ],
+      "selected_midpoint_xy_m": [
+        -11.75,
+        15.0
+      ],
+      "midpoint_offset_m": 0.75,
+      "pair_spacing_m": 1.5,
+      "aisle_constraint": {
+        "orientation": "vertical",
+        "x_max": -11.5,
+        "maximum_cross_aisle_offset_m": 0.25
+      },
+      "uavs": [
+        {
+          "position": [
+            -11.75,
+            14.25,
+            0.75
+          ],
+          "distance_to_requested_center_m": 1.0606601717798212,
+          "clear_cardinal_exits": 3,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        },
+        {
+          "position": [
+            -11.75,
+            15.75,
+            0.75
+          ],
+          "distance_to_requested_center_m": 1.0606601717798212,
+          "clear_cardinal_exits": 3,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        },
+        {
+          "position": [
+            -11.75,
+            12.75,
+            0.75
+          ],
+          "distance_to_requested_center_m": 2.3717082451262845,
+          "distance_to_existing_uavs_m": [
+            1.5,
+            3.0
+          ],
+          "clear_cardinal_exits": 3,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        }
+      ],
+      "base_uavs": [
+        {
+          "position": [
+            -11.75,
+            14.25,
+            0.75
+          ],
+          "distance_to_requested_center_m": 1.0606601717798212,
+          "clear_cardinal_exits": 3,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        },
+        {
+          "position": [
+            -11.75,
+            15.75,
+            0.75
+          ],
+          "distance_to_requested_center_m": 1.0606601717798212,
+          "clear_cardinal_exits": 3,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        }
+      ],
+      "added_uav": {
+        "position": [
+          -11.75,
+          12.75,
+          0.75
+        ],
+        "distance_to_requested_center_m": 2.3717082451262845,
+        "distance_to_existing_uavs_m": [
+          1.5,
+          3.0
+        ],
+        "clear_cardinal_exits": 3,
+        "start_box_clear": true,
+        "vertical_takeoff_corridor_clear": true
+      },
+      "candidate_count": 6
+    },
+    {
+      "name": "site_4_northeast",
+      "requested_center_xy_m": [
+        0.0,
+        27.0
+      ],
+      "selected_midpoint_xy_m": [
+        0.0,
+        27.0
+      ],
+      "midpoint_offset_m": 0.0,
+      "pair_spacing_m": 1.5,
+      "uavs": [
+        {
+          "position": [
+            -0.75,
+            27.0,
+            0.75
+          ],
+          "distance_to_requested_center_m": 0.75,
+          "clear_cardinal_exits": 4,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        },
+        {
+          "position": [
+            0.75,
+            27.0,
+            0.75
+          ],
+          "distance_to_requested_center_m": 0.75,
+          "clear_cardinal_exits": 4,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        },
+        {
+          "position": [
+            0.0,
+            28.5,
+            0.75
+          ],
+          "distance_to_requested_center_m": 1.5,
+          "distance_to_existing_uavs_m": [
+            1.6770509831248424,
+            1.6770509831248424
+          ],
+          "clear_cardinal_exits": 4,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        }
+      ],
+      "base_uavs": [
+        {
+          "position": [
+            -0.75,
+            27.0,
+            0.75
+          ],
+          "distance_to_requested_center_m": 0.75,
+          "clear_cardinal_exits": 4,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        },
+        {
+          "position": [
+            0.75,
+            27.0,
+            0.75
+          ],
+          "distance_to_requested_center_m": 0.75,
+          "clear_cardinal_exits": 4,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        }
+      ],
+      "added_uav": {
+        "position": [
+          0.0,
+          28.5,
+          0.75
+        ],
+        "distance_to_requested_center_m": 1.5,
+        "distance_to_existing_uavs_m": [
+          1.6770509831248424,
+          1.6770509831248424
+        ],
+        "clear_cardinal_exits": 4,
+        "start_box_clear": true,
+        "vertical_takeoff_corridor_clear": true
+      },
+      "candidate_count": 145
+    },
+    {
+      "name": "site_5_southeast",
+      "requested_center_xy_m": [
+        -3.0,
+        5.0
+      ],
+      "selected_midpoint_xy_m": [
+        -3.0,
+        5.0
+      ],
+      "midpoint_offset_m": 0.0,
+      "pair_spacing_m": 1.5,
+      "uavs": [
+        {
+          "position": [
+            -3.75,
+            5.0,
+            0.75
+          ],
+          "distance_to_requested_center_m": 0.75,
+          "clear_cardinal_exits": 4,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        },
+        {
+          "position": [
+            -2.25,
+            5.0,
+            0.75
+          ],
+          "distance_to_requested_center_m": 0.75,
+          "clear_cardinal_exits": 4,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        },
+        {
+          "position": [
+            -3.0,
+            6.5,
+            0.75
+          ],
+          "distance_to_requested_center_m": 1.5,
+          "distance_to_existing_uavs_m": [
+            1.6770509831248424,
+            1.6770509831248424
+          ],
+          "clear_cardinal_exits": 4,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        }
+      ],
+      "base_uavs": [
+        {
+          "position": [
+            -3.75,
+            5.0,
+            0.75
+          ],
+          "distance_to_requested_center_m": 0.75,
+          "clear_cardinal_exits": 4,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        },
+        {
+          "position": [
+            -2.25,
+            5.0,
+            0.75
+          ],
+          "distance_to_requested_center_m": 0.75,
+          "clear_cardinal_exits": 4,
+          "start_box_clear": true,
+          "vertical_takeoff_corridor_clear": true
+        }
+      ],
+      "added_uav": {
+        "position": [
+          -3.0,
+          6.5,
+          0.75
+        ],
+        "distance_to_requested_center_m": 1.5,
+        "distance_to_existing_uavs_m": [
+          1.6770509831248424,
+          1.6770509831248424
+        ],
+        "clear_cardinal_exits": 4,
+        "start_box_clear": true,
+        "vertical_takeoff_corridor_clear": true
+      },
+      "candidate_count": 173
+    }
+  ],
+  "original_start_positions": [
+    [
+      -20.75,
+      26.0,
+      0.75
+    ],
+    [
+      -19.25,
+      26.0,
+      0.75
+    ],
+    [
+      -18.75,
+      5.0,
+      0.75
+    ],
+    [
+      -17.25,
+      5.0,
+      0.75
+    ],
+    [
+      -11.75,
+      14.25,
+      0.75
+    ],
+    [
+      -11.75,
+      15.75,
+      0.75
+    ],
+    [
+      -0.75,
+      27.0,
+      0.75
+    ],
+    [
+      0.75,
+      27.0,
+      0.75
+    ],
+    [
+      -3.75,
+      5.0,
+      0.75
+    ],
+    [
+      -2.25,
+      5.0,
+      0.75
+    ]
+  ],
+  "added_start_positions": [
+    [
+      -20.0,
+      27.5,
+      0.75
+    ],
+    [
+      -18.0,
+      6.5,
+      0.75
+    ],
+    [
+      -11.75,
+      12.75,
+      0.75
+    ],
+    [
+      0.0,
+      28.5,
+      0.75
+    ],
+    [
+      -3.0,
+      6.5,
+      0.75
+    ]
+  ],
+  "start_positions": [
+    [
+      -20.75,
+      26.0,
+      0.75
+    ],
+    [
+      -19.25,
+      26.0,
+      0.75
+    ],
+    [
+      -18.75,
+      5.0,
+      0.75
+    ],
+    [
+      -17.25,
+      5.0,
+      0.75
+    ],
+    [
+      -11.75,
+      14.25,
+      0.75
+    ],
+    [
+      -11.75,
+      15.75,
+      0.75
+    ],
+    [
+      -0.75,
+      27.0,
+      0.75
+    ],
+    [
+      0.75,
+      27.0,
+      0.75
+    ],
+    [
+      -3.75,
+      5.0,
+      0.75
+    ],
+    [
+      -2.25,
+      5.0,
+      0.75
+    ],
+    [
+      -20.0,
+      27.5,
+      0.75
+    ],
+    [
+      -18.0,
+      6.5,
+      0.75
+    ],
+    [
+      -11.75,
+      12.75,
+      0.75
+    ],
+    [
+      0.0,
+      28.5,
+      0.75
+    ],
+    [
+      -3.0,
+      6.5,
+      0.75
+    ]
+  ]
+}

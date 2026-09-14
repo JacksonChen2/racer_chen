@@ -57,6 +57,7 @@ wall_time_multiplier="${RACER_WALL_TIME_MULTIPLIER:-20}"
 wall_time_grace="${RACER_WALL_TIME_GRACE_SECONDS:-300}"
 drone_count="${RACER_FIDELITY_DRONE_COUNT:-5}"
 trigger_minimum_cloud_frames="${RACER_TRIGGER_MINIMUM_CLOUD_FRAMES:-25}"
+trigger_delay_s="${RACER_TRIGGER_DELAY_S:-5.0}"
 scenario="${RACER_FIDELITY_SCENARIO:-warehouse_simple}"
 headless="${RACER_FIDELITY_HEADLESS:-1}"
 visualize="${RACER_FIDELITY_VISUALIZE:-0}"
@@ -68,10 +69,17 @@ coverage_target="${RACER_MAPPING_COVERAGE_TARGET:-0}"
 # diagnostic budget can leave unknown voxel curtains that the unchanged
 # non-optimistic A* correctly refuses to cross.
 ray_budget="${RACER_CAMERA_RAY_BUDGET:-76800}"
+depth_sensor_backend="${RACER_DEPTH_SENSOR_BACKEND:-warp}"
+sensor_profiling="${RACER_SENSOR_PROFILING:-1}"
 physics_hz="${RACER_PHYSICS_RATE_HZ:-1000}"
 sensor_hz="${RACER_SENSOR_RATE_HZ:-30}"
 sensor_worker_count="${RACER_SENSOR_WORKER_COUNT:-1}"
 scene_query_rate_hz="${RACER_SCENE_QUERY_RATE_HZ:-50.0}"
+startup_free_space_yaw="${RACER_STARTUP_FREE_SPACE_YAW:-0}"
+startup_scan_duration="${RACER_STARTUP_SCAN_DURATION:-0.0}"
+startup_unknown_corridor_distance="${RACER_STARTUP_UNKNOWN_CORRIDOR_DISTANCE:-0.0}"
+startup_corridor_speed="${RACER_STARTUP_CORRIDOR_SPEED:-0.25}"
+startup_settle_duration="${RACER_STARTUP_SETTLE_DURATION:-1.0}"
 depth_width="${RACER_DEPTH_WIDTH:-640}"
 depth_height="${RACER_DEPTH_HEIGHT:-480}"
 interactive_hz="${RACER_INTERACTIVE_RENDER_HZ:-30}"
@@ -80,6 +88,8 @@ record_trajectory_history="${RACER_RECORD_TRAJECTORY_HISTORY:-0}"
 result_dir="${RACER_RESULT_DIR:-${workspace_dir}/validation}"
 bs_tx_power_dbm="${RACER_BS_TX_POWER_DBM:-33.0}"
 uav_tx_power_dbm="${RACER_UAV_TX_POWER_DBM:-23.0}"
+bandwidth_hz="${RACER_BANDWIDTH_HZ:-100000000.0}"
+resource_blocks="${RACER_RESOURCE_BLOCKS:-66}"
 max_retries="${RACER_MAX_RETRIES:-3}"
 bs_max_retries="${RACER_BS_MAX_RETRIES:-3}"
 fixed_mcs_index="${RACER_FIXED_MCS_INDEX:--1}"
@@ -152,6 +162,11 @@ if [[ ! "${max_retries}" =~ ^[0-9]+$ || ! "${bs_max_retries}" =~ ^[0-9]+$ ]]; th
   printf 'RACER_MAX_RETRIES and RACER_BS_MAX_RETRIES must be non-negative integers.\n' >&2
   exit 2
 fi
+if [[ ! "${resource_blocks}" =~ ^[1-9][0-9]*$ ]] ||
+   ! python3 -c 'import math,sys; bandwidth=float(sys.argv[1]); resource_blocks=int(sys.argv[2]); occupied=12.0*120000.0*resource_blocks; raise SystemExit(not (math.isfinite(bandwidth) and bandwidth > 0.0 and occupied <= bandwidth))' "${bandwidth_hz}" "${resource_blocks}"; then
+  printf 'RACER_BANDWIDTH_HZ and RACER_RESOURCE_BLOCKS must define a valid 120 kHz NR allocation.\n' >&2
+  exit 2
+fi
 if [[ "${fixed_mcs_index}" != "-1" && "${fixed_mcs_index}" != "14" ]]; then
   printf 'RACER_FIXED_MCS_INDEX must be -1 (adaptive) or 14.\n' >&2
   exit 2
@@ -161,8 +176,24 @@ if [[ ! "${sensor_worker_count}" =~ ^[1-9][0-9]*$ ]] ||
   printf 'RACER_SENSOR_WORKER_COUNT must be in [1, drone_count].\n' >&2
   exit 2
 fi
+if [[ "${depth_sensor_backend}" != "warp" && "${depth_sensor_backend}" != "rtx" ]]; then
+  printf 'RACER_DEPTH_SENSOR_BACKEND must be warp or rtx.\n' >&2
+  exit 2
+fi
+if [[ "${sensor_profiling}" != "0" && "${sensor_profiling}" != "1" ]]; then
+  printf 'RACER_SENSOR_PROFILING must be 0 or 1.\n' >&2
+  exit 2
+fi
 if [[ ! "${trigger_minimum_cloud_frames}" =~ ^[0-9]+$ ]]; then
   printf 'RACER_TRIGGER_MINIMUM_CLOUD_FRAMES must be a non-negative integer.\n' >&2
+  exit 2
+fi
+if ! python3 -c 'import math,sys; value=float(sys.argv[1]); raise SystemExit(not (math.isfinite(value) and value >= 0.0))' "${trigger_delay_s}"; then
+  printf 'RACER_TRIGGER_DELAY_S must be finite and non-negative.\n' >&2
+  exit 2
+fi
+if [[ "${startup_free_space_yaw}" != "0" && "${startup_free_space_yaw}" != "1" ]]; then
+  printf 'RACER_STARTUP_FREE_SPACE_YAW must be 0 or 1.\n' >&2
   exit 2
 fi
 if ! python3 -c 'import math,sys; value=float(sys.argv[1]); raise SystemExit(not (math.isfinite(value) and value > 0.0))' "${scene_query_rate_hz}"; then
@@ -238,6 +269,8 @@ launch_communication_args=(
   sionna_scene_xml:="${sionna_scene_xml}"
   ap_tx_power_dbm:="${bs_tx_power_dbm}"
   uav_tx_power_dbm:="${uav_tx_power_dbm}"
+  bandwidth_hz:="${bandwidth_hz}"
+  resource_blocks:="${resource_blocks}"
   max_retries:="${max_retries}"
   bs_max_retries:="${bs_max_retries}"
   fixed_mcs_index:="${fixed_mcs_index}"
@@ -266,6 +299,7 @@ setsid ros2 launch "${launch_debug_args[@]}" \
   "${launch_package}" "${launch_file}" \
   drone_count:="${drone_count}" \
   trigger_minimum_cloud_frames:="${trigger_minimum_cloud_frames}" \
+  trigger_delay_s:="${trigger_delay_s}" \
   scenario:="${scenario}" \
   algorithm_variant:="${algorithm_variant}" \
   lkh_dir:="${lkh_dir}" \
@@ -308,6 +342,7 @@ isaac_args=(
   --duration "${duration}"
   --drone-count "${drone_count}"
   --camera-ray-budget "${ray_budget}"
+  --depth-sensor-backend "${depth_sensor_backend}"
   --physics-rate-hz "${physics_hz}"
   --sensor-rate-hz "${sensor_hz}"
   --sensor-worker-count "${sensor_worker_count}"
@@ -317,6 +352,20 @@ isaac_args=(
   --diagnostics
   --mapping-coverage-target "${coverage_target}"
 )
+if [[ "${sensor_profiling}" == "0" ]]; then
+  isaac_args+=(--no-sensor-profiling)
+else
+  isaac_args+=(--sensor-profiling)
+fi
+if [[ "${startup_free_space_yaw}" == "1" ]]; then
+  isaac_args+=(
+    --startup-free-space-yaw
+    --startup-scan-duration "${startup_scan_duration}"
+    --startup-unknown-corridor-distance "${startup_unknown_corridor_distance}"
+    --startup-corridor-speed "${startup_corridor_speed}"
+    --startup-settle-duration "${startup_settle_duration}"
+  )
+fi
 if [[ -n "${start_positions}" ]]; then
   read -r -a start_values <<< "${start_positions}"
   if ! python3 - "${drone_count}" "${start_values[@]}" <<'PY'
@@ -405,6 +454,64 @@ metrics = json.loads(matches[-1])
 launch_text = launch_log.read_text(errors="replace")
 comm_matches = re.findall(r"RACER_SIONNA_STATS (\{[^\n]+\})", launch_text)
 communication_statistics = json.loads(comm_matches[-1]) if comm_matches else {}
+channel_profile_matches = re.findall(
+    r"RACER_SIONNA_CHANNEL_PROFILE (\{[^\n]+\})", launch_text
+)
+channel_profile = (
+    json.loads(channel_profile_matches[-1])
+    if channel_profile_matches
+    else {}
+)
+esdf_pattern = re.compile(
+    r"\[racer_original_exploration_(\d+)\]: RACER_ESDF_PROFILE "
+    r"updates=(\d+) timer_updates=(\d+) planner_updates=(\d+) "
+    r"current_ms=([0-9.eE+-]+) mean_ms=([0-9.eE+-]+) "
+    r"max_ms=([0-9.eE+-]+) dirty_age_ms=([0-9.eE+-]+) "
+    r"reason=(\w+) max_rate_hz=([0-9.eE+-]+)"
+)
+latest_esdf_by_agent = {}
+for match in esdf_pattern.finditer(launch_text):
+    latest_esdf_by_agent[int(match.group(1))] = {
+        "updates": int(match.group(2)),
+        "timer_updates": int(match.group(3)),
+        "planner_updates": int(match.group(4)),
+        "current_ms": float(match.group(5)),
+        "mean_ms": float(match.group(6)),
+        "max_ms": float(match.group(7)),
+        "dirty_age_ms": float(match.group(8)),
+        "last_reason": match.group(9),
+        "max_rate_hz": float(match.group(10)),
+    }
+if latest_esdf_by_agent:
+    total_esdf_updates = sum(
+        row["updates"] for row in latest_esdf_by_agent.values()
+    )
+    metrics["esdf_profile"] = {
+        "agents_reported": len(latest_esdf_by_agent),
+        "updates": total_esdf_updates,
+        "timer_updates": sum(
+            row["timer_updates"] for row in latest_esdf_by_agent.values()
+        ),
+        "planner_forced_updates": sum(
+            row["planner_updates"] for row in latest_esdf_by_agent.values()
+        ),
+        "mean_update_ms": (
+            sum(
+                row["mean_ms"] * row["updates"]
+                for row in latest_esdf_by_agent.values()
+            )
+            / total_esdf_updates
+            if total_esdf_updates
+            else 0.0
+        ),
+        "max_update_ms": max(
+            row["max_ms"] for row in latest_esdf_by_agent.values()
+        ),
+        "configured_max_rate_hz": max(
+            row["max_rate_hz"] for row in latest_esdf_by_agent.values()
+        ),
+        "per_agent_latest": latest_esdf_by_agent,
+    }
 sionna_ready = (
     communication_mode == "ideal"
     or (
@@ -585,6 +692,7 @@ result = {
         "sionna_ready": sionna_ready,
         "exact_link_samples": exact_link_samples,
         "statistics": communication_statistics,
+        "channel_profile": channel_profile,
     },
     "passed": passed,
     "metrics": metrics,

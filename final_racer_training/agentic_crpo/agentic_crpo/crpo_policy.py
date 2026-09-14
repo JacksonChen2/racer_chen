@@ -1,4 +1,4 @@
-"""SB3 actor-critic policy with a second scalar cost critic."""
+"""SB3 actor with independent task-phase reward and constraint critics."""
 
 from __future__ import annotations
 
@@ -26,6 +26,9 @@ DUAL_ENCODER_NET_ARCH = {"pi": [128], "vf": [128]}
 N10_PHYSICAL_STATE_DIM = 440
 N10_GUIDANCE_DIM = 110
 N10_OBSERVATION_DIM = N10_PHYSICAL_STATE_DIM + N10_GUIDANCE_DIM
+TASK_PHASE_DUAL_CRITIC_ARCHITECTURE = (
+    "independent_reward_constraint_critics_with_episode_phase_v1"
+)
 
 
 class PhysicalGuidanceFeatureExtractor(BaseFeaturesExtractor):
@@ -112,8 +115,110 @@ class PhysicalGuidanceFeatureExtractor(BaseFeaturesExtractor):
         return self.encode_parts(observations)[2]
 
 
+class TaskPhaseCriticFeatureExtractor(nn.Module):
+    """Independent dual encoder whose fusion input is ``[h_obs, tau]``."""
+
+    features_dim = PhysicalGuidanceFeatureExtractor.features_dim
+
+    def __init__(self, observation_space: spaces.Space) -> None:
+        super().__init__()
+        observation_encoder = PhysicalGuidanceFeatureExtractor(
+            observation_space
+        )
+        self.n_uavs = observation_encoder.n_uavs
+        self.physical_state_dim = observation_encoder.physical_state_dim
+        self.guidance_dim = observation_encoder.guidance_dim
+        self.observation_dim = observation_encoder.observation_dim
+        self.input_dim = self.observation_dim + 1
+        self.physical_encoder = observation_encoder.physical_encoder
+        self.guidance_encoder = observation_encoder.guidance_encoder
+        self.fusion_encoder = nn.Sequential(
+            nn.Linear(193, 256),
+            nn.LayerNorm(256),
+            nn.SiLU(),
+            nn.Linear(256, self.features_dim),
+            nn.SiLU(),
+        )
+
+    def forward(self, critic_input: th.Tensor) -> th.Tensor:
+        if critic_input.shape[-1] != self.input_dim:
+            raise ValueError(
+                f"critic expected [obs, tau] width {self.input_dim}, "
+                f"got {critic_input.shape[-1]}"
+            )
+        physical_state = critic_input[..., : self.physical_state_dim]
+        guidance_end = self.physical_state_dim + self.guidance_dim
+        llm_guidance = critic_input[..., self.physical_state_dim : guidance_end]
+        phase = critic_input[..., -1:]
+        h_physical = self.physical_encoder(physical_state)
+        h_guidance = self.guidance_encoder(llm_guidance)
+        return self.fusion_encoder(
+            th.cat((h_physical, h_guidance, phase), dim=-1)
+        )
+
+
+class TaskPhaseValueEstimator(nn.Module):
+    """An independent critic whose complete input is ``[obs, tau]``.
+
+    Each instance owns its physical, guidance, and fusion encoders.  The
+    actor's feature extractor is therefore not part of either value-learning
+    path, and the reward and constraint critics share no parameter storage.
+    """
+
+    def __init__(self, observation_space: spaces.Space) -> None:
+        super().__init__()
+        self.features_extractor = TaskPhaseCriticFeatureExtractor(
+            observation_space
+        )
+        self.observation_dim = self.features_extractor.observation_dim
+        self.input_dim = self.observation_dim + 1
+        self.value_mlp = nn.Sequential(
+            nn.Linear(self.features_extractor.features_dim, 128),
+            nn.SiLU(),
+        )
+        self.value_head = nn.Linear(128, 1)
+
+    @staticmethod
+    def _phase_tensor(obs: th.Tensor, tau: th.Tensor | float | None) -> th.Tensor:
+        batch_shape = tuple(obs.shape[:-1])
+        if tau is None:
+            phase = obs.new_zeros((*batch_shape, 1))
+        else:
+            phase = th.as_tensor(tau, device=obs.device, dtype=obs.dtype)
+            if tuple(phase.shape) == batch_shape:
+                phase = phase.unsqueeze(-1)
+            elif phase.ndim == 0:
+                phase = phase.expand(*batch_shape, 1)
+            elif tuple(phase.shape) != (*batch_shape, 1):
+                raise ValueError(
+                    "critic tau shape must match the observation batch: "
+                    f"obs={tuple(obs.shape)}, tau={tuple(phase.shape)}"
+                )
+        if not bool(th.all(th.isfinite(phase))):
+            raise FloatingPointError("critic tau contains NaN or Inf")
+        return phase.clamp(0.0, 1.0)
+
+    def forward(
+        self, obs: th.Tensor, tau: th.Tensor | float | None
+    ) -> th.Tensor:
+        if obs.shape[-1] != self.observation_dim:
+            raise ValueError(
+                f"critic expected observation width {self.observation_dim}, "
+                f"got {obs.shape[-1]}"
+            )
+        phase = self._phase_tensor(obs, tau)
+        critic_input = th.cat((obs, phase), dim=-1)
+        if critic_input.shape[-1] != self.input_dim:
+            raise RuntimeError("critic [obs, tau] input has the wrong width")
+        features = self.features_extractor(critic_input)
+        latent = self.value_mlp(features)
+        return self.value_head(latent)
+
+
 class CRPOActorCriticPolicy(ActorCriticPolicy):
     cost_value_net: nn.Linear
+    reward_critic: TaskPhaseValueEstimator
+    constraint_critic: TaskPhaseValueEstimator
 
     def __init__(
         self,
@@ -153,6 +258,7 @@ class CRPOActorCriticPolicy(ActorCriticPolicy):
             **kwargs,
         )
         self.architecture_version = DUAL_ENCODER_ARCHITECTURE
+        self.critic_architecture_version = TASK_PHASE_DUAL_CRITIC_ARCHITECTURE
         if not isinstance(self.action_space, spaces.MultiBinary):
             raise ValueError(
                 "BS-link feasibility masking requires a MultiBinary action space"
@@ -215,10 +321,92 @@ class CRPOActorCriticPolicy(ActorCriticPolicy):
             self.cost_value_net.apply(
                 lambda module: self.init_weights(module, gain=1.0)
             )
-        # ActorCriticPolicy created its optimizer before the cost head existed.
+        # Retain the legacy shared critic modules in the state dictionary so
+        # existing checkpoints remain loadable, but never use or optimize them.
+        # New checkpoints likewise retain those keys for bidirectional tooling
+        # compatibility with existing checkpoint inspection code.
+        for module in (
+            self.mlp_extractor.value_net,
+            self.value_net,
+            self.cost_value_net,
+        ):
+            module.requires_grad_(False)
+
+        self.reward_critic = TaskPhaseValueEstimator(self.observation_space)
+        self.constraint_critic = TaskPhaseValueEstimator(self.observation_space)
+        if self.ortho_init:
+            for critic in (self.reward_critic, self.constraint_critic):
+                critic.apply(
+                    lambda module: self.init_weights(module, gain=np.sqrt(2))
+                )
+                critic.value_head.apply(
+                    lambda module: self.init_weights(module, gain=1.0)
+                )
+
+        # ActorCriticPolicy created its optimizer before the independent
+        # critics existed. Frozen legacy value modules are intentionally
+        # omitted from optimization.
         self.optimizer = self.optimizer_class(
-            self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs
+            (parameter for parameter in self.parameters() if parameter.requires_grad),
+            lr=lr_schedule(1),
+            **self.optimizer_kwargs,
         )
+
+    def _migrate_legacy_critic_state_dict(
+        self, state_dict: dict[str, th.Tensor]
+    ) -> dict[str, th.Tensor]:
+        """Seed new independent critics when loading a pre-phase checkpoint."""
+
+        if any(key.startswith("reward_critic.") for key in state_dict):
+            return state_dict
+        migrated = state_dict.copy()
+        current = self.state_dict()
+        for critic_name, legacy_head in (
+            ("reward_critic", "value_net"),
+            ("constraint_critic", "cost_value_net"),
+        ):
+            prefix = f"{critic_name}."
+            for target, default in current.items():
+                if not target.startswith(prefix) or target in migrated:
+                    continue
+                relative = target[len(prefix) :]
+                if relative.startswith("features_extractor."):
+                    source = relative
+                elif relative.startswith("value_mlp."):
+                    source = "mlp_extractor.value_net." + relative.removeprefix(
+                        "value_mlp."
+                    )
+                elif relative.startswith("value_head."):
+                    source = legacy_head + "." + relative.removeprefix(
+                        "value_head."
+                    )
+                else:
+                    source = ""
+                value = state_dict.get(source)
+                if value is not None and value.shape == default.shape:
+                    migrated[target] = value
+                elif (
+                    value is not None
+                    and target.endswith("fusion_encoder.0.weight")
+                    and value.shape[:-1] == default.shape[:-1]
+                    and value.shape[-1] + 1 == default.shape[-1]
+                ):
+                    expanded = default.clone()
+                    expanded[..., :-1] = value
+                    expanded[..., -1] = 0.0
+                    migrated[target] = expanded
+                else:
+                    migrated[target] = default
+        return migrated
+
+    def load_state_dict(
+        self,
+        state_dict: dict[str, th.Tensor],
+        strict: bool = True,
+        assign: bool = False,
+    ):
+        migrated = self._migrate_legacy_critic_state_dict(state_dict)
+        return super().load_state_dict(migrated, strict=strict, assign=assign)
 
     def _bs_link_directions(
         self, obs: PyTorchObs
@@ -318,13 +506,15 @@ class CRPOActorCriticPolicy(ActorCriticPolicy):
         return self.action_dist.proba_distribution(action_logits=masked_logits)
 
     def forward(
-        self, obs: th.Tensor, deterministic: bool = False
+        self,
+        obs: th.Tensor,
+        deterministic: bool = False,
+        critic_tau: th.Tensor | float | None = None,
     ) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
         features = self.extract_features(obs)
         available = self.bs_link_availability(obs)
         latent_pi = self._actor_latent(features, available)
-        latent_vf = self.mlp_extractor.forward_critic(features)
-        values = self.value_net(latent_vf)
+        values = self.predict_reward_values(obs, critic_tau)
         distribution = self._masked_action_distribution(
             latent_pi, self.action_mask(obs)
         )
@@ -334,17 +524,21 @@ class CRPOActorCriticPolicy(ActorCriticPolicy):
         return actions, values, log_prob
 
     def evaluate_actions(
-        self, obs: PyTorchObs, actions: th.Tensor
+        self,
+        obs: PyTorchObs,
+        actions: th.Tensor,
+        critic_tau: th.Tensor | float | None = None,
     ) -> tuple[th.Tensor, th.Tensor, th.Tensor | None]:
+        if not isinstance(obs, th.Tensor):
+            raise TypeError("dual-encoder policy requires a tensor observation")
         features = self.extract_features(obs)
         available = self.bs_link_availability(obs)
         latent_pi = self._actor_latent(features, available)
-        latent_vf = self.mlp_extractor.forward_critic(features)
         distribution = self._masked_action_distribution(
             latent_pi, self.action_mask(obs)
         )
         return (
-            self.value_net(latent_vf),
+            self.predict_reward_values(obs, critic_tau),
             distribution.log_prob(actions),
             distribution.entropy(),
         )
@@ -355,21 +549,45 @@ class CRPOActorCriticPolicy(ActorCriticPolicy):
         latent_pi = self._actor_latent(features, available)
         return self._masked_action_distribution(latent_pi, self.action_mask(obs))
 
-    def predict_cost_values(self, obs: PyTorchObs) -> th.Tensor:
-        features = super().extract_features(obs, self.vf_features_extractor)
-        latent = self.mlp_extractor.forward_critic(features)
-        return self.cost_value_net(latent)
+    def predict_reward_values(
+        self, obs: PyTorchObs, critic_tau: th.Tensor | float | None = None
+    ) -> th.Tensor:
+        if not isinstance(obs, th.Tensor):
+            raise TypeError("reward critic requires a tensor observation")
+        return self.reward_critic(obs, critic_tau)
+
+    def predict_values(
+        self, obs: PyTorchObs, critic_tau: th.Tensor | float | None = None
+    ) -> th.Tensor:
+        """SB3-compatible reward-value entry point with optional phase."""
+
+        return self.predict_reward_values(obs, critic_tau)
+
+    def predict_cost_values(
+        self, obs: PyTorchObs, critic_tau: th.Tensor | float | None = None
+    ) -> th.Tensor:
+        if not isinstance(obs, th.Tensor):
+            raise TypeError("constraint critic requires a tensor observation")
+        return self.constraint_critic(obs, critic_tau)
 
     def forward_crpo(
-        self, obs: th.Tensor, deterministic: bool = False
+        self,
+        obs: th.Tensor,
+        deterministic: bool = False,
+        critic_tau: th.Tensor | float | None = None,
     ) -> tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor]:
         actions, reward_values, cost_values, log_prob, _ = (
-            self.forward_crpo_with_masked_logits(obs, deterministic)
+            self.forward_crpo_with_masked_logits(
+                obs, deterministic, critic_tau=critic_tau
+            )
         )
         return actions, reward_values, cost_values, log_prob
 
     def forward_crpo_with_masked_logits(
-        self, obs: th.Tensor, deterministic: bool = False
+        self,
+        obs: th.Tensor,
+        deterministic: bool = False,
+        critic_tau: th.Tensor | float | None = None,
     ) -> tuple[
         th.Tensor,
         th.Tensor,
@@ -387,9 +605,8 @@ class CRPOActorCriticPolicy(ActorCriticPolicy):
         features = self.extract_features(obs)
         available = self.bs_link_availability(obs)
         latent_pi = self._actor_latent(features, available)
-        latent_vf = self.mlp_extractor.forward_critic(features)
-        reward_values = self.value_net(latent_vf)
-        cost_values = self.cost_value_net(latent_vf)
+        reward_values = self.predict_reward_values(obs, critic_tau)
+        cost_values = self.predict_cost_values(obs, critic_tau)
         masked_logits = self._masked_action_logits(
             latent_pi, self.action_mask(obs)
         )
@@ -406,18 +623,22 @@ class CRPOActorCriticPolicy(ActorCriticPolicy):
         )
 
     def evaluate_actions_crpo(
-        self, obs: PyTorchObs, actions: th.Tensor
+        self,
+        obs: PyTorchObs,
+        actions: th.Tensor,
+        critic_tau: th.Tensor | float | None = None,
     ) -> tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor | None]:
+        if not isinstance(obs, th.Tensor):
+            raise TypeError("dual-encoder policy requires a tensor observation")
         features = self.extract_features(obs)
         available = self.bs_link_availability(obs)
         latent_pi = self._actor_latent(features, available)
-        latent_vf = self.mlp_extractor.forward_critic(features)
         distribution = self._masked_action_distribution(
             latent_pi, self.action_mask(obs)
         )
         return (
-            self.value_net(latent_vf),
-            self.cost_value_net(latent_vf),
+            self.predict_reward_values(obs, critic_tau),
+            self.predict_cost_values(obs, critic_tau),
             distribution.log_prob(actions),
             distribution.entropy(),
         )

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+workspace="/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/hybrid_communication_racer"
+reference_result="${workspace}/experiments/reproduce_7565_legacy_passive_metrics_20260902/formal_300s/warehouse_full_distributed_result.json"
+ground_truth="${workspace}/experiments/five_sites_same_aisle_10uav_300s_20260831/qwen14b_crpo_fixed_constraint_30ep_lr2e4_b64_s384_tanh_20260901/reference/gt_occupied_voxels.txt"
+
+export RACER_QWEN8_CAMPAIGN="${workspace}/experiments/five_sites_same_aisle_10uav_300s_20260831/qwen8b_fp8_resource_ltask025_perfect_direct_30ep_20260902"
+export RACER_QWEN8_CONFIG="${workspace}/agentic_crpo/config_qwen8b_fp8_resource_ltask025_perfect_direct_30ep.yaml"
+export RACER_QWEN8_REFERENCE_ROOT="${RACER_QWEN8_CAMPAIGN}/reference"
+export RACER_QWEN8_GT_PATH="${ground_truth}"
+export RACER_QWEN8_PERFECT_RESULT="${reference_result}"
+export RACER_QWEN8_BRIDGE_DIR="/tmp/racer_agentic_crpo_qwen8b_fp8_ltask025_perfect"
+export RACER_QWEN8_EPISODES=30
+export RACER_QWEN8_DURATION=300
+export RACER_QWEN8_GAMMA_TASK=0.25
+export RACER_QWEN8_ACTIVATION_FN=silu
+export RACER_QWEN8_COMMUNICATION_MODE=ideal
+export RACER_QWEN8_NETWORK_TOPOLOGY=bs_round_robin
+export RACER_QWEN8_REQUIRE_SIONNA=false
+export RACER_QWEN8_PRESERVE_IDEAL_DIRECT_WITH_BS=true
+export RACER_QWEN8_MINIMUM_COVERAGE=0.73
+export RACER_QWEN8_DOMAIN_BASE=190
+export RACER_QWEN8_TRAINING_LABEL=qwen8b_fp8_resource_ltask025_perfect_direct
+export RACER_REQUIRE_QWEN_MODEL=true
+export RACER_SINGLE_GPU_PAUSE_ENABLED=true
+
+exec "${workspace}/scripts/run_qwen8b_taskloss_single_gpu_30episodes_gamma015.sh"

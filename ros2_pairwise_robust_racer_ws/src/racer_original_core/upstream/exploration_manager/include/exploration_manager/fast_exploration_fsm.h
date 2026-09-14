@@ -147,6 +147,7 @@ private:
   int last_committed_transaction_peer_{ -1 };
   int consecutive_plan_failures_{ 0 };
   double idle_since_s_{ -1.0 };
+  double last_idle_map_wakeup_check_s_{ -1.0 };
   vector<uint64_t> last_reported_assignment_epochs_;
 };
 

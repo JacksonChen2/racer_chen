@@ -12,12 +12,15 @@ from stable_baselines3.common.buffers import RolloutBuffer
 
 class CRPORolloutBufferSamples(NamedTuple):
     observations: th.Tensor
+    critic_taus: th.Tensor
     actions: th.Tensor
     old_values: th.Tensor
     old_cost_values: th.Tensor
     old_log_prob: th.Tensor
     advantages: th.Tensor
     cost_advantages: th.Tensor
+    normalized_advantages: th.Tensor
+    normalized_cost_advantages: th.Tensor
     returns: th.Tensor
     cost_returns: th.Tensor
 
@@ -41,6 +44,13 @@ class CRPORolloutBuffer(RolloutBuffer):
         self.cost_values = np.zeros(shape, dtype=np.float32)
         self.cost_advantages = np.zeros(shape, dtype=np.float32)
         self.cost_returns = np.zeros(shape, dtype=np.float32)
+        self.normalized_advantages = np.zeros(shape, dtype=np.float32)
+        self.normalized_cost_advantages = np.zeros(shape, dtype=np.float32)
+        self.critic_taus = np.zeros(shape, dtype=np.float32)
+        self.reward_adv_mean = 0.0
+        self.reward_adv_std = 0.0
+        self.constraint_adv_mean = 0.0
+        self.constraint_adv_std = 0.0
         self.action_versions = np.zeros(shape, dtype=np.int64)
         self.policy_versions = np.zeros(shape, dtype=np.int64)
         self.action_ages = np.zeros(shape, dtype=np.float64)
@@ -65,6 +75,7 @@ class CRPORolloutBuffer(RolloutBuffer):
         cost_value: th.Tensor | np.ndarray,
         log_prob: th.Tensor | np.ndarray,
         *,
+        critic_tau: np.ndarray | float = 0.0,
         action_version: np.ndarray | int = 0,
         policy_version: np.ndarray | int = 0,
         action_age: np.ndarray | float = 0.0,
@@ -107,6 +118,7 @@ class CRPORolloutBuffer(RolloutBuffer):
             ("reward value", value_array),
             ("cost value", cost_value_array),
             ("old log probability", log_prob_array),
+            ("critic tau", np.asarray(critic_tau)),
         ):
             if not np.all(np.isfinite(values)):
                 raise FloatingPointError(
@@ -123,6 +135,9 @@ class CRPORolloutBuffer(RolloutBuffer):
             self.full = True
         self.costs[position] = np.asarray(cost)
         self.cost_values[position] = cost_value_array.reshape(-1)
+        self.critic_taus[position] = np.clip(
+            np.asarray(critic_tau, dtype=np.float32).reshape(-1), 0.0, 1.0
+        )
         self.action_versions[position] = np.asarray(action_version)
         self.policy_versions[position] = np.asarray(policy_version)
         self.action_ages[position] = np.asarray(action_age)
@@ -166,7 +181,14 @@ class CRPORolloutBuffer(RolloutBuffer):
             "costs",
             "values",
             "cost_values",
+            "critic_taus",
             "log_probs",
+            "advantages",
+            "cost_advantages",
+            "normalized_advantages",
+            "normalized_cost_advantages",
+            "returns",
+            "cost_returns",
         ):
             values = self.__dict__[name][:size]
             if not np.all(np.isfinite(values)):
@@ -235,6 +257,24 @@ class CRPORolloutBuffer(RolloutBuffer):
         self.cost_returns[:valid_size] = (
             self.cost_advantages[:valid_size] + self.cost_values[:valid_size]
         )
+        # Normalize the two complete-rollout advantage populations
+        # independently. Raw advantages and return targets remain untouched.
+        reward_advantages = self.advantages[:valid_size]
+        cost_advantages = self.cost_advantages[:valid_size]
+        self.reward_adv_mean = float(np.mean(reward_advantages, dtype=np.float64))
+        self.reward_adv_std = float(np.std(reward_advantages, dtype=np.float64))
+        self.constraint_adv_mean = float(
+            np.mean(cost_advantages, dtype=np.float64)
+        )
+        self.constraint_adv_std = float(
+            np.std(cost_advantages, dtype=np.float64)
+        )
+        self.normalized_advantages[:valid_size] = (
+            reward_advantages - self.reward_adv_mean
+        ) / (self.reward_adv_std + 1.0e-8)
+        self.normalized_cost_advantages[:valid_size] = (
+            cost_advantages - self.constraint_adv_mean
+        ) / (self.constraint_adv_std + 1.0e-8)
 
     def get(
         self, batch_size: int | None = None
@@ -248,12 +288,15 @@ class CRPORolloutBuffer(RolloutBuffer):
         if not self.generator_ready:
             for name in (
                 "observations",
+                "critic_taus",
                 "actions",
                 "values",
                 "cost_values",
                 "log_probs",
                 "advantages",
                 "cost_advantages",
+                "normalized_advantages",
+                "normalized_cost_advantages",
                 "returns",
                 "cost_returns",
             ):
@@ -266,12 +309,15 @@ class CRPORolloutBuffer(RolloutBuffer):
             batch = indices[start : start + batch_size]
             data = (
                 self.observations[batch],
+                self.critic_taus[batch].flatten(),
                 self.actions[batch].astype(np.float32, copy=False),
                 self.values[batch].flatten(),
                 self.cost_values[batch].flatten(),
                 self.log_probs[batch].flatten(),
                 self.advantages[batch].flatten(),
                 self.cost_advantages[batch].flatten(),
+                self.normalized_advantages[batch].flatten(),
+                self.normalized_cost_advantages[batch].flatten(),
                 self.returns[batch].flatten(),
                 self.cost_returns[batch].flatten(),
             )

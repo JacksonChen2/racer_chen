@@ -37,6 +37,11 @@ class LinkModel {
   double bitsPerSlot(double snr_db, int resource_blocks) const;
   double serializationDelay(double snr_db, std::size_t bytes) const;
   double packetErrorRate(double snr_db, std::size_t bytes) const;
+  double expectedReliablePacketAirtime(
+      double snr_db, std::size_t bytes, int max_retries) const;
+  std::size_t reliablePacketCapacity(
+      double snr_db, std::size_t bytes, int max_retries,
+      double available_airtime_s) const;
   std::size_t transportBlockCount(std::size_t bytes) const noexcept;
   double slotDuration() const;
   const LinkModelConfig &config() const noexcept { return config_; }

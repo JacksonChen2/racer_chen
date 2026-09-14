@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+run_id="${RACER_RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
+
+export RACER_COMMUNICATION_MODE="${RACER_COMMUNICATION_MODE:-sionna}"
+export RACER_NETWORK_TOPOLOGY=bs_round_robin
+export RACER_FIDELITY_DURATION="${RACER_FIDELITY_DURATION:-900}"
+export RACER_FIDELITY_DRONE_COUNT="${RACER_FIDELITY_DRONE_COUNT:-5}"
+export RACER_FIDELITY_SCENARIO=warehouse_loaded
+export RACER_FIDELITY_HEADLESS="${RACER_FIDELITY_HEADLESS:-1}"
+export RACER_FIDELITY_VISUALIZE="${RACER_FIDELITY_VISUALIZE:-0}"
+export RACER_REQUIRE_COMPLETION=0
+export RACER_STOP_ON_COMPLETION=1
+export RACER_MAPPING_COVERAGE_TARGET="${RACER_MAPPING_COVERAGE_TARGET:-0}"
+
+export RACER_PHYSICS_RATE_HZ="${RACER_PHYSICS_RATE_HZ:-150}"
+export RACER_SENSOR_RATE_HZ="${RACER_SENSOR_RATE_HZ:-30}"
+export RACER_DEPTH_WIDTH="${RACER_DEPTH_WIDTH:-640}"
+export RACER_DEPTH_HEIGHT="${RACER_DEPTH_HEIGHT:-480}"
+export RACER_CAMERA_RAY_BUDGET="${RACER_CAMERA_RAY_BUDGET:-19200}"
+export RACER_RECORD_TRAJECTORY_HISTORY="${RACER_RECORD_TRAJECTORY_HISTORY:-1}"
+export RACER_WALL_TIME_MULTIPLIER="${RACER_WALL_TIME_MULTIPLIER:-40}"
+export RACER_WALL_TIME_GRACE_SECONDS="${RACER_WALL_TIME_GRACE_SECONDS:-600}"
+
+export RACER_LAUNCH_PACKAGE=racer_recovery_core
+export RACER_LAUNCH_FILE=recovery_racer_warehouse_sionna.launch.py
+export RACER_ALGORITHM_LABEL=racer_ap_recovery_v1
+export RACER_LKH_DIR=/tmp/racer_recovery_lkh
+export RACER_RESULT_DIR="${RACER_RESULT_DIR:-${workspace_dir}/experiments/warehouse_loaded_bs_recovery_${run_id}}"
+
+exec "${workspace_dir}/run_warehouse_simple_sionna.sh"

@@ -735,6 +735,101 @@ def test_shared_ofdma_enforces_half_duplex_for_overlapping_senders():
 
 
 @pytest.mark.timeout(30)
+def test_csma_zero_contention_window_reports_shared_channel_collisions():
+    configure_ros_domain(21, 221, 232)
+    process = subprocess.Popen(
+        [
+            "ros2", "run", "racer_sionna_comm",
+            "racer_sionna_communication_proxy", "--ros-args",
+            "-p", "mode:=sionna", "-p", "drone_count:=3",
+            "-p", "network_topology:=distributed",
+            "-p", "uav_channel_access_mode:=csma",
+            "-p", "uav_csma_cw_min:=0", "-p", "uav_csma_cw_max:=0",
+            "-p", "uav_csma_difs_slots:=0",
+            "-p", "fixed_mcs_index:=20", "-p", "tx_power_dbm:=20.0",
+            "-p", "base_latency_ms:=0.0", "-p", "jitter_ms:=0.0",
+            "-p", "uav_ofdma_diagnostic_logging:=false",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=os.environ.copy(),
+        start_new_session=True,
+    )
+    rclpy.init()
+    node = Node("racer_sionna_csma_collision_test")
+    qos = QoSProfile(depth=100, reliability=ReliabilityPolicy.RELIABLE)
+    publishers = [
+        node.create_publisher(
+            DroneState, f"/racer_sionna/tx/drone_{sender}/drone_state", qos
+        )
+        for sender in (0, 1)
+    ]
+    link_publisher = node.create_publisher(
+        LinkQualityArray, "/racer_sionna/link_quality", qos
+    )
+
+    def publish_links():
+        now = node.get_clock().now()
+        message = LinkQualityArray()
+        message.stamp = now.to_msg()
+        valid_until = (now + Duration(seconds=2.0)).to_msg()
+        for sender, receiver in ((0, 1), (0, 2), (1, 0), (1, 2)):
+            link = LinkQuality()
+            link.stamp = message.stamp
+            link.valid_until = valid_until
+            link.sender_id = sender
+            link.receiver_id = receiver
+            link.snr_db = 100.0
+            link.model = "deterministic_test_path"
+            message.links.append(link)
+        link_publisher.publish(message)
+
+    output = ""
+    try:
+        deadline = time.monotonic() + 10.0
+        while (
+            any(publisher.get_subscription_count() < 1
+                for publisher in publishers)
+            or link_publisher.get_subscription_count() < 1
+        ) and time.monotonic() < deadline:
+            publish_links()
+            rclpy.spin_once(node, timeout_sec=0.05)
+        assert all(publisher.get_subscription_count() == 1
+                   for publisher in publishers)
+        for sequence in range(20):
+            for sender, publisher in enumerate(publishers):
+                state = DroneState()
+                state.drone_id = sender + 1
+                state.stamp = 500.0 + sequence
+                state.grid_ids = list(range(2000))
+                publisher.publish(state)
+            publish_links()
+            rclpy.spin_once(node, timeout_sec=0.001)
+        time.sleep(1.2)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+        os.killpg(process.pid, signal.SIGINT)
+        try:
+            output, _ = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            output, _ = process.communicate(timeout=5)
+
+    matches = re.findall(r"RACER_SIONNA_STATS (\{[^\n]+\})", output)
+    assert matches
+    statistics = json.loads(matches[-1])
+    assert statistics["uav_channel_access_mode"] == "csma"
+    assert statistics["shared_uav_radio_enabled"] is True
+    assert statistics["shared_uav_ofdma_enabled"] is False
+    assert statistics["uav_csma_collision_events"] >= 1
+    assert statistics["uav_csma_collided_datagrams"] >= 2
+    assert statistics["uav_udp_receiver_collision_failures"] >= 2
+    assert statistics["uav_ofdma_max_allocated_prbs_per_slot"] == 66
+
+
+@pytest.mark.timeout(30)
 def test_nearest_neighbor_topology_delivers_only_to_closest_uav():
     configure_ros_domain(5, 90, 119)
     process = subprocess.Popen(
@@ -1844,8 +1939,8 @@ def test_rl_bs_forwards_foreign_origin_chunk_and_keeps_hops_independent(tmp_path
 
 
 @pytest.mark.timeout(35)
-def test_rl_upload_materializes_uncached_racer_chunks_and_caps_each_action(tmp_path):
-    """u[i] requests true RACER inventory and radios at most 32 chunks/action."""
+def test_rl_upload_materializes_uncached_racer_chunks_and_caps_each_slot(tmp_path):
+    """A slot pipelines many chunks while each keeps its propagation delay."""
     configure_ros_domain(16, 1, 29)
     action_path = tmp_path / "action.txt"
     state_path = tmp_path / "communication_state.json"
@@ -1855,7 +1950,7 @@ def test_rl_upload_materializes_uncached_racer_chunks_and_caps_each_action(tmp_p
             "racer_sionna_communication_proxy", "--ros-args",
             "-p", "mode:=sionna", "-p", "drone_count:=1",
             "-p", "network_topology:=bs_round_robin",
-            "-p", "base_latency_ms:=0.0", "-p", "jitter_ms:=0.0",
+            "-p", "base_latency_ms:=250.0", "-p", "jitter_ms:=0.0",
             "-p", "max_retries:=0", "-p", "bs_max_retries:=0",
             "-p", "rl_bs_scheduler_enabled:=true",
             "-p", "force_bs_perfect_delivery:=false",
@@ -1970,26 +2065,32 @@ def test_rl_upload_materializes_uncached_racer_chunks_and_caps_each_action(tmp_p
             ) == [40]
         )
 
-        # One action is held over several scheduler slots, but its cumulative
-        # materialization/upload budget remains 32 chunks.
+        # One action is held over several scheduler slots. Admission follows
+        # the physical slot quota without an extra default 32-chunk window.
+        upload_started = time.monotonic()
         action_path.write_text("1 1 1\n")
         first = wait_for(
             lambda value: value.get("action_epoch") == 1
-            and value.get("map_summary", {}).get("bs_known_chunks") == 32
+            and value.get("map_summary", {}).get("bs_known_chunks", 0) >= 32
         )
         assert first["map_summary"]["local_known_chunks"] == [40]
         settle_deadline = time.monotonic() + 0.4
         while time.monotonic() < settle_deadline:
             publish_links()
             rclpy.spin_once(node, timeout_sec=0.02)
-        assert len(requested) == 32
-        assert len(set(requested)) == 32
+        assert len(requested) == 40
+        assert len(set(requested)) == 40
 
+        # A new action finds no remaining deficit and cannot duplicate prior
+        # requests or uploads.
         action_path.write_text("2 1 1\n")
         wait_for(
             lambda value: value.get("action_epoch") == 2
             and value.get("map_summary", {}).get("bs_known_chunks") == 40
         )
+        # Forty packets finish close to one 250 ms propagation delay. A
+        # stop-and-wait link would require roughly 40 * 250 ms here.
+        assert time.monotonic() - upload_started < 2.0
         assert len(requested) == 40
         assert len(set(requested)) == 40
         time.sleep(1.1)
@@ -2006,7 +2107,7 @@ def test_rl_upload_materializes_uncached_racer_chunks_and_caps_each_action(tmp_p
     matches = re.findall(r"RACER_SIONNA_STATS (\{[^\n]+\})", output)
     assert matches
     statistics = json.loads(matches[-1])
-    assert statistics["bs_chunk_payload_request_messages"] == 2
+    assert statistics["bs_chunk_payload_request_messages"] == 1
     assert statistics["bs_chunk_payload_chunks_requested"] == 40
     assert statistics["bs_chunk_payload_responses_received"] == 40
     assert statistics["bs_chunk_payload_request_timeouts"] == 0
@@ -2015,6 +2116,213 @@ def test_rl_upload_materializes_uncached_racer_chunks_and_caps_each_action(tmp_p
     assert statistics["bs_known_map_chunks"] == 40
     assert statistics["bs_uplink_attempted_packets"] == 40
     assert statistics["bs_uplink_delivered_packets"] == 40
+    assert statistics["bs_adaptive_uplink_chunks_selected_total"] == 40
+    assert statistics["bs_max_inflight_chunks_per_uav"] == 0
+    assert statistics["bs_upload_selection_backpressure_skips"] == 0
+    assert statistics["bs_adaptive_budget_mcs_counts"]["256QAM"] > 0
+
+
+@pytest.mark.timeout(30)
+def test_pushed_payload_bypasses_fetch_but_waits_for_rl_upload_action(tmp_path):
+    """Generation pushes payload locally; missing pushes use fetch fallback."""
+    configure_ros_domain(19, 1, 29)
+    action_path = tmp_path / "action.txt"
+    state_path = tmp_path / "communication_state.json"
+    process = subprocess.Popen(
+        [
+            "ros2", "run", "racer_sionna_comm",
+            "racer_sionna_communication_proxy", "--ros-args",
+            "-p", "mode:=sionna", "-p", "drone_count:=1",
+            "-p", "network_topology:=bs_round_robin",
+            "-p", "base_latency_ms:=0.0", "-p", "jitter_ms:=0.0",
+            "-p", "bandwidth_hz:=4000000.0", "-p", "resource_blocks:=2",
+            "-p", "uav_broadcast_bandwidth_hz:=2000000.0",
+            "-p", "uav_broadcast_resource_blocks:=1",
+            "-p", "bs_bandwidth_hz:=2000000.0", "-p", "bs_resource_blocks:=1",
+            "-p", "max_retries:=0", "-p", "bs_max_retries:=0",
+            "-p", "rl_bs_scheduler_enabled:=true",
+            "-p", "force_bs_perfect_delivery:=false",
+            "-p", "bs_payload_precache_enabled:=true",
+            "-p", "rl_bs_decision_period_ms:=10.0",
+            "-p", f"rl_bs_action_path:={action_path}",
+            "-p", f"rl_bs_state_path:={state_path}",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=os.environ.copy(),
+        start_new_session=True,
+    )
+    rclpy.init()
+    node = Node("racer_sionna_deferred_payload_fetch_test")
+    qos = QoSProfile(depth=100, reliability=ReliabilityPolicy.RELIABLE)
+    stamp_publisher = node.create_publisher(
+        ChunkStamps, "/racer_sionna/tx/drone_0/chunk_stamps", qos
+    )
+    chunk_publisher = node.create_publisher(
+        ChunkData, "/racer_sionna/tx/drone_0/chunk_data", qos
+    )
+    cache_publisher = node.create_publisher(
+        ChunkData, "/racer_sionna/cache/drone_0/chunk_data", qos
+    )
+    link_publisher = node.create_publisher(
+        LinkQualityArray, "/racer_sionna/link_quality", qos
+    )
+    requested = []
+
+    def on_request(message):
+        if message.from_drone_id != 0:
+            return
+        for owner, ranges in enumerate(message.idx_lists, start=1):
+            for offset in range(0, len(ranges.ids), 2):
+                requested.extend(
+                    (owner, index)
+                    for index in range(
+                        ranges.ids[offset], ranges.ids[offset + 1] + 1
+                    )
+                )
+
+    node.create_subscription(
+        ChunkStamps,
+        "/racer_sionna/rx/drone_0/chunk_stamps",
+        on_request,
+        qos,
+    )
+
+    def publish_link():
+        now = node.get_clock().now()
+        links = LinkQualityArray()
+        links.stamp = now.to_msg()
+        link = LinkQuality()
+        link.stamp = links.stamp
+        link.valid_until = (now + Duration(seconds=1.0)).to_msg()
+        link.sender_id = 0
+        link.receiver_id = 1
+        link.snr_db = 40.0
+        link.model = "deterministic_test_path"
+        links.links.append(link)
+        link_publisher.publish(links)
+
+    def wait_for(predicate, timeout=8.0):
+        deadline = time.monotonic() + timeout
+        payload = None
+        while time.monotonic() < deadline:
+            publish_link()
+            rclpy.spin_once(node, timeout_sec=0.02)
+            try:
+                payload = json.loads(state_path.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue
+            if predicate(payload):
+                return payload
+        raise AssertionError(f"timed out waiting for RL state; last={payload}")
+
+    output = ""
+    try:
+        deadline = time.monotonic() + 10.0
+        while (
+            stamp_publisher.get_subscription_count() < 1
+            or chunk_publisher.get_subscription_count() < 1
+            or cache_publisher.get_subscription_count() < 1
+            or link_publisher.get_subscription_count() < 1
+        ) and time.monotonic() < deadline:
+            publish_link()
+            rclpy.spin_once(node, timeout_sec=0.05)
+        assert stamp_publisher.get_subscription_count() == 1
+        assert chunk_publisher.get_subscription_count() == 1
+        assert cache_publisher.get_subscription_count() == 1
+        assert link_publisher.get_subscription_count() == 1
+
+        pushed_chunk = ChunkData()
+        pushed_chunk.from_drone_id = 1
+        pushed_chunk.to_drone_id = -1
+        pushed_chunk.chunk_drone_id = 1
+        pushed_chunk.idx = 1
+        # This real payload needs more than one 20 ms slot on the deliberately
+        # narrow BS carrier. It must serialize across slots without blocking
+        # the following repair-fetched chunk forever.
+        pushed_chunk.voxel_adrs = list(range(3000))
+        pushed_chunk.voxel_occ = [1] * 3000
+        cache_publisher.publish(pushed_chunk)
+        wait_for(
+            lambda value: value.get("map_summary", {}).get(
+                "local_known_chunks"
+            ) == [1]
+        )
+
+        inventory = ChunkStamps()
+        inventory.from_drone_id = 1
+        inventory.time = 1.0
+        owner = IdxList()
+        owner.ids = [1, 2]
+        inventory.idx_lists = [owner]
+        stamp_publisher.publish(inventory)
+        wait_for(
+            lambda value: value.get("map_summary", {}).get(
+                "local_known_chunks"
+            ) == [2]
+        )
+
+        # Chunk 1 was pushed with its payload and needs no request. Chunk 2
+        # deliberately omits the push and exercises the repair fetch.
+        wait_for(lambda value: requested)
+        assert requested == [(1, 2)]
+
+        action_path.write_text("1 1 0\n")
+        wait_for(lambda value: value.get("action_epoch") == 1)
+        chunk = ChunkData()
+        chunk.from_drone_id = 1
+        chunk.to_drone_id = 0
+        chunk.chunk_drone_id = 1
+        chunk.idx = 2
+        chunk.voxel_adrs = [1002]
+        chunk.voxel_occ = [1]
+        chunk_publisher.publish(chunk)
+        # Materialization is local simulator plumbing. It must not bypass the
+        # current zero upload action or count as BS delivery.
+        settle_deadline = time.monotonic() + 0.3
+        latest = None
+        while time.monotonic() < settle_deadline:
+            publish_link()
+            rclpy.spin_once(node, timeout_sec=0.02)
+            try:
+                latest = json.loads(state_path.read_text())
+            except (OSError, json.JSONDecodeError):
+                pass
+        assert latest is not None
+        assert latest["map_summary"]["bs_known_chunks"] == 0
+
+        action_path.write_text("2 1 1\n")
+        wait_for(
+            lambda value: value.get("action_epoch") == 2
+            and value.get("map_summary", {}).get("bs_known_chunks") == 2
+        )
+        assert requested == [(1, 2)]
+        time.sleep(1.1)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+        os.killpg(process.pid, signal.SIGINT)
+        try:
+            output, _ = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            output, _ = process.communicate(timeout=5)
+
+    matches = re.findall(r"RACER_SIONNA_STATS (\{[^\n]+\})", output)
+    assert matches, output
+    statistics = json.loads(matches[-1])
+    assert statistics["bs_chunk_payload_chunks_requested"] == 1
+    assert statistics["bs_chunk_payload_responses_received"] == 1
+    assert statistics["payload_precache_queued"] == 1
+    assert statistics["payload_precache_chunks_requested"] == 1
+    assert statistics["payload_precache_responses_received"] == 1
+    assert statistics["payload_precache_timeouts"] == 0
+    assert statistics["payload_direct_pushes_received"] == 1
+    assert statistics["payload_direct_pushes_rejected"] == 0
+    assert statistics["bs_incremental_chunks_scheduled_uplink"] == 2
+    assert statistics["bs_incremental_chunks_received_uplink"] == 2
+    assert statistics["bs_uplink_attempted_packets"] == 2
 
 
 @pytest.mark.timeout(30)

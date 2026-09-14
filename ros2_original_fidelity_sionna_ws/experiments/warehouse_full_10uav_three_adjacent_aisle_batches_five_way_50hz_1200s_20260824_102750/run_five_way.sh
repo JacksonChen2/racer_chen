@@ -4,6 +4,9 @@ set -euo pipefail
 workspace="/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/ros2_original_fidelity_sionna_ws"
 export RACER_SUITE_DIR="${workspace}/experiments/warehouse_full_10uav_three_adjacent_aisle_batches_five_way_50hz_1200s_20260824_102750"
 export RACER_LAYOUT_TAG="three_adjacent_aisles_4_3_3"
+export RACER_FORMAL_DURATION="${RACER_FORMAL_DURATION:-900}"
+export RACER_START_CASE_INDEX="${RACER_START_CASE_INDEX:-1}"
+export RACER_SKIP_PREFLIGHT="${RACER_SKIP_PREFLIGHT:-false}"
 
 # UAV 1-4: central aisle; UAV 5-7: adjacent aisle on the left;
 # UAV 8-10: adjacent aisle on the right.  Heights are staggered, while the

@@ -49,6 +49,9 @@ void MapROS::init() {
     coverage_timer_ = node_.createTimer(
         ros::Duration(coverage_diagnostic_period_),
         &MapROS::coverageCallback, this);
+    ROS_INFO("RACER_MAP_COVERAGE_CONFIG rate_hz=%.3f period_s=%.6f "
+             "clock=simulation_time",
+        1.0 / coverage_diagnostic_period_, coverage_diagnostic_period_);
   }
 }
 
@@ -276,7 +279,10 @@ void MapROS::coverageCallback(const ros::TimerEvent &) {
           << ",\"ratio\":" << std::setprecision(12) << ratio << "}";
   message.data = payload.str();
   coverage_pub_.publish(message);
-  ROS_INFO("RACER_MAP_COVERAGE known=%llu total=%llu ratio=%.6f",
+  // Publishing remains at the configured rate. Throttle only the console
+  // diagnostic so 10 UAVs at 10 Hz do not emit 100 lines per second.
+  ROS_INFO_THROTTLE(1.0,
+      "RACER_MAP_COVERAGE known=%llu total=%llu ratio=%.6f",
       static_cast<unsigned long long>(known),
       static_cast<unsigned long long>(total), ratio);
 }

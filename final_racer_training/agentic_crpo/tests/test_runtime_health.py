@@ -2,7 +2,10 @@ import os
 import signal
 from types import SimpleNamespace
 
-from agentic_crpo.process_supervisor import _signal_group
+from agentic_crpo.process_supervisor import (
+    _is_clean_boundary_exit,
+    _signal_group,
+)
 from agentic_crpo.runtime_health import RuntimeHealth
 
 
@@ -40,6 +43,21 @@ def test_model_warmup_then_stalled_actions():
     assert health.check(data, 162) == "progress_timeout_action"
 
 
+def test_first_action_rebases_seed_record_progress_timers():
+    data = blocks(os.getpid())
+    health = RuntimeHealth(0)
+    data["physical"].version = data["transition_ring"].version = 1
+    assert health.check(data, 1) is None
+    assert health.check(data, 130) is None
+
+    # This reproduces a slow model warmup: the initial state records are old,
+    # but the actor has only just published its first action.
+    data["action"].version = 1
+    assert health.check(data, 131) is None
+    assert health.check(data, 191) is None
+    assert health.check(data, 192) == "progress_timeout_physical"
+
+
 def test_signal_group_reaps_descendants_after_leader_exit(monkeypatch):
     calls = []
     child = SimpleNamespace(
@@ -52,3 +70,11 @@ def test_signal_group_reaps_descendants_after_leader_exit(monkeypatch):
     _signal_group(child, signal.SIGKILL)
 
     assert calls == [(12345, signal.SIGKILL)]
+
+
+def test_finite_episode_accepts_either_clean_boundary_owner_first():
+    assert _is_clean_boundary_exit("isaac", 0)
+    assert _is_clean_boundary_exit("rl", 0)
+    assert not _is_clean_boundary_exit("racer", 0)
+    assert not _is_clean_boundary_exit("llm", 0)
+    assert not _is_clean_boundary_exit("rl", 1)

@@ -19,6 +19,16 @@ TEST(LinkModel, LargerMessagesHaveMoreErrorsAndSerializationDelay) {
             model.serializationDelay(8.0, 600));
 }
 
+TEST(LinkModel, ReportsOriginalMtuPacketizationForStatistics) {
+  racer_sionna_comm::LinkModel model(
+      {100.0e6, 120.0e3, 66, 0.82, 0.10, 1.35, 1200});
+  EXPECT_EQ(model.transportBlockCount(0), 1U);
+  EXPECT_EQ(model.transportBlockCount(1), 1U);
+  EXPECT_EQ(model.transportBlockCount(1200), 1U);
+  EXPECT_EQ(model.transportBlockCount(1201), 2U);
+  EXPECT_EQ(model.transportBlockCount(4800), 4U);
+}
+
 TEST(LinkModel, UsesOnlyRequestedAdaptiveModulations) {
   racer_sionna_comm::LinkModel model(
       {100.0e6, 120.0e3, 66, 0.82, 0.10, 1.35, 1200});

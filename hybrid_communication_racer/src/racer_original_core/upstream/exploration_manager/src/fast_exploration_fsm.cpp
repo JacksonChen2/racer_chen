@@ -147,19 +147,20 @@ void FastExplorationFSM::init(ros::NodeHandle& nh) {
       ros::TransportHints().tcpNoDelay());
 
   if (globalCooperativeMode()) {
-    // These absolute topics intentionally bypass the radio-loss proxy: this
-    // algorithm is defined only for perfect communication/global information.
+    // Separate send/receive names let a launch description route cooperative
+    // traffic through a modeled radio while preserving direct DDS operation
+    // when both names are remapped to the same lossless topic.
     hybrid_state_pub_ = nh.advertise<hybrid_communication_racer::msg::HybridDroneState>(
-        "/hybrid_communication_racer/drone_state", 50);
+        "/hybrid_communication_racer/drone_state_send", 50);
     hybrid_state_sub_ = nh.subscribe(
-        "/hybrid_communication_racer/drone_state", 100,
+        "/hybrid_communication_racer/drone_state_recv", 100,
         &FastExplorationFSM::hybridStateMsgCallback, this,
         ros::TransportHints().tcpNoDelay());
     hybrid_assignment_pub_ =
         nh.advertise<hybrid_communication_racer::msg::HybridGlobalAssignment>(
-            "/hybrid_communication_racer/global_assignment", 10, true);
+            "/hybrid_communication_racer/global_assignment_send", 10, true);
     hybrid_assignment_sub_ = nh.subscribe(
-        "/hybrid_communication_racer/global_assignment", 20,
+        "/hybrid_communication_racer/global_assignment_recv", 20,
         &FastExplorationFSM::hybridAssignmentMsgCallback, this,
         ros::TransportHints().tcpNoDelay());
   }
@@ -176,7 +177,7 @@ void FastExplorationFSM::init(ros::NodeHandle& nh) {
 
   if (globalCooperativeMode()) {
     initial_partition_enabled_ = false;
-    ROS_WARN("RACER_HYBRID_ENABLED mode=global_cooperative coordinator=1 perfect_comm_required "
+    ROS_WARN("RACER_HYBRID_ENABLED mode=global_cooperative coordinator=1 communication_transport=launch_configured "
              "interval=%.2f R=[%.1f,%.1f] gamma=%.2f cluster=%.1f overlap=%.1f",
         cooperative_assignment_interval_s_, distance_min_, distance_max_,
         distance_gamma_, cluster_distance_, overlap_distance_);

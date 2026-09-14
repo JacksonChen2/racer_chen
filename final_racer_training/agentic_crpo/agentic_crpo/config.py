@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import math
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,7 @@ def load_config(path: str | Path) -> dict[str, Any]:
     )
     if reward_type not in {
         "negative_bs_resource",
+        "negative_total_prb",
         "coverage",
         "coverage_delta",
     }:
@@ -52,6 +54,18 @@ def load_config(path: str | Path) -> dict[str, Any]:
                 "constraint.max_relay_recipients_per_uav must be between "
                 "0 and n_uavs - 1"
             )
+    episode_duration_s = float(constraint.get("episode_duration_s", 300.0))
+    if not math.isfinite(episode_duration_s) or episode_duration_s <= 0.0:
+        raise ValueError(
+            "constraint.episode_duration_s must be finite and positive"
+        )
+    estimator = str(config["crpo"].get("constraint_estimator", ""))
+    if estimator == "time_weighted_mean" and abs(
+        float(config["crpo"].get("gamma_cost", 1.0)) - 1.0
+    ) > 1.0e-12:
+        raise ValueError(
+            "crpo.gamma_cost must be 1 for the time_weighted_mean constraint"
+        )
     return config
 
 

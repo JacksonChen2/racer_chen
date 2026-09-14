@@ -1,4 +1,5 @@
 #include <racer_sionna_comm/link_model.hpp>
+#include <racer_sionna_comm/event_driven_one_shot.hpp>
 #include <racer_sionna_comm/shared_json_block.hpp>
 #include <racer_sionna_comm/shared_ofdma_scheduler.hpp>
 
@@ -42,9 +43,11 @@
 #include <mutex>
 #include <numeric>
 #include <random>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -75,7 +78,15 @@ const std::vector<TopicPolicy> kTopicPolicies{
     {"chunk_stamps", "racer_fidelity_msgs/msg/ChunkStamps", 4, 3.0, true},
     {"chunk_data", "racer_fidelity_msgs/msg/ChunkData", 2, 10.0, true},
     {"global_assignment", "racer_fidelity_msgs/msg/GlobalGridAssignment", 10, 2.0, true},
+    {"hybrid_drone_state", "hybrid_communication_racer/msg/HybridDroneState", 9, 0.75, true},
+    {"hybrid_global_assignment", "hybrid_communication_racer/msg/HybridGlobalAssignment", 10, 2.0, true},
 };
+
+// Admit map chunks against only part of each logical BS slot.  The remaining
+// airtime is available to control/peer traffic and to variance around the
+// retry expectation used by the adaptive budget below.
+constexpr double kBsMapAdmissionFraction = 0.80;
+constexpr std::size_t kRepresentativeMapChunkBytes = 1068U;
 
 struct LinkKey {
   int sender{};
@@ -110,6 +121,11 @@ struct ChunkKey {
   bool operator==(const ChunkKey &other) const noexcept {
     return owner == other.owner && index == other.index;
   }
+
+  bool operator<(const ChunkKey &other) const noexcept {
+    return owner < other.owner ||
+           (owner == other.owner && index < other.index);
+  }
 };
 
 struct ChunkKeyHash {
@@ -131,6 +147,11 @@ std::string txTopic(int sender, const TopicPolicy &policy) {
 std::string rxTopic(int receiver, const TopicPolicy &policy) {
   return "/racer_sionna/rx/drone_" + std::to_string(receiver) + "/" +
          policy.key;
+}
+
+std::string payloadCacheTopic(int sender) {
+  return "/racer_sionna/cache/drone_" + std::to_string(sender) +
+         "/chunk_data";
 }
 
 }  // namespace
@@ -189,6 +210,11 @@ class CommunicationProxy final : public rclcpp::Node {
             declare_parameter<int>("queue_capacity_bytes", 262144))),
         udp_header_bytes_(
             declare_parameter<int>("uav_udp_header_bytes", 8)),
+        uav_channel_access_mode_(declare_parameter<std::string>(
+            "uav_channel_access_mode", "ofdma")),
+        csma_cw_min_(declare_parameter<int>("uav_csma_cw_min", 15)),
+        csma_cw_max_(declare_parameter<int>("uav_csma_cw_max", 1023)),
+        csma_difs_slots_(declare_parameter<int>("uav_csma_difs_slots", 2)),
         ofdma_diagnostic_logging_(declare_parameter<bool>(
             "uav_ofdma_diagnostic_logging", true)),
         ofdma_log_packet_stride_(
@@ -202,9 +228,13 @@ class CommunicationProxy final : public rclcpp::Node {
         bs_control_bytes_(static_cast<std::size_t>(
             declare_parameter<int>("bs_control_bytes", 32))),
         bs_max_downlink_chunks_per_turn_(declare_parameter<int>(
-            "bs_max_downlink_chunks_per_turn", 32)),
+            "bs_max_downlink_chunks_per_turn", 0)),
         bs_max_uplink_chunks_per_turn_(declare_parameter<int>(
-            "bs_max_uplink_chunks_per_turn", 32)),
+            "bs_max_uplink_chunks_per_turn", 0)),
+        bs_max_uplink_chunks_per_rl_slot_(declare_parameter<int>(
+            "bs_max_uplink_chunks_per_rl_slot", 0)),
+        bs_max_downlink_chunks_per_rl_slot_(declare_parameter<int>(
+            "bs_max_downlink_chunks_per_rl_slot", 0)),
         rl_bs_scheduler_enabled_(declare_parameter<bool>(
             "rl_bs_scheduler_enabled", false)),
         force_bs_perfect_delivery_(declare_parameter<bool>(
@@ -216,7 +246,15 @@ class CommunicationProxy final : public rclcpp::Node {
         bs_periodic_upload_chunks_per_request_(declare_parameter<int>(
             "bs_periodic_upload_chunks_per_request", 8)),
         bs_max_inflight_chunks_per_uav_(declare_parameter<int>(
-            "bs_max_inflight_chunks_per_uav", 32)),
+            "bs_max_inflight_chunks_per_uav", 0)),
+        bs_payload_precache_enabled_(declare_parameter<bool>(
+            "bs_payload_precache_enabled", false)),
+        bs_payload_precache_batch_size_(declare_parameter<int>(
+            "bs_payload_precache_batch_size", 8)),
+        bs_max_payload_precache_inflight_(declare_parameter<int>(
+            "bs_max_payload_precache_inflight", 16)),
+        bs_payload_precache_timeout_s_(1.0e-3 * declare_parameter<double>(
+            "bs_payload_precache_timeout_ms", 5000.0)),
         bs_control_ttl_s_(declare_parameter<double>(
             "bs_control_ttl_s", 2.0)),
         bs_all_to_all_relay_enabled_(declare_parameter<bool>(
@@ -227,6 +265,8 @@ class CommunicationProxy final : public rclcpp::Node {
             "pair_control_reservation_s", 1.8)),
         rl_bs_synchronous_mode_(declare_parameter<bool>(
             "rl_bs_synchronous_mode", false)),
+        rl_bs_event_driven_one_shot_(declare_parameter<bool>(
+            "rl_bs_event_driven_one_shot", false)),
         rl_bs_action_path_(declare_parameter<std::string>(
             "rl_bs_action_path", "/tmp/racer_agentic_crpo/action.txt")),
         rl_bs_state_path_(declare_parameter<std::string>(
@@ -305,6 +345,12 @@ class CommunicationProxy final : public rclcpp::Node {
       throw std::runtime_error(
           "mode must be ideal, sionna, or sionna_hybrid");
     }
+    if (uav_channel_access_mode_ != "ofdma" &&
+        uav_channel_access_mode_ != "csma") {
+      throw std::runtime_error(
+          "uav_channel_access_mode must be ofdma or csma");
+    }
+    uav_csma_enabled_ = uav_channel_access_mode_ == "csma";
     if (task_metric_observer_mode_ != "inline" &&
         task_metric_observer_mode_ != "async" &&
         task_metric_observer_mode_ != "off") {
@@ -319,18 +365,54 @@ class CommunicationProxy final : public rclcpp::Node {
           "network_topology must be distributed, nearest_neighbors, "
           "distance_radius, ap_assisted, or bs_round_robin");
     }
+    if (bs_max_uplink_chunks_per_rl_slot_ == 0 ||
+        bs_max_downlink_chunks_per_rl_slot_ == 0) {
+      // This is only a hard ceiling.  Each slot's actual admission budget is
+      // calculated later from the action-bound Channel State, selected MCS,
+      // NR serialization quantization and expected retransmissions.  Use the
+      // best-MCS serialization time here so an automatic ceiling does not
+      // suppress useful capacity when a narrower configured band has a
+      // strong channel.
+      const double per_direction_airtime_s =
+          0.5 * kBsMapAdmissionFraction * rl_bs_communication_slot_s_;
+      const double best_mcs_chunk_airtime_s = bs_model_.serializationDelay(
+          40.0, kRepresentativeMapChunkBytes);
+      const int unrounded_per_direction = static_cast<int>(std::floor(
+          per_direction_airtime_s / best_mcs_chunk_airtime_s + 1.0e-9));
+      const int rounded_per_direction = std::max(
+          1, unrounded_per_direction >= 8
+                 ? 8 * (unrounded_per_direction / 8)
+                 : unrounded_per_direction);
+      if (bs_max_uplink_chunks_per_rl_slot_ == 0) {
+        bs_max_uplink_chunks_per_rl_slot_ = rounded_per_direction;
+      }
+      if (bs_max_downlink_chunks_per_rl_slot_ == 0) {
+        bs_max_downlink_chunks_per_rl_slot_ = rounded_per_direction;
+      }
+    }
     if (drone_count_ < 1 || queue_capacity_bytes_ == 0U ||
         udp_header_bytes_ <= 0 || ofdma_log_packet_stride_ <= 0 ||
+        csma_cw_min_ < 0 || csma_cw_max_ < csma_cw_min_ ||
+        csma_difs_slots_ < 0 ||
         max_retries_ < 0 || bs_max_retries_ < 0 ||
         chunk_data_max_pending_per_link_ < 0 ||
         ideal_coalesce_window_s_ <= 0.0 || active_link_hold_s_ <= 0.0 ||
         active_link_publish_period_s_ <= 0.0 || base_latency_s_ < 0.0 ||
         jitter_s_ < 0.0 ||
         retry_backoff_s_ < 0.0 || bs_min_turn_s_ < 0.0 ||
-        bs_control_bytes_ == 0U || bs_max_downlink_chunks_per_turn_ < 1 ||
-        bs_max_uplink_chunks_per_turn_ < 1 || carrier_frequency_hz_ <= 0.0 ||
+        bs_control_bytes_ == 0U || bs_max_downlink_chunks_per_turn_ < 0 ||
+        bs_max_uplink_chunks_per_turn_ < 0 ||
+        bs_max_uplink_chunks_per_rl_slot_ < 1 ||
+        bs_max_downlink_chunks_per_rl_slot_ < 1 ||
+        carrier_frequency_hz_ <= 0.0 ||
         bs_periodic_upload_chunks_per_request_ < 1 ||
-        bs_max_inflight_chunks_per_uav_ < 1 || bs_control_ttl_s_ <= 0.0 ||
+        bs_max_inflight_chunks_per_uav_ < 0 ||
+        bs_payload_precache_batch_size_ < 1 ||
+        bs_max_payload_precache_inflight_ < 1 ||
+        bs_payload_precache_batch_size_ >
+            bs_max_payload_precache_inflight_ ||
+        bs_payload_precache_timeout_s_ <= 0.0 ||
+        bs_control_ttl_s_ <= 0.0 ||
         rl_bs_communication_slot_s_ <= 0.0 ||
         rl_bs_decision_period_s_ <= 0.0 ||
         rl_llm_state_period_s_ <= 0.0 ||
@@ -391,7 +473,7 @@ class CommunicationProxy final : public rclcpp::Node {
             "use a fixed MCS");
       }
     }
-    shared_uav_ofdma_enabled_ =
+    shared_uav_radio_enabled_ =
         mode_ != "ideal" && (topology_ == "distributed" || ap_enabled_);
     if (lossless_nearest_neighbor_count_ < 0 ||
         lossless_nearest_neighbor_count_ >= drone_count_) {
@@ -435,8 +517,9 @@ class CommunicationProxy final : public rclcpp::Node {
       throw std::runtime_error(
           "bs_periodic_upload_request_period_ms must be positive");
     }
-    if (bs_periodic_upload_chunks_per_request_ >
-        bs_max_inflight_chunks_per_uav_) {
+    if (bs_max_inflight_chunks_per_uav_ > 0 &&
+        bs_periodic_upload_chunks_per_request_ >
+            bs_max_inflight_chunks_per_uav_) {
       throw std::runtime_error(
           "bs_periodic_upload_chunks_per_request must not exceed "
           "bs_max_inflight_chunks_per_uav");
@@ -461,12 +544,23 @@ class CommunicationProxy final : public rclcpp::Node {
       throw std::runtime_error(
           "rl_bs_synchronous_mode requires rl_bs_scheduler_enabled");
     }
+    if (rl_bs_event_driven_one_shot_ &&
+        (!rl_bs_scheduler_enabled_ || rl_bs_synchronous_mode_ ||
+         rl_shared_memory_root_.empty() ||
+         bs_periodic_upload_request_enabled_ ||
+         pair_control_reservation_enabled_)) {
+      throw std::runtime_error(
+          "rl_bs_event_driven_one_shot requires the shared-memory RL BS "
+          "scheduler, cannot use synchronous fixed-clock mode, and requires "
+          "periodic/reserved BS traffic to be disabled");
+    }
     if (!rl_shared_memory_root_.empty() && rl_bs_synchronous_mode_) {
       throw std::runtime_error(
           "event-driven shared-memory scheduling cannot use the legacy "
           "synchronous boundary gate");
     }
-    if (rl_bs_synchronous_mode_ || !rl_shared_memory_root_.empty()) {
+    if (!rl_bs_event_driven_one_shot_ &&
+        (rl_bs_synchronous_mode_ || !rl_shared_memory_root_.empty())) {
       const double ratio =
           rl_bs_decision_period_s_ / rl_bs_communication_slot_s_;
       rl_slots_per_decision_ = static_cast<std::uint64_t>(std::llround(ratio));
@@ -480,9 +574,20 @@ class CommunicationProxy final : public rclcpp::Node {
             "RL scheduling requires decision_period=5*communication_slot");
       }
     }
+    if (rl_bs_event_driven_one_shot_) {
+      // The experimental controller consumes a fresh action in exactly one
+      // physical communication slot. The fixed-clock path above retains its
+      // original hard requirement of five slots per decision.
+      rl_slots_per_decision_ = 1U;
+      event_driven_gate_ = std::make_unique<EventDrivenOneShotGate>(
+          rl_bs_communication_slot_s_);
+    }
     ap_node_id_ = drone_count_;
     radio_node_count_ = drone_count_ + static_cast<int>(ap_enabled_);
     uav_udp_queues_.resize(static_cast<std::size_t>(drone_count_));
+    csma_backoff_slots_.assign(static_cast<std::size_t>(drone_count_), -1);
+    csma_contention_windows_.assign(
+        static_cast<std::size_t>(drone_count_), csma_cw_min_);
     uav_sender_rngs_.reserve(static_cast<std::size_t>(drone_count_));
     for (int sender = 0; sender < drone_count_; ++sender) {
       std::seed_seq seed{random_seed_, sender, 0x554450, 0x4f46444d};
@@ -496,12 +601,17 @@ class CommunicationProxy final : public rclcpp::Node {
         rclcpp::CallbackGroupType::MutuallyExclusive);
     io_callback_group_ = create_callback_group(
         rclcpp::CallbackGroupType::MutuallyExclusive);
+    payload_cache_callback_group_ = create_callback_group(
+        rclcpp::CallbackGroupType::MutuallyExclusive);
     fast_state_callback_group_ = create_callback_group(
         rclcpp::CallbackGroupType::MutuallyExclusive);
     telemetry_callback_group_ = create_callback_group(
         rclcpp::CallbackGroupType::MutuallyExclusive);
     rclcpp::SubscriptionOptions io_subscription_options;
     io_subscription_options.callback_group = io_callback_group_;
+    rclcpp::SubscriptionOptions payload_cache_subscription_options;
+    payload_cache_subscription_options.callback_group =
+        payload_cache_callback_group_;
 
     const auto data_qos = rclcpp::QoS(rclcpp::KeepLast(1000)).reliable();
     publishers_.resize(kTopicPolicies.size());
@@ -524,6 +634,20 @@ class CommunicationProxy final : public rclcpp::Node {
             }, io_subscription_options));
       }
     }
+    const auto payload_cache_qos =
+        rclcpp::QoS(rclcpp::KeepLast(50000)).reliable();
+    payload_cache_subscriptions_.reserve(
+        static_cast<std::size_t>(drone_count_));
+    for (int sender = 0; sender < drone_count_; ++sender) {
+      payload_cache_subscriptions_.push_back(create_generic_subscription(
+          payloadCacheTopic(sender), "racer_fidelity_msgs/msg/ChunkData",
+          payload_cache_qos,
+          [this, sender](
+              std::shared_ptr<rclcpp::SerializedMessage> message) {
+            std::lock_guard<std::mutex> lock(communication_mutex_);
+            onPushedChunkPayload(sender, std::move(message));
+          }, payload_cache_subscription_options));
+    }
 
     // Pre-create every physical queue. AP forwarding can then enqueue from a
     // scheduler callback without rehashing and invalidating the active queue.
@@ -540,7 +664,7 @@ class CommunicationProxy final : public rclcpp::Node {
         // and UAV-BS paths.
         const bool direct_uav_link =
             sender < drone_count_ && receiver < drone_count_;
-        if (!(shared_uav_ofdma_enabled_ && direct_uav_link)) {
+        if (!(shared_uav_radio_enabled_ && direct_uav_link)) {
           queues_.emplace(key, LinkQueue{});
         }
         std::seed_seq seed{
@@ -563,6 +687,10 @@ class CommunicationProxy final : public rclcpp::Node {
     bs_peer_downlink_scheduled_by_topic_.assign(kTopicPolicies.size(), 0U);
     bs_peer_downlink_delivered_by_topic_.assign(kTopicPolicies.size(), 0U);
     uav_chunks_.resize(static_cast<std::size_t>(drone_count_));
+    ordered_bs_missing_chunks_.resize(
+        static_cast<std::size_t>(drone_count_));
+    ordered_uav_missing_chunks_.resize(
+        static_cast<std::size_t>(drone_count_));
     pending_bs_chunk_requests_.resize(
         static_cast<std::size_t>(drone_count_));
     bs_periodic_upload_request_pending_.assign(
@@ -731,14 +859,17 @@ class CommunicationProxy final : public rclcpp::Node {
         "drones=%d nearest_neighbors=%d lossless_nearest_neighbors=%d "
         "lossless_communication_range_m=%.3f communication_range_m=%.3f "
         "radio_nodes=%d bs_node_id=%d seed=%d phy=NR-LDPC "
-        "waveform=CP-OFDM shared_uav_ofdma=%d uav_transport=UDP "
+        "waveform=CP-OFDM shared_uav_radio=%d uav_channel_access=%s "
+        "uav_transport=UDP "
         "initial_assignment_perfect_delivery=%d "
         "initial_assignment_perfect_via_bs=%d "
         "rl_bs_scheduler=%d force_bs_perfect_delivery=%d "
         "bs_periodic_upload_request=%d bs_periodic_upload_period_ms=%.3f "
+        "bs_payload_precache=%d precache_batch=%d precache_inflight=%d "
+        "bs_adaptive_chunk_budget=1 bs_ul_slot_cap=%d bs_dl_slot_cap=%d "
         "bs_all_to_all_relay=%d "
         "pair_control_reservation=%d pair_control_reservation_s=%.3f "
-        "rl_sync=%d "
+        "rl_sync=%d rl_event_one_shot=%d "
         "Tcomm_ms=%.3f TRL_ms=%.3f "
         "total_bandwidth_mhz=%.1f "
         "uav_bandwidth_mhz=%.1f uav_mcs=%d bs_bandwidth_mhz=%.1f "
@@ -747,17 +878,23 @@ class CommunicationProxy final : public rclcpp::Node {
         lossless_nearest_neighbor_count_, lossless_communication_range_m_,
         communication_range_m_, radio_node_count_,
         ap_enabled_ ? ap_node_id_ : -1, random_seed_,
-        shared_uav_ofdma_enabled_ ? 1 : 0,
+        shared_uav_radio_enabled_ ? 1 : 0,
+        uav_channel_access_mode_.c_str(),
         initial_assignment_perfect_delivery_ ? 1 : 0,
         initial_assignment_perfect_via_bs_ ? 1 : 0,
         rl_bs_scheduler_enabled_ ? 1 : 0,
         force_bs_perfect_delivery_ ? 1 : 0,
         bs_periodic_upload_request_enabled_ ? 1 : 0,
         1.0e3 * bs_periodic_upload_request_period_s_,
+        bs_payload_precache_enabled_ ? 1 : 0,
+        bs_payload_precache_batch_size_, bs_max_payload_precache_inflight_,
+        bs_max_uplink_chunks_per_rl_slot_,
+        bs_max_downlink_chunks_per_rl_slot_,
         bs_all_to_all_relay_enabled_ ? 1 : 0,
         pair_control_reservation_enabled_ ? 1 : 0,
         pair_control_reservation_s_,
         rl_bs_synchronous_mode_ ? 1 : 0,
+        rl_bs_event_driven_one_shot_ ? 1 : 0,
         1.0e3 * rl_bs_communication_slot_s_,
         1.0e3 * rl_bs_decision_period_s_,
         1.0e-6 * model_.config().bandwidth_hz,
@@ -812,6 +949,13 @@ class CommunicationProxy final : public rclcpp::Node {
     std::vector<std::uint8_t> available;
   };
 
+  struct AdaptiveChunkQuota {
+    bool available{false};
+    double effective_snr_db{-std::numeric_limits<double>::infinity()};
+    std::string_view mcs{};
+    std::size_t chunks{};
+  };
+
   // An uncached RACER chunk is requested from the selected UAV locally, but
   // its eventual radio packet must retain the action and decision-time PHY
   // snapshot that caused the request.
@@ -822,6 +966,11 @@ class CommunicationProxy final : public rclcpp::Node {
     std::uint64_t action_id{};
     std::uint64_t action_step_id{};
     std::shared_ptr<const ActionChannelSnapshot> action_channel_snapshot;
+  };
+
+  struct InflightPayloadPrecache {
+    int sender{-1};
+    double requested_at{};
   };
 
   struct PendingPacket {
@@ -856,6 +1005,12 @@ class CommunicationProxy final : public rclcpp::Node {
     std::shared_ptr<const ActionChannelSnapshot> action_channel_snapshot;
     ChunkKey chunk_key{};
     std::uint64_t peer_message_version{};
+  };
+
+  enum class PacketStartResult {
+    kStarted,
+    kDeferred,
+    kNoLink,
   };
 
   enum class PairControlStage {
@@ -977,6 +1132,7 @@ class CommunicationProxy final : public rclcpp::Node {
     std::uint64_t decision_index{};
     double sim_time_s{};
     double interval_start_sim_time_s{};
+    double interval_duration_s{};
     std::uint64_t action_version{};
     std::uint64_t policy_version{};
     std::uint64_t action_generated_wall_time_ns{};
@@ -1508,9 +1664,20 @@ class CommunicationProxy final : public rclcpp::Node {
   void publishLlmState(const FastBoundarySnapshot &state,
                        const BsGlobalMapMetrics &map_metrics) {
     if (!shared_communication_) return;
-    const auto llm_step_interval = static_cast<std::uint64_t>(std::max(
-        1.0, std::round(rl_llm_state_period_s_ / rl_bs_decision_period_s_)));
-    if (state.step_id % llm_step_interval != 0U) return;
+    if (rl_bs_event_driven_one_shot_) {
+      if (rl_have_last_event_llm_state_time_ &&
+          state.sim_time_s - rl_last_event_llm_state_time_s_ + 1.0e-9 <
+              rl_llm_state_period_s_) {
+        return;
+      }
+      rl_have_last_event_llm_state_time_ = true;
+      rl_last_event_llm_state_time_s_ = state.sim_time_s;
+    } else {
+      const auto llm_step_interval = static_cast<std::uint64_t>(std::max(
+          1.0,
+          std::round(rl_llm_state_period_s_ / rl_bs_decision_period_s_)));
+      if (state.step_id % llm_step_interval != 0U) return;
+    }
     const auto telemetry = bsObservableTelemetrySnapshot(state);
     const auto map_summary = bsMapPromptSummary(map_metrics);
     const double bs_coverage_delta = have_last_llm_bs_coverage_
@@ -1526,12 +1693,12 @@ class CommunicationProxy final : public rclcpp::Node {
          << ",\"sim_time_s\":" << state.sim_time_s
          << ",\"task_step\":" << state.step_id
          << ",\"task_time_s\":" << state.sim_time_s
-         << ",\"task_step_duration_s\":" << rl_bs_decision_period_s_
+         << ",\"task_step_duration_s\":" << state.interval_duration_s
          << ",\"communication_slot_index\":" << state.communication_slot
          << ",\"rl_decision_index\":" << state.decision_index
          << ",\"communication_slot_duration_s\":"
          << rl_bs_communication_slot_s_
-         << ",\"rl_decision_interval_s\":" << rl_bs_decision_period_s_
+         << ",\"rl_decision_interval_s\":" << state.interval_duration_s
          << ",\"positions\":[";
     for (std::size_t drone = 0; drone < telemetry.positions.size(); ++drone) {
       if (drone) json << ',';
@@ -1692,7 +1859,7 @@ class CommunicationProxy final : public rclcpp::Node {
          << ",\"sim_time_s\":" << state.sim_time_s
          << ",\"task_step\":" << state.step_id
          << ",\"task_time_s\":" << state.sim_time_s
-         << ",\"task_step_duration_s\":" << rl_bs_decision_period_s_
+         << ",\"task_step_duration_s\":" << state.interval_duration_s
          << ",\"coverage\":" << state.coverage
          << ",\"coverage_delta\":" << state.coverage_delta
          << ",\"redundant_exploration_ratio\":" << redundancy
@@ -1772,10 +1939,15 @@ class CommunicationProxy final : public rclcpp::Node {
     if (receiver < 0 || receiver >= drone_count_) return false;
     auto &known = uav_chunks_[static_cast<std::size_t>(receiver)];
     if (!known.insert(key).second) return false;
+    const auto receiver_index = static_cast<std::size_t>(receiver);
+    if (bs_chunks_.count(key)) {
+      ordered_uav_missing_chunks_[receiver_index].erase(key);
+    } else {
+      ordered_bs_missing_chunks_[receiver_index].insert(key);
+    }
     const auto repository = chunk_repository_.find(key);
     if (repository != chunk_repository_.end()) {
       const auto bytes = static_cast<std::uint64_t>(repository->second.bytes);
-      const auto receiver_index = static_cast<std::size_t>(receiver);
 
       // C_sender -> receiver is defined by possession, not provenance.  A UAV
       // that learned this chunk from another UAV can immediately advertise and
@@ -1824,6 +1996,14 @@ class CommunicationProxy final : public rclcpp::Node {
   bool insertKnownBsChunk(const ChunkKey &key) {
     const auto started = std::chrono::steady_clock::now();
     if (!bs_chunks_.insert(key).second) return false;
+    for (int drone = 0; drone < drone_count_; ++drone) {
+      const auto drone_index = static_cast<std::size_t>(drone);
+      if (uav_chunks_[drone_index].count(key)) {
+        ordered_bs_missing_chunks_[drone_index].erase(key);
+      } else {
+        ordered_uav_missing_chunks_[drone_index].insert(key);
+      }
+    }
     const auto repository = chunk_repository_.find(key);
     if (repository != chunk_repository_.end()) {
       const auto bytes = static_cast<std::uint64_t>(repository->second.bytes);
@@ -1931,12 +2111,20 @@ class CommunicationProxy final : public rclcpp::Node {
         const std::uint32_t last = ranges[offset + 1U];
         if (first == 0U || last < first || last - first > 1000000U) continue;
         for (std::uint32_t index = first; index <= last; ++index) {
-          insertKnownUavChunk(
-              sender, {static_cast<int>(owner) + 1, index});
+          const ChunkKey key{static_cast<int>(owner) + 1, index};
+          insertKnownUavChunk(sender, key);
+          // The Proxy observes a UAV's own inventory announcement before it
+          // enters the simulated radio.  Materialize each immutable payload
+          // once from its original owner so later RL slots only perform radio
+          // admission; holder copies never create duplicate cache work.
+          if (bs_payload_precache_enabled_ && key.owner == sender + 1) {
+            queuePayloadPrecache(key);
+          }
           if (index == std::numeric_limits<std::uint32_t>::max()) break;
         }
       }
     }
+    servicePayloadPrecache(now().seconds());
   }
 
   void observeUavTransmit(
@@ -2016,7 +2204,7 @@ class CommunicationProxy final : public rclcpp::Node {
       return;
     }
     const double stamp = now().seconds();
-    const std::size_t bytes = shared_uav_ofdma_enabled_
+    const std::size_t bytes = shared_uav_radio_enabled_
                                   ? udp_header_bytes_ + message->size()
                                   : 64U + message->size();
     const auto &topic_key = kTopicPolicies.at(topic_index).key;
@@ -2032,6 +2220,12 @@ class CommunicationProxy final : public rclcpp::Node {
     if (topic_key == "chunk_data" && has_chunk_key &&
         handleRequestedBsChunkResponse(sender, chunk_key, message)) {
       return;
+    }
+    if (topic_key == "chunk_data" && has_chunk_key) {
+      // A normal RACER exchange may populate the global immutable payload
+      // cache before the owner's local precache request completes.
+      satisfyPayloadPrecache(chunk_key, false);
+      servicePayloadPrecache(stamp);
     }
 
     if (maybeDeliverPerfectInitialAssignment(
@@ -2095,7 +2289,7 @@ class CommunicationProxy final : public rclcpp::Node {
     }
     logical_attempted_packets_ += intended_receivers;
     logical_attempted_bytes_ += intended_receivers * bytes;
-    if (shared_uav_ofdma_enabled_) {
+    if (shared_uav_radio_enabled_) {
       enqueueUavUdpDatagram(
           sender, topic_index, message, flow, receivers, lossless_receivers,
           stamp, has_chunk_key ? &chunk_key : nullptr);
@@ -2124,7 +2318,7 @@ class CommunicationProxy final : public rclcpp::Node {
       const std::shared_ptr<rclcpp::SerializedMessage> &message,
       double born_at) {
     const double stamp = now().seconds();
-    const std::size_t bytes = shared_uav_ofdma_enabled_
+    const std::size_t bytes = shared_uav_radio_enabled_
                                   ? udp_header_bytes_ + message->size()
                                   : 64U + message->size();
     auto flow = std::make_shared<DeliveryFlow>();
@@ -2565,7 +2759,7 @@ class CommunicationProxy final : public rclcpp::Node {
   int directedReceiver(
       int sender, std::size_t topic_index,
       const std::shared_ptr<rclcpp::SerializedMessage> &message) const {
-    const bool unicast_enabled = shared_uav_ofdma_enabled_
+    const bool unicast_enabled = shared_uav_radio_enabled_
                                      ? uav_udp_directed_unicast_
                                      : directed_message_unicast_;
     if (!unicast_enabled) return -1;
@@ -2855,6 +3049,87 @@ class CommunicationProxy final : public rclcpp::Node {
     completed_uav_datagrams_.push_back(std::move(completed));
   }
 
+  bool transmitUavDatagramSlot(
+      const PrbAllocation &allocation, double slot_start,
+      const std::vector<bool> &transmitting) {
+    auto &queue =
+        uav_udp_queues_[static_cast<std::size_t>(allocation.sender)];
+    if (queue.datagrams.empty()) return false;
+    auto &datagram = queue.datagrams.front();
+    for (const auto &receiver : datagram.receivers) {
+      markActiveLink(allocation.sender, receiver.receiver);
+    }
+    const double rate_snr = rateSelectionSnr(
+        datagram, allocation.sender, allocation.prb_count, slot_start);
+    const auto &radio = directRadioModel();
+    const double available_bits = radio.bitsPerSlot(
+        rate_snr, allocation.prb_count);
+    const double transmitted_bits =
+        std::min(datagram.remaining_bits, available_bits);
+    if (!datagram.started) {
+      datagram.started = true;
+      datagram.first_slot = uav_ofdma_slot_index_;
+      ++uav_physical_transmissions_started_;
+      ++uav_tx_power_applications_;
+      const std::string selected_mcs(radio.selectMcs(rate_snr).name);
+      ++mcs_counts_[selected_mcs];
+      ++uav_mcs_counts_[selected_mcs];
+    }
+    datagram.last_slot = uav_ofdma_slot_index_;
+    datagram.last_allocated_prbs = allocation.prb_count;
+    datagram.allocated_prb_slots +=
+        static_cast<std::uint64_t>(allocation.prb_count);
+    ++uav_ofdma_prb_allocation_events_;
+    uav_ofdma_allocated_prb_slots_ += allocation.prb_count;
+    direct_u2u_prb_slots_ += allocation.prb_count;
+
+    for (auto &receiver : datagram.receivers) {
+      receiver.last_allocated_prbs = allocation.prb_count;
+      if (transmitting[static_cast<std::size_t>(receiver.receiver)]) {
+        receiver.half_duplex_blocked = true;
+        continue;
+      }
+      if (receiver.force_lossless) {
+        receiver.received_bits += transmitted_bits;
+        continue;
+      }
+      const auto *link =
+          linkFor({allocation.sender, receiver.receiver}, slot_start);
+      if (!usable(link)) {
+        receiver.channel_unavailable = true;
+        continue;
+      }
+      const double receiver_snr =
+          allocatedSnrDb(link, allocation.prb_count);
+      receiver.last_snr_db = receiver_snr;
+      receiver.received_bits += transmitted_bits;
+      receiver.snr_linear_bit_sum +=
+          std::pow(10.0, receiver_snr / 10.0) * transmitted_bits;
+    }
+    datagram.remaining_bits =
+        std::max(0.0, datagram.remaining_bits - transmitted_bits);
+    if (shouldLogUdpDatagram(datagram.packet_id)) {
+      RCLCPP_INFO(
+          get_logger(),
+          "%s slot=%lu sender=%d udp_type=%s packet_id=%lu "
+          "packet_size=%zu prb_start=%d allocated_prbs=%d "
+          "remaining_bytes=%zu receivers=%zu tx_power_dbm=%.3f",
+          uav_csma_enabled_ ? "RACER_UAV_CSMA_SLOT"
+                            : "RACER_UAV_OFDMA_SLOT",
+          static_cast<unsigned long>(uav_ofdma_slot_index_),
+          allocation.sender,
+          kTopicPolicies[datagram.topic_index].key.c_str(),
+          static_cast<unsigned long>(datagram.packet_id), datagram.bytes,
+          allocation.first_prb, allocation.prb_count,
+          remainingBytes(datagram), datagram.receivers.size(),
+          uav_tx_power_dbm_);
+    }
+    if (datagram.remaining_bits > 1.0e-9) return false;
+    finishUavPhysicalTransmission(
+        allocation.sender, queue, slot_start + radio.slotDuration());
+    return true;
+  }
+
   void processUavOfdmaSlot(double slot_start) {
     expireUavUdpQueues(slot_start);
     std::vector<int> active_senders;
@@ -2883,81 +3158,196 @@ class CommunicationProxy final : public rclcpp::Node {
         uav_ofdma_max_allocated_prbs_per_slot_, slot_prbs);
 
     for (const auto &allocation : allocations) {
-      auto &queue =
-          uav_udp_queues_[static_cast<std::size_t>(allocation.sender)];
-      if (queue.datagrams.empty()) continue;
-      auto &datagram = queue.datagrams.front();
-      for (const auto &receiver : datagram.receivers) {
-        markActiveLink(allocation.sender, receiver.receiver);
-      }
-      const double rate_snr = rateSelectionSnr(
-          datagram, allocation.sender, allocation.prb_count, slot_start);
-      const auto &radio = directRadioModel();
-      const double available_bits = radio.bitsPerSlot(
-          rate_snr, allocation.prb_count);
-      const double transmitted_bits =
-          std::min(datagram.remaining_bits, available_bits);
-      if (!datagram.started) {
-        datagram.started = true;
-        datagram.first_slot = uav_ofdma_slot_index_;
-        ++uav_physical_transmissions_started_;
-        ++uav_tx_power_applications_;
-        const std::string selected_mcs(radio.selectMcs(rate_snr).name);
-        ++mcs_counts_[selected_mcs];
-        ++uav_mcs_counts_[selected_mcs];
-      }
-      datagram.last_slot = uav_ofdma_slot_index_;
-      datagram.last_allocated_prbs = allocation.prb_count;
-      datagram.allocated_prb_slots +=
-          static_cast<std::uint64_t>(allocation.prb_count);
-      ++uav_ofdma_prb_allocation_events_;
-      uav_ofdma_allocated_prb_slots_ += allocation.prb_count;
-      direct_u2u_prb_slots_ += allocation.prb_count;
+      transmitUavDatagramSlot(allocation, slot_start, transmitting);
+    }
+  }
 
-      for (auto &receiver : datagram.receivers) {
-        receiver.last_allocated_prbs = allocation.prb_count;
-        if (transmitting[static_cast<std::size_t>(receiver.receiver)]) {
-          receiver.half_duplex_blocked = true;
-          continue;
-        }
-        if (receiver.force_lossless) {
-          receiver.received_bits += transmitted_bits;
-          continue;
-        }
-        const auto *link =
-            linkFor({allocation.sender, receiver.receiver}, slot_start);
-        if (!usable(link)) {
-          receiver.channel_unavailable = true;
-          continue;
-        }
-        const double receiver_snr =
-            allocatedSnrDb(link, allocation.prb_count);
-        receiver.last_snr_db = receiver_snr;
-        receiver.received_bits += transmitted_bits;
-        receiver.snr_linear_bit_sum +=
-            std::pow(10.0, receiver_snr / 10.0) * transmitted_bits;
-      }
-      datagram.remaining_bits =
-          std::max(0.0, datagram.remaining_bits - transmitted_bits);
-      if (shouldLogUdpDatagram(datagram.packet_id)) {
-        RCLCPP_INFO(
-            get_logger(),
-            "RACER_UAV_OFDMA_SLOT slot=%lu sender=%d udp_type=%s "
-            "packet_id=%lu packet_size=%zu prb_start=%d allocated_prbs=%d "
-            "remaining_bytes=%zu receivers=%zu tx_power_dbm=%.3f",
-            static_cast<unsigned long>(uav_ofdma_slot_index_),
-            allocation.sender,
-            kTopicPolicies[datagram.topic_index].key.c_str(),
-            static_cast<unsigned long>(datagram.packet_id), datagram.bytes,
-            allocation.first_prb, allocation.prb_count,
-            remainingBytes(datagram), datagram.receivers.size(),
-            uav_tx_power_dbm_);
-      }
-      if (datagram.remaining_bits <= 1.0e-9) {
-        finishUavPhysicalTransmission(
-            allocation.sender, queue, slot_start + radio.slotDuration());
+  void resetCsmaSender(int sender, bool collision) {
+    const auto index = static_cast<std::size_t>(sender);
+    if (collision) {
+      const long long doubled =
+          2LL * (static_cast<long long>(csma_contention_windows_[index]) + 1LL) -
+          1LL;
+      csma_contention_windows_[index] = static_cast<int>(
+          std::min<long long>(csma_cw_max_, doubled));
+    } else {
+      csma_contention_windows_[index] = csma_cw_min_;
+    }
+    csma_backoff_slots_[index] = -1;
+  }
+
+  std::uint64_t dropCsmaCollisionDatagram(int sender, double slot_start) {
+    auto &queue = uav_udp_queues_[static_cast<std::size_t>(sender)];
+    if (queue.datagrams.empty()) return 1U;
+    auto &datagram = queue.datagrams.front();
+    for (const auto &receiver : datagram.receivers) {
+      markActiveLink(sender, receiver.receiver);
+    }
+    const auto &radio = directRadioModel();
+    const int prbs = radio.config().resource_blocks;
+    const double rate_snr =
+        rateSelectionSnr(datagram, sender, prbs, slot_start);
+    const double bits_per_slot = std::max(1.0, radio.bitsPerSlot(rate_snr, prbs));
+    const auto occupied_slots = static_cast<std::uint64_t>(std::max(
+        1.0, std::ceil(datagram.remaining_bits / bits_per_slot)));
+    datagram.started = true;
+    datagram.first_slot = uav_ofdma_slot_index_;
+    datagram.last_slot = uav_ofdma_slot_index_ + occupied_slots - 1U;
+    datagram.last_allocated_prbs = prbs;
+    datagram.allocated_prb_slots =
+        occupied_slots * static_cast<std::uint64_t>(prbs);
+    ++uav_physical_transmissions_started_;
+    ++uav_physical_transmissions_completed_;
+    ++uav_tx_power_applications_;
+    uav_udp_physical_bytes_transmitted_ += datagram.bytes;
+    const std::string selected_mcs(radio.selectMcs(rate_snr).name);
+    ++mcs_counts_[selected_mcs];
+    ++uav_mcs_counts_[selected_mcs];
+    dropped_per_ += datagram.receivers.size();
+    uav_udp_receiver_collision_failures_ += datagram.receivers.size();
+    ++uav_csma_collided_datagrams_;
+    if (shouldLogUdpDatagram(datagram.packet_id)) {
+      RCLCPP_INFO(
+          get_logger(),
+          "RACER_UAV_CSMA_COLLISION slot=%lu sender=%d udp_type=%s "
+          "packet_id=%lu packet_size=%zu contenders_collision=1 "
+          "occupied_slots=%lu receivers=%zu result=collision",
+          static_cast<unsigned long>(uav_ofdma_slot_index_), sender,
+          kTopicPolicies[datagram.topic_index].key.c_str(),
+          static_cast<unsigned long>(datagram.packet_id), datagram.bytes,
+          static_cast<unsigned long>(occupied_slots),
+          datagram.receivers.size());
+    }
+    removeUavUdpFront(queue);
+    return occupied_slots;
+  }
+
+  void accountCsmaOccupiedSlot(std::size_t transmitting_senders) {
+    const int prbs = directRadioModel().config().resource_blocks;
+    ++uav_ofdma_active_slots_;
+    ++uav_csma_busy_slots_;
+    uav_ofdma_peak_active_senders_ = std::max<std::uint64_t>(
+        uav_ofdma_peak_active_senders_, transmitting_senders);
+    uav_ofdma_max_allocated_prbs_per_slot_ = std::max(
+        uav_ofdma_max_allocated_prbs_per_slot_, prbs);
+  }
+
+  void processUavCsmaSlot(double slot_start) {
+    expireUavUdpQueues(slot_start);
+    ++uav_ofdma_slots_processed_;
+
+    if (csma_collision_busy_slots_remaining_ > 0U) {
+      accountCsmaOccupiedSlot(csma_last_collision_senders_);
+      const int prbs = directRadioModel().config().resource_blocks;
+      uav_ofdma_allocated_prb_slots_ += prbs;
+      direct_u2u_prb_slots_ += prbs;
+      --csma_collision_busy_slots_remaining_;
+      return;
+    }
+
+    if (csma_transmitting_sender_ >= 0) {
+      auto &queue = uav_udp_queues_[
+          static_cast<std::size_t>(csma_transmitting_sender_)];
+      if (queue.datagrams.empty() || !queue.datagrams.front().started) {
+        resetCsmaSender(csma_transmitting_sender_, false);
+        csma_transmitting_sender_ = -1;
+        csma_idle_guard_slots_ = 0;
       }
     }
+
+    if (csma_transmitting_sender_ >= 0) {
+      const int sender = csma_transmitting_sender_;
+      accountCsmaOccupiedSlot(1U);
+      std::vector<bool> transmitting(
+          static_cast<std::size_t>(drone_count_), false);
+      transmitting[static_cast<std::size_t>(sender)] = true;
+      const bool completed = transmitUavDatagramSlot(
+          {sender, 0, directRadioModel().config().resource_blocks},
+          slot_start, transmitting);
+      if (completed) {
+        resetCsmaSender(sender, false);
+        csma_transmitting_sender_ = -1;
+        csma_idle_guard_slots_ = 0;
+      }
+      return;
+    }
+
+    std::vector<int> active_senders;
+    active_senders.reserve(static_cast<std::size_t>(drone_count_));
+    for (int sender = 0; sender < drone_count_; ++sender) {
+      const auto index = static_cast<std::size_t>(sender);
+      if (uav_udp_queues_[index].datagrams.empty()) {
+        resetCsmaSender(sender, false);
+        continue;
+      }
+      active_senders.push_back(sender);
+      if (csma_backoff_slots_[index] < 0) {
+        csma_backoff_slots_[index] =
+            std::uniform_int_distribution<int>(
+                0, csma_contention_windows_[index])(
+                uav_sender_rngs_[index]);
+      }
+    }
+    if (active_senders.empty()) {
+      csma_idle_guard_slots_ = 0;
+      return;
+    }
+
+    if (csma_idle_guard_slots_ < csma_difs_slots_) {
+      ++csma_idle_guard_slots_;
+      ++uav_csma_idle_slots_;
+      return;
+    }
+
+    std::vector<int> contenders;
+    for (const int sender : active_senders) {
+      if (csma_backoff_slots_[static_cast<std::size_t>(sender)] == 0) {
+        contenders.push_back(sender);
+      }
+    }
+    if (contenders.empty()) {
+      for (const int sender : active_senders) {
+        auto &backoff = csma_backoff_slots_[static_cast<std::size_t>(sender)];
+        if (backoff > 0) --backoff;
+      }
+      ++uav_csma_idle_slots_;
+      ++uav_csma_backoff_slots_;
+      return;
+    }
+
+    csma_idle_guard_slots_ = 0;
+    if (contenders.size() == 1U) {
+      const int sender = contenders.front();
+      csma_transmitting_sender_ = sender;
+      ++uav_csma_successful_contentions_;
+      accountCsmaOccupiedSlot(1U);
+      std::vector<bool> transmitting(
+          static_cast<std::size_t>(drone_count_), false);
+      transmitting[static_cast<std::size_t>(sender)] = true;
+      const bool completed = transmitUavDatagramSlot(
+          {sender, 0, directRadioModel().config().resource_blocks},
+          slot_start, transmitting);
+      if (completed) {
+        resetCsmaSender(sender, false);
+        csma_transmitting_sender_ = -1;
+      }
+      return;
+    }
+
+    ++uav_csma_collision_events_;
+    csma_last_collision_senders_ = contenders.size();
+    accountCsmaOccupiedSlot(contenders.size());
+    const int prbs = directRadioModel().config().resource_blocks;
+    uav_ofdma_allocated_prb_slots_ += prbs;
+    direct_u2u_prb_slots_ += prbs;
+    std::uint64_t occupied_slots = 1U;
+    for (const int sender : contenders) {
+      ++uav_ofdma_prb_allocation_events_;
+      occupied_slots = std::max(
+          occupied_slots, dropCsmaCollisionDatagram(sender, slot_start));
+      resetCsmaSender(sender, true);
+    }
+    csma_collision_busy_slots_remaining_ = occupied_slots - 1U;
   }
 
   void deliverCompletedUavDatagrams(double stamp) {
@@ -3036,10 +3426,12 @@ class CommunicationProxy final : public rclcpp::Node {
         if (shouldLogUdpDatagram(datagram.packet_id)) {
           RCLCPP_INFO(
               get_logger(),
-              "RACER_UAV_OFDMA_RX slot=%lu sender=%d udp_type=%s "
+              "%s slot=%lu sender=%d udp_type=%s "
               "packet_id=%lu packet_size=%zu allocated_prbs=%d "
               "remaining_bytes=0 receiver=%d snr_db=%.3f per=%.6f "
               "result=%s",
+              uav_csma_enabled_ ? "RACER_UAV_CSMA_RX"
+                                : "RACER_UAV_OFDMA_RX",
               static_cast<unsigned long>(datagram.last_slot),
               datagram.flow->origin_sender,
               kTopicPolicies[datagram.topic_index].key.c_str(),
@@ -3059,7 +3451,11 @@ class CommunicationProxy final : public rclcpp::Node {
     }
     const double slot = directRadioModel().slotDuration();
     while (uav_ofdma_next_slot_start_ + slot <= stamp + 1.0e-12) {
-      processUavOfdmaSlot(uav_ofdma_next_slot_start_);
+      if (uav_csma_enabled_) {
+        processUavCsmaSlot(uav_ofdma_next_slot_start_);
+      } else {
+        processUavOfdmaSlot(uav_ofdma_next_slot_start_);
+      }
       uav_ofdma_next_slot_start_ += slot;
       ++uav_ofdma_slot_index_;
     }
@@ -3545,18 +3941,12 @@ class CommunicationProxy final : public rclcpp::Node {
       pending.chunk_key = *chunk_key;
     }
     pending.peer_message_version = peer_message_version;
-    auto position = queue.packets.begin();
-    if (position != queue.packets.end() && position->transmitting) {
-      ++position;
-    }
-    while (position != queue.packets.end() &&
-           packetPriority(position->route, position->topic_index,
-                          position->reserved_pair_control) >=
-               incoming_priority) {
-      ++position;
-    }
     updateRouteQueueCache(pending, true);
-    queue.packets.insert(position, std::move(pending));
+    // Transmission priority is chosen globally when BS airtime is assigned.
+    // Keeping ownership FIFO here avoids treating already-serialized packets
+    // as a head-of-line barrier while their propagation delay is still in
+    // flight.
+    queue.packets.push_back(std::move(pending));
     queue.bytes += bytes;
     if (action_channel_snapshot) ++rl_action_bound_packets_enqueued_;
     return true;
@@ -3595,11 +3985,7 @@ class CommunicationProxy final : public rclcpp::Node {
         output.push_back(key);
       }
     }
-    std::sort(output.begin(), output.end(),
-              [](const ChunkKey &left, const ChunkKey &right) {
-                if (left.owner != right.owner) return left.owner < right.owner;
-                return left.index < right.index;
-              });
+    std::sort(output.begin(), output.end());
     return output;
   }
 
@@ -3646,7 +4032,147 @@ class CommunicationProxy final : public rclcpp::Node {
     return false;
   }
 
+  bool payloadPrecacheNeeded(const ChunkKey &key) const {
+    if (!bs_payload_precache_enabled_ || !bs_round_robin_enabled_ ||
+        key.owner < 1 || key.owner > drone_count_ || key.index == 0U ||
+        chunk_repository_.count(key) || bs_chunks_.count(key)) {
+      return false;
+    }
+    return uav_chunks_[static_cast<std::size_t>(key.owner - 1)].count(key) !=
+           0U;
+  }
+
+  void queuePayloadPrecache(const ChunkKey &key) {
+    if (!payloadPrecacheNeeded(key) ||
+        pending_payload_precache_keys_.count(key) ||
+        inflight_payload_precache_.count(key)) {
+      return;
+    }
+    pending_payload_precache_.push_back(key);
+    pending_payload_precache_keys_.insert(key);
+    payload_precache_pending_peak_ = std::max(
+        payload_precache_pending_peak_, pending_payload_precache_keys_.size());
+    ++payload_precache_queued_;
+  }
+
+  void satisfyPayloadPrecache(const ChunkKey &key, bool requested_response) {
+    const bool was_pending = pending_payload_precache_keys_.erase(key) > 0U;
+    const bool was_inflight = inflight_payload_precache_.erase(key) > 0U;
+    if (!was_pending && !was_inflight) return;
+    if (requested_response) {
+      ++payload_precache_responses_received_;
+      if (was_pending && !was_inflight) {
+        ++payload_precache_late_responses_;
+      }
+    } else {
+      ++payload_precache_satisfied_by_peer_data_;
+    }
+  }
+
+  void compactPayloadPrecacheQueueIfNeeded() {
+    if (pending_payload_precache_.size() <=
+        2U * pending_payload_precache_keys_.size() + 1024U) {
+      return;
+    }
+    std::deque<ChunkKey> compacted;
+    for (const auto &key : pending_payload_precache_) {
+      if (pending_payload_precache_keys_.count(key)) {
+        compacted.push_back(key);
+      }
+    }
+    pending_payload_precache_.swap(compacted);
+  }
+
+  void pruneExpiredPayloadPrecaches(double stamp) {
+    std::vector<ChunkKey> retry;
+    for (auto iterator = inflight_payload_precache_.begin();
+         iterator != inflight_payload_precache_.end();) {
+      if (stamp - iterator->second.requested_at <=
+          bs_payload_precache_timeout_s_) {
+        ++iterator;
+        continue;
+      }
+      retry.push_back(iterator->first);
+      iterator = inflight_payload_precache_.erase(iterator);
+      ++payload_precache_timeouts_;
+    }
+    for (const auto &key : retry) {
+      if (payloadPrecacheNeeded(key) &&
+          pending_payload_precache_keys_.insert(key).second) {
+        pending_payload_precache_.push_back(key);
+      }
+    }
+  }
+
+  void servicePayloadPrecache(double stamp) {
+    if (!bs_payload_precache_enabled_ || !bs_round_robin_enabled_) return;
+    pruneExpiredPayloadPrecaches(stamp);
+    compactPayloadPrecacheQueueIfNeeded();
+    const auto inflight_limit =
+        static_cast<std::size_t>(bs_max_payload_precache_inflight_);
+    const auto batch_limit =
+        static_cast<std::size_t>(bs_payload_precache_batch_size_);
+    while (inflight_payload_precache_.size() < inflight_limit) {
+      while (!pending_payload_precache_.empty()) {
+        const auto &front = pending_payload_precache_.front();
+        if (!pending_payload_precache_keys_.count(front)) {
+          pending_payload_precache_.pop_front();
+          continue;
+        }
+        if (!payloadPrecacheNeeded(front)) {
+          pending_payload_precache_keys_.erase(front);
+          pending_payload_precache_.pop_front();
+          continue;
+        }
+        break;
+      }
+      if (pending_payload_precache_.empty()) break;
+
+      const int sender = pending_payload_precache_.front().owner - 1;
+      std::vector<ChunkKey> batch;
+      const auto request_limit = std::min(
+          batch_limit, inflight_limit - inflight_payload_precache_.size());
+      while (!pending_payload_precache_.empty() &&
+             batch.size() < request_limit) {
+        const auto key = pending_payload_precache_.front();
+        if (!pending_payload_precache_keys_.count(key)) {
+          pending_payload_precache_.pop_front();
+          continue;
+        }
+        if (!payloadPrecacheNeeded(key)) {
+          pending_payload_precache_keys_.erase(key);
+          pending_payload_precache_.pop_front();
+          continue;
+        }
+        // One ChunkStamps request targets one UAV. Preserve FIFO order rather
+        // than overtaking another owner's newly sealed chunks.
+        if (key.owner - 1 != sender) break;
+        pending_payload_precache_.pop_front();
+        pending_payload_precache_keys_.erase(key);
+        inflight_payload_precache_.emplace(
+            key, InflightPayloadPrecache{sender, stamp});
+        batch.push_back(key);
+      }
+      if (batch.empty()) break;
+      if (!publishBsChunkRequest(sender, batch, stamp, true)) {
+        for (auto iterator = batch.rbegin(); iterator != batch.rend();
+             ++iterator) {
+          inflight_payload_precache_.erase(*iterator);
+          pending_payload_precache_keys_.insert(*iterator);
+          pending_payload_precache_.push_front(*iterator);
+        }
+        break;
+      }
+      payload_precache_inflight_peak_ = std::max(
+          payload_precache_inflight_peak_, inflight_payload_precache_.size());
+    }
+  }
+
   bool hasPendingBsChunkRequest(const ChunkKey &chunk) const {
+    if (pending_payload_precache_keys_.count(chunk) ||
+        inflight_payload_precache_.count(chunk)) {
+      return true;
+    }
     return std::any_of(
         pending_bs_chunk_requests_.begin(),
         pending_bs_chunk_requests_.end(),
@@ -3722,7 +4248,8 @@ class CommunicationProxy final : public rclcpp::Node {
 
   bool publishBsChunkRequest(int sender,
                              const std::vector<ChunkKey> &keys,
-                             double stamp) {
+                             double stamp,
+                             bool payload_precache = false) {
     if (sender < 0 || sender >= drone_count_ || keys.empty()) return false;
     racer_fidelity_msgs::msg::ChunkStamps request;
     // Zero is outside RACER's one-based UAV ID space and denotes a local BS
@@ -3764,6 +4291,10 @@ class CommunicationProxy final : public rclcpp::Node {
     }
     ++bs_chunk_payload_request_messages_;
     bs_chunk_payload_chunks_requested_ += keys.size();
+    if (payload_precache) {
+      ++payload_precache_request_messages_;
+      payload_precache_chunks_requested_ += keys.size();
+    }
     return true;
   }
 
@@ -3775,6 +4306,18 @@ class CommunicationProxy final : public rclcpp::Node {
     if (sender < 0 || sender >= drone_count_ ||
         chunk.from_drone_id != sender + 1) {
       ++bs_chunk_payload_unsolicited_responses_;
+      return true;
+    }
+    const auto precache = inflight_payload_precache_.find(key);
+    const bool pending_precache =
+        key.owner - 1 == sender && pending_payload_precache_keys_.count(key);
+    if ((precache != inflight_payload_precache_.end() &&
+         precache->second.sender == sender) || pending_precache) {
+      satisfyPayloadPrecache(key, true);
+      ++bs_chunk_payload_responses_received_;
+      servicePayloadPrecache(now().seconds());
+      // Precache only materializes immutable payload bytes. A later RL slot
+      // must still select a real holder before the chunk enters the radio.
       return true;
     }
     auto &requests =
@@ -3800,6 +4343,45 @@ class CommunicationProxy final : public rclcpp::Node {
     return true;
   }
 
+  void onPushedChunkPayload(
+      int sender, std::shared_ptr<rclcpp::SerializedMessage> message) {
+    racer_fidelity_msgs::msg::ChunkData chunk;
+    if (!deserialize(message, chunk) || chunk.to_drone_id != -1 ||
+        chunk.idx == 0U || chunk.chunk_drone_id < 1 ||
+        chunk.chunk_drone_id > drone_count_) {
+      ++payload_direct_pushes_rejected_;
+      return;
+    }
+    const ChunkKey key{chunk.chunk_drone_id, chunk.idx};
+    if (sender < 0 || sender >= drone_count_ ||
+        chunk.from_drone_id != sender + 1 || key.owner != sender + 1) {
+      ++payload_direct_pushes_rejected_;
+      return;
+    }
+    // This callback is independent of the ordinary UAV TX subscriptions. It
+    // only fills the immutable local repository and UAV inventory; the BS map
+    // changes later, after enqueueCachedBsChunkUpload() passes the payload
+    // through the selected action and real PHY/MAC path.
+    const std::size_t bytes = 64U + message->size();
+    const bool new_definition =
+        chunk_repository_.find(key) == chunk_repository_.end();
+    chunk_repository_.insert_or_assign(
+        key, CachedChunk{std::move(message), bytes});
+    if (new_definition) cacheNewChunkDefinition(key, bytes);
+    insertKnownUavChunk(sender, key);
+    if (task_metric_observer_mode_ == "inline") {
+      applyTaskChunkObservation(chunk, true, false);
+    } else if (task_metric_observer_mode_ == "async") {
+      enqueueTaskObservation(
+          {TaskObservationKind::kUavChunk, sender, nullptr,
+           std::make_shared<racer_fidelity_msgs::msg::ChunkData>(
+               std::move(chunk))});
+    }
+    ++payload_direct_pushes_received_;
+    satisfyPayloadPrecache(key, false);
+    servicePayloadPrecache(now().seconds());
+  }
+
   bool hasPendingPeerMessage(const LinkKey &link, RouteStage route,
                              const CachedPeerMessage &cached) const {
     const auto found = queues_.find(link);
@@ -3813,40 +4395,111 @@ class CommunicationProxy final : public rclcpp::Node {
         });
   }
 
-  void scheduleUavBsUpload(
+  bool bsBudgetChannelSnr(int sender, int receiver, double stamp,
+                          double &effective_snr_db) const {
+    if (sender < 0 || receiver < 0 || sender >= radio_node_count_ ||
+        receiver >= radio_node_count_) {
+      return false;
+    }
+    if (force_bs_perfect_delivery_) {
+      effective_snr_db = 40.0;
+      return true;
+    }
+    if (rl_action_channel_snapshot_) {
+      const auto &snapshot = *rl_action_channel_snapshot_;
+      const auto index = static_cast<std::size_t>(sender) *
+                             static_cast<std::size_t>(radio_node_count_) +
+                         static_cast<std::size_t>(receiver);
+      if (index >= snapshot.available.size() ||
+          index >= snapshot.effective_snr_db.size() ||
+          snapshot.available[index] == 0U) {
+        return false;
+      }
+      effective_snr_db =
+          static_cast<double>(snapshot.effective_snr_db[index]);
+      return std::isfinite(effective_snr_db);
+    }
+    const auto *link = linkFor({sender, receiver}, stamp);
+    if (!usable(link)) return false;
+    effective_snr_db = radioSnrDb(link, bs_model_);
+    return std::isfinite(effective_snr_db);
+  }
+
+  AdaptiveChunkQuota adaptiveBsChunkQuota(
+      int sender, int receiver, double stamp, double admitted_airtime_s) const {
+    AdaptiveChunkQuota quota;
+    if (!bsBudgetChannelSnr(
+            sender, receiver, stamp, quota.effective_snr_db)) {
+      return quota;
+    }
+    quota.available = true;
+    quota.mcs = bs_model_.selectMcs(quota.effective_snr_db).name;
+    if (admitted_airtime_s <= 0.0) return quota;
+
+    const int budgeted_retries =
+        mode_ == "ideal" || force_bs_perfect_delivery_ ? 0 : bs_max_retries_;
+    quota.chunks = bs_model_.reliablePacketCapacity(
+        quota.effective_snr_db, kRepresentativeMapChunkBytes,
+        budgeted_retries, admitted_airtime_s);
+    return quota;
+  }
+
+  std::size_t scheduleUavBsUpload(
       int sender, double stamp, int action_sender,
       std::uint64_t action_id, std::uint64_t action_step_id,
       const std::shared_ptr<const ActionChannelSnapshot> &action_snapshot,
       std::uint64_t selection_budget_id,
       std::size_t requested_selection_limit = 32U) {
-    if (sender < 0 || sender >= drone_count_) return;
+    if (sender < 0 || sender >= drone_count_) return 0U;
     const auto sender_index = static_cast<std::size_t>(sender);
     pruneExpiredBsChunkRequests(stamp);
     if (bs_uplink_budget_action_id_[sender_index] != selection_budget_id) {
       bs_uplink_budget_action_id_[sender_index] = selection_budget_id;
       bs_uplink_chunks_selected_for_action_[sender_index] = 0U;
     }
-    const auto inflight = bsUploadInflightChunkCount(sender);
-    const auto inflight_limit =
-        static_cast<std::size_t>(bs_max_inflight_chunks_per_uav_);
-    const auto available_inflight_slots =
-        inflight < inflight_limit ? inflight_limit - inflight : 0U;
-    const std::size_t action_limit = std::min(
-        {requested_selection_limit, static_cast<std::size_t>(32U),
-         static_cast<std::size_t>(bs_max_uplink_chunks_per_turn_),
-         available_inflight_slots});
+    // The action-bound PHY quota is the normal admission limit. A positive
+    // legacy in-flight value may still tighten it for controlled experiments.
+    // With the default zero setting, keep roughly two current physical slots
+    // outstanding. This bandwidth-delay window changes with the action-bound
+    // SNR/MCS quota and drains from real delivery feedback; it is not a fixed
+    // global chunk limit.
+    std::size_t action_limit = requested_selection_limit;
+    if (bs_max_uplink_chunks_per_turn_ > 0) {
+      action_limit = std::min(
+          action_limit,
+          static_cast<std::size_t>(bs_max_uplink_chunks_per_turn_));
+    }
+    if (bs_max_inflight_chunks_per_uav_ > 0) {
+      const auto inflight = bsUploadInflightChunkCount(sender);
+      const auto inflight_limit =
+          static_cast<std::size_t>(bs_max_inflight_chunks_per_uav_);
+      const auto available_inflight_slots =
+          inflight < inflight_limit ? inflight_limit - inflight : 0U;
+      action_limit = std::min(action_limit, available_inflight_slots);
+      if (requested_selection_limit > 0U && action_limit == 0U) {
+        ++bs_upload_selection_backpressure_skips_;
+      }
+    } else if (requested_selection_limit > 0U) {
+      const auto inflight = bsUploadInflightChunkCount(sender);
+      constexpr std::size_t kAdaptiveOutstandingSlots = 2U;
+      const auto adaptive_window =
+          kAdaptiveOutstandingSlots * requested_selection_limit;
+      const auto available_inflight_slots =
+          inflight < adaptive_window ? adaptive_window - inflight : 0U;
+      action_limit = std::min(action_limit, available_inflight_slots);
+      if (action_limit == 0U) {
+        ++bs_upload_selection_backpressure_skips_;
+      }
+    }
     auto &selected_for_action =
         bs_uplink_chunks_selected_for_action_[sender_index];
-    if (action_limit == 0U) {
-      ++bs_upload_selection_backpressure_skips_;
-    }
+    const auto selected_before = selected_for_action;
     // Original RACER semantics: any chunk the current sender possesses can be
     // forwarded, regardless of which UAV created it.  ChunkKey::owner remains
     // provenance only.  Include stamp-announced chunks whose payload has not
     // yet passed through the Proxy: those are requested from MultiMapManager
     // below instead of being silently omitted.
-    const auto candidates = sortedChunks(
-        uav_chunks_[sender_index], bs_chunks_, false);
+    const auto &candidates = ordered_bs_missing_chunks_[sender_index];
     const LinkKey link{sender, ap_node_id_};
     std::vector<ChunkKey> payload_requests;
     for (const auto &key : candidates) {
@@ -3858,7 +4511,8 @@ class CommunicationProxy final : public rclcpp::Node {
         ++bs_chunk_payload_request_duplicates_suppressed_;
         continue;
       }
-      if (chunk_repository_.find(key) != chunk_repository_.end()) {
+      const auto repository = chunk_repository_.find(key);
+      if (repository != chunk_repository_.end()) {
         if (enqueueCachedBsChunkUpload(
                 sender, key, stamp, action_sender, action_id, action_step_id,
                 action_snapshot)) {
@@ -3866,6 +4520,7 @@ class CommunicationProxy final : public rclcpp::Node {
         }
         continue;
       }
+      if (bs_payload_precache_enabled_) continue;
       PendingBsChunkRequest pending;
       pending.requested_at = stamp;
       pending.born_at = stamp;
@@ -3904,30 +4559,36 @@ class CommunicationProxy final : public rclcpp::Node {
         ++bs_peer_uplink_scheduled_by_topic_[peer_topic];
       }
     }
+    return selected_for_action - selected_before;
   }
 
-  void scheduleRlUpload(int sender, double stamp) {
+  std::size_t scheduleRlUpload(
+      int sender, double stamp, std::size_t requested_selection_limit,
+      std::uint64_t selection_budget_id) {
     const auto action_snapshot =
         rl_have_action_ ? rl_action_channel_snapshot_ : nullptr;
     const auto action_id = rl_have_action_ ? rl_action_epoch_ : 0U;
     const auto action_step_id =
         rl_have_action_ ? rl_action_source_step_id_ : 0U;
-    scheduleUavBsUpload(sender, stamp, sender, action_id, action_step_id,
-                        action_snapshot, action_id);
+    return scheduleUavBsUpload(
+        sender, stamp, sender, action_id, action_step_id, action_snapshot,
+        selection_budget_id, requested_selection_limit);
   }
 
   void schedulePeriodicBsUpload(int sender, double stamp,
                                 std::uint64_t request_round) {
     constexpr std::uint64_t kPeriodicBudgetNamespace = 1ULL << 63U;
-    scheduleUavBsUpload(sender, stamp, sender, 0U, request_round, nullptr,
-                        kPeriodicBudgetNamespace | request_round,
-                        static_cast<std::size_t>(
-                            bs_periodic_upload_chunks_per_request_));
+    (void)scheduleUavBsUpload(
+        sender, stamp, sender, 0U, request_round, nullptr,
+        kPeriodicBudgetNamespace | request_round,
+        static_cast<std::size_t>(bs_periodic_upload_chunks_per_request_));
     ++bs_periodic_upload_triggers_;
   }
 
-  void scheduleRlRelay(int action_sender, int receiver, double stamp) {
-    if (action_sender == receiver) return;
+  std::size_t scheduleRlRelay(
+      int action_sender, int receiver, double stamp,
+      std::size_t requested_selection_limit) {
+    if (action_sender == receiver) return 0U;
     const auto action_snapshot =
         rl_have_action_ ? rl_action_channel_snapshot_ : nullptr;
     const auto action_id = rl_have_action_ ? rl_action_epoch_ : 0U;
@@ -3937,16 +4598,22 @@ class CommunicationProxy final : public rclcpp::Node {
     // B[i,j] may use everything BS already had before this action.  Selection
     // is C_BS - C_j and therefore does not depend on chunk provenance or on
     // whether i's concurrent uplink succeeds.
-    const auto candidates = sortedChunks(
-        bs_chunks_, uav_chunks_[static_cast<std::size_t>(receiver)]);
-    const std::size_t limit = std::min(
-        candidates.size(),
-        static_cast<std::size_t>(bs_max_downlink_chunks_per_turn_));
+    const auto &candidates = ordered_uav_missing_chunks_[
+        static_cast<std::size_t>(receiver)];
+    std::size_t limit = requested_selection_limit;
+    if (bs_max_downlink_chunks_per_turn_ > 0) {
+      limit = std::min(
+          limit,
+          static_cast<std::size_t>(bs_max_downlink_chunks_per_turn_));
+    }
     const auto topic_index = chunkDataTopicIndex();
-    for (std::size_t offset = 0; offset < limit; ++offset) {
-      const auto &key = candidates[offset];
+    std::size_t chunks_scheduled{};
+    for (const auto &key : candidates) {
+      if (chunks_scheduled >= limit) break;
       if (hasPendingChunk(link, key, RouteStage::kBsDownlink)) continue;
-      const auto &cached = chunk_repository_.at(key);
+      const auto repository = chunk_repository_.find(key);
+      if (repository == chunk_repository_.end()) continue;
+      const auto &cached = repository->second;
       auto routed = retargetChunkMessage(
           cached.message, ap_node_id_, receiver);
       if (!routed) continue;
@@ -3957,6 +4624,7 @@ class CommunicationProxy final : public rclcpp::Node {
                   cached.bytes, 0U, false, action_sender, action_id,
                   action_step_id, action_snapshot)) {
         ++bs_missing_chunks_scheduled_downlink_;
+        ++chunks_scheduled;
       }
     }
     const auto &latest =
@@ -3983,6 +4651,7 @@ class CommunicationProxy final : public rclcpp::Node {
         ++bs_peer_downlink_scheduled_by_topic_[peer_topic];
       }
     }
+    return chunks_scheduled;
   }
 
   bool readRlAction(std::uint64_t expected_decision_index = 0U) {
@@ -4098,6 +4767,7 @@ class CommunicationProxy final : public rclcpp::Node {
       rl_latest_action_generated_wall_time_ns_ = generated_wall_time_ns;
       rl_latest_action_source_sim_time_s_ = source_sim_time_s;
       rl_latest_action_source_step_id_ = source_step_id;
+      rl_latest_action_source_slot_ = shared_snapshot.sim_step;
       rl_latest_action_channel_snapshot_ = channel_snapshot;
       rl_have_latest_action_ = true;
       rl_latest_relay_action_ = std::move(relay);
@@ -4154,6 +4824,175 @@ class CommunicationProxy final : public rclcpp::Node {
     return true;
   }
 
+  void scheduleRlActionWithinSlotBudgets(double stamp) {
+    std::vector<int> upload_senders;
+    std::vector<std::pair<int, int>> relay_pairs;
+    for (int sender = 0; sender < drone_count_; ++sender) {
+      bool route_selected = bs_all_to_all_relay_enabled_;
+      for (int receiver = 0; receiver < drone_count_; ++receiver) {
+        if (sender == receiver) continue;
+        if (bs_all_to_all_relay_enabled_ ||
+            rl_relay_action_[static_cast<std::size_t>(sender)]
+                            [static_cast<std::size_t>(receiver)]) {
+          route_selected = true;
+          relay_pairs.emplace_back(sender, receiver);
+        }
+      }
+      if (route_selected ||
+          rl_upload_action_[static_cast<std::size_t>(sender)]) {
+        upload_senders.push_back(sender);
+      }
+    }
+
+    // UL and DL serialize on one BS radio timeline.  Reserve half of the map
+    // airtime for each direction and divide it equally among its selected,
+    // usable links.  The per-link quota then follows the action-bound Channel
+    // State, adaptive MCS, NR slot quantization and expected retry airtime.
+    // The configured per-slot values are hard ceilings across all links; the
+    // adaptive sum is normally lower on weak channels.
+    const auto logical_slot = static_cast<std::uint64_t>(std::max(
+        0.0, std::floor(stamp / rl_bs_communication_slot_s_ + 1.0e-9)));
+    const std::size_t upload_count = upload_senders.size();
+    const std::size_t upload_offset =
+        upload_count == 0U ? 0U : logical_slot % upload_count;
+    std::rotate(upload_senders.begin(),
+                upload_senders.begin() + static_cast<std::ptrdiff_t>(
+                                             upload_offset),
+                upload_senders.end());
+    std::vector<AdaptiveChunkQuota> upload_quotas(upload_count);
+    std::size_t usable_uploads{};
+    for (std::size_t position = 0; position < upload_count; ++position) {
+      double ignored_snr{};
+      if (bsBudgetChannelSnr(upload_senders[position], ap_node_id_, stamp,
+                             ignored_snr)) {
+        ++usable_uploads;
+      }
+    }
+    const double directional_map_airtime_s =
+        0.5 * kBsMapAdmissionFraction * rl_bs_communication_slot_s_;
+    const double upload_airtime_per_link_s =
+        usable_uploads == 0U
+            ? 0.0
+            : directional_map_airtime_s /
+                  static_cast<double>(usable_uploads);
+    std::size_t adaptive_uplink_budget{};
+    for (std::size_t position = 0; position < upload_count; ++position) {
+      auto &quota = upload_quotas[position];
+      quota = adaptiveBsChunkQuota(upload_senders[position], ap_node_id_,
+                                   stamp, upload_airtime_per_link_s);
+      if (!quota.available) {
+        ++bs_adaptive_budget_unavailable_links_;
+        continue;
+      }
+      ++bs_adaptive_budget_channel_samples_;
+      ++bs_adaptive_budget_mcs_counts_[std::string(quota.mcs)];
+      adaptive_uplink_budget += quota.chunks;
+    }
+    const std::size_t uplink_slot_budget = std::min(
+        adaptive_uplink_budget,
+        static_cast<std::size_t>(bs_max_uplink_chunks_per_rl_slot_));
+    bs_last_adaptive_uplink_chunk_budget_ = uplink_slot_budget;
+    bs_adaptive_uplink_chunk_budget_total_ += uplink_slot_budget;
+    std::size_t uplink_remaining = uplink_slot_budget;
+    std::size_t uplink_selected{};
+    constexpr std::uint64_t kRlSlotBudgetNamespace = 1ULL << 62U;
+    const auto selection_budget_id = kRlSlotBudgetNamespace | logical_slot;
+    for (std::size_t position = 0; position < upload_count; ++position) {
+      const auto &quota = upload_quotas[position];
+      const std::size_t senders_left = static_cast<std::size_t>(std::count_if(
+          upload_quotas.begin() + static_cast<std::ptrdiff_t>(position),
+          upload_quotas.end(),
+          [](const AdaptiveChunkQuota &candidate) {
+            return candidate.chunks > 0U;
+          }));
+      const std::size_t fair_limit =
+          senders_left == 0U
+              ? 0U
+              : std::min(
+                    quota.chunks,
+                    (uplink_remaining + senders_left - 1U) / senders_left);
+      const auto scheduled = scheduleRlUpload(
+          upload_senders[position], stamp, fair_limit, selection_budget_id);
+      uplink_remaining -= std::min(uplink_remaining, scheduled);
+      uplink_selected += scheduled;
+    }
+    bs_last_adaptive_uplink_chunks_selected_ = uplink_selected;
+    bs_adaptive_uplink_chunks_selected_total_ += uplink_selected;
+    if (uplink_slot_budget > 0U && uplink_remaining == 0U) {
+      ++bs_uplink_slot_budget_exhaustions_;
+    }
+
+    const std::size_t relay_count = relay_pairs.size();
+    const std::size_t relay_offset =
+        relay_count == 0U ? 0U : logical_slot % relay_count;
+    std::rotate(relay_pairs.begin(),
+                relay_pairs.begin() + static_cast<std::ptrdiff_t>(
+                                         relay_offset),
+                relay_pairs.end());
+    std::vector<AdaptiveChunkQuota> relay_quotas(relay_count);
+    std::size_t usable_relays{};
+    for (const auto &[sender, receiver] : relay_pairs) {
+      (void)sender;
+      double ignored_snr{};
+      if (bsBudgetChannelSnr(ap_node_id_, receiver, stamp, ignored_snr)) {
+        ++usable_relays;
+      }
+    }
+    const double relay_airtime_per_link_s =
+        usable_relays == 0U
+            ? 0.0
+            : directional_map_airtime_s /
+                  static_cast<double>(usable_relays);
+    std::size_t adaptive_downlink_budget{};
+    for (std::size_t position = 0; position < relay_count; ++position) {
+      const auto &[sender, receiver] = relay_pairs[position];
+      (void)sender;
+      auto &quota = relay_quotas[position];
+      quota = adaptiveBsChunkQuota(ap_node_id_, receiver, stamp,
+                                   relay_airtime_per_link_s);
+      if (!quota.available) {
+        ++bs_adaptive_budget_unavailable_links_;
+        continue;
+      }
+      ++bs_adaptive_budget_channel_samples_;
+      ++bs_adaptive_budget_mcs_counts_[std::string(quota.mcs)];
+      adaptive_downlink_budget += quota.chunks;
+    }
+    const std::size_t downlink_slot_budget = std::min(
+        adaptive_downlink_budget,
+        static_cast<std::size_t>(bs_max_downlink_chunks_per_rl_slot_));
+    bs_last_adaptive_downlink_chunk_budget_ = downlink_slot_budget;
+    bs_adaptive_downlink_chunk_budget_total_ += downlink_slot_budget;
+    std::size_t downlink_remaining = downlink_slot_budget;
+    std::size_t downlink_selected{};
+    for (std::size_t position = 0; position < relay_count; ++position) {
+      const auto &quota = relay_quotas[position];
+      const std::size_t pairs_left = static_cast<std::size_t>(std::count_if(
+          relay_quotas.begin() + static_cast<std::ptrdiff_t>(position),
+          relay_quotas.end(),
+          [](const AdaptiveChunkQuota &candidate) {
+            return candidate.chunks > 0U;
+          }));
+      const std::size_t fair_limit =
+          pairs_left == 0U
+              ? 0U
+              : std::min(
+                    quota.chunks,
+                    (downlink_remaining + pairs_left - 1U) / pairs_left);
+      const auto &[sender, receiver] = relay_pairs[position];
+      const auto scheduled =
+          scheduleRlRelay(sender, receiver, stamp, fair_limit);
+      downlink_remaining -= std::min(downlink_remaining, scheduled);
+      downlink_selected += scheduled;
+    }
+    bs_last_adaptive_downlink_chunks_selected_ = downlink_selected;
+    bs_adaptive_downlink_chunks_selected_total_ += downlink_selected;
+    ++bs_adaptive_chunk_budget_slots_;
+    if (downlink_slot_budget > 0U && downlink_remaining == 0U) {
+      ++bs_downlink_slot_budget_exhaustions_;
+    }
+  }
+
   void scheduleActiveRlAction(double stamp) {
     if (!rl_have_action_ && !bs_all_to_all_relay_enabled_) return;
     if (rl_have_action_ && !rl_action_channel_snapshot_) {
@@ -4163,32 +5002,7 @@ class CommunicationProxy final : public rclcpp::Node {
           static_cast<unsigned long long>(rl_action_epoch_));
       return;
     }
-    for (int sender = 0; sender < drone_count_; ++sender) {
-      bool route_selected = bs_all_to_all_relay_enabled_;
-      for (int receiver = 0; receiver < drone_count_; ++receiver) {
-        if (sender != receiver &&
-            rl_relay_action_[static_cast<std::size_t>(sender)]
-                            [static_cast<std::size_t>(receiver)]) {
-          route_selected = true;
-        }
-      }
-      // B[i,j] represents the two-hop route i -> BS -> j.  Its uplink and
-      // downlink are scheduled independently below; the standalone u[i] bit
-      // remains available for upload-only actions without changing the action
-      // space.
-      if (route_selected ||
-          rl_upload_action_[static_cast<std::size_t>(sender)]) {
-        scheduleRlUpload(sender, stamp);
-      }
-      for (int receiver = 0; receiver < drone_count_; ++receiver) {
-        if (sender != receiver &&
-            (bs_all_to_all_relay_enabled_ ||
-             rl_relay_action_[static_cast<std::size_t>(sender)]
-                             [static_cast<std::size_t>(receiver)])) {
-          scheduleRlRelay(sender, receiver, stamp);
-        }
-      }
-    }
+    scheduleRlActionWithinSlotBudgets(stamp);
   }
 
   void activateLatestRlAction(double boundary_stamp) {
@@ -4250,6 +5064,185 @@ class CommunicationProxy final : public rclcpp::Node {
                 action_apply_ack_total_ms_ /
                     static_cast<double>(action_apply_ack_count_),
                 action_apply_ack_max_ms_);
+  }
+
+  void activateLatestEventDrivenAction(double apply_stamp) {
+    // This is deliberately separate from activateLatestRlAction(): the
+    // fixed-clock path switches active actions only at 100 ms boundaries,
+    // while the experiment consumes a validated version exactly once at the
+    // next available physical communication slot.
+    rl_action_epoch_ = rl_latest_action_epoch_;
+    rl_action_source_physical_version_ =
+        rl_latest_action_source_physical_version_;
+    rl_action_source_communication_version_ =
+        rl_latest_action_source_communication_version_;
+    rl_action_source_guidance_id_ = rl_latest_action_source_guidance_id_;
+    rl_action_source_sim_step_ = rl_latest_action_source_sim_step_;
+    rl_action_policy_version_ = rl_latest_policy_version_;
+    rl_action_generated_wall_time_ns_ =
+        rl_latest_action_generated_wall_time_ns_;
+    rl_action_source_sim_time_s_ = rl_latest_action_source_sim_time_s_;
+    rl_action_source_step_id_ = rl_latest_action_source_step_id_;
+    rl_action_channel_snapshot_ = rl_latest_action_channel_snapshot_;
+    rl_relay_action_ = rl_latest_relay_action_;
+    rl_upload_action_ = rl_latest_upload_action_;
+    rl_action_decision_index_ = rl_decision_index_;
+    rl_action_applied_sim_time_s_ = apply_stamp;
+    rl_have_latest_action_ = false;
+    rl_have_action_ = true;
+    publishSharedActionAck(apply_stamp);
+  }
+
+  void clearEventDrivenAction() {
+    rl_have_action_ = false;
+    rl_action_channel_snapshot_.reset();
+    for (auto &row : rl_relay_action_) {
+      std::fill(row.begin(), row.end(), false);
+    }
+    std::fill(rl_upload_action_.begin(), rl_upload_action_.end(), false);
+  }
+
+  bool eventDrivenActionSettled(std::uint64_t action_version) const {
+    if (action_version == 0U) return false;
+    for (const auto &[key, queue] : queues_) {
+      (void)key;
+      if (std::any_of(
+              queue.packets.begin(), queue.packets.end(),
+              [action_version](const PendingPacket &packet) {
+                return packet.action_id == action_version;
+              })) {
+        return false;
+      }
+    }
+    for (const auto &requests : pending_bs_chunk_requests_) {
+      if (std::any_of(
+              requests.begin(), requests.end(),
+              [action_version](const auto &entry) {
+                return entry.second.action_id == action_version;
+              })) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool eventDrivenPacketMayUseBs(const PendingPacket &packet) const {
+    return !rl_bs_event_driven_one_shot_ ||
+           !usesBsRadio(packet.route) ||
+           (rl_event_executing_action_version_ != 0U &&
+            packet.action_id == rl_event_executing_action_version_);
+  }
+
+  bool advanceEventDrivenOneShotClock(double stamp) {
+    if (!event_driven_gate_) {
+      throw std::logic_error("event-driven one-shot gate is unavailable");
+    }
+    readRlAction();
+    if (!std::all_of(
+            uav_position_valid_.begin(), uav_position_valid_.end(),
+            [](bool valid) { return valid; })) {
+      return false;
+    }
+    // A missing local payload response is part of this action's result. Its
+    // existing bounded request timeout must progress even though no later
+    // action is allowed to enter while this one is settling.
+    pruneExpiredBsChunkRequests(stamp);
+    const auto observed_slot = static_cast<std::uint64_t>(std::max(
+        0.0, std::floor(stamp / rl_bs_communication_slot_s_ + 1.0e-9)));
+    const double slot_stamp =
+        static_cast<double>(observed_slot) * rl_bs_communication_slot_s_;
+
+    if (!event_driven_gate_->initialized()) {
+      const auto initial = event_driven_gate_->initialize(
+          observed_slot, slot_stamp);
+      rl_communication_slot_index_ = observed_slot;
+      rl_decision_index_ = 0U;
+      rl_last_action_held_slots_ = 0U;
+      rl_completed_interval_available_ = false;
+      rl_pending_boundary_stamp_s_ = initial.sim_time_s;
+      rl_event_interval_start_sim_time_s_ = initial.sim_time_s;
+      rl_event_delta_t_s_ = rl_bs_communication_slot_s_;
+      rl_event_last_state_slot_ = observed_slot;
+      return true;
+    }
+
+    if (rl_have_latest_action_ &&
+        rl_latest_action_epoch_ > event_driven_gate_->lastSeenVersion()) {
+      const OneShotActionTicket ticket{
+          rl_latest_action_epoch_, rl_latest_action_source_step_id_,
+          rl_latest_action_source_communication_version_,
+          rl_latest_action_source_slot_, rl_latest_action_source_sim_time_s_};
+      const bool exact_source =
+          ticket.source_communication_version == rl_state_sequence_ &&
+          ticket.source_slot == rl_event_last_state_slot_;
+      if (!exact_source || !event_driven_gate_->offer(ticket)) {
+        ++rl_event_rejected_action_count_;
+        rl_have_latest_action_ = false;
+        RCLCPP_ERROR(
+            get_logger(),
+            "RACER_EVENT_ACTION_REJECT action_version=%llu source_step=%llu "
+            "expected_step=%llu source_sim_time=%.9f current_sim_time=%.9f",
+            static_cast<unsigned long long>(ticket.version),
+            static_cast<unsigned long long>(ticket.source_step_id),
+            static_cast<unsigned long long>(
+                event_driven_gate_->completedTransitions()),
+            ticket.source_sim_time_s, slot_stamp);
+        throw std::runtime_error(
+            "event-driven action provenance did not match the latest state");
+      }
+    }
+
+    const auto in_flight_version =
+        event_driven_gate_->inFlightActionVersion();
+    const bool action_settled =
+        in_flight_version != 0U &&
+        eventDrivenActionSettled(in_flight_version);
+    const auto event = event_driven_gate_->advance(
+        observed_slot, slot_stamp, action_settled);
+    rl_communication_slot_index_ = observed_slot;
+    if (event.kind == OneShotEventKind::kApplyAction) {
+      activateLatestEventDrivenAction(event.sim_time_s);
+      scheduleActiveRlAction(event.sim_time_s);
+      // In-flight packets may finish normally, but no subsequent slot can
+      // enqueue work from this action version.
+      rl_have_action_ = false;
+      rl_completed_interval_available_ = false;
+      rl_event_action_age_s_ = event.action_age_s;
+      rl_event_executing_action_version_ = event.action_version;
+      ++rl_event_applied_action_count_;
+      RCLCPP_INFO(
+          get_logger(),
+          "RACER_EVENT_ACTION_ONESHOT action_version=%llu source_step=%llu "
+          "apply_slot=%llu apply_sim_time=%.9f action_age=%.9f",
+          static_cast<unsigned long long>(event.action_version),
+          static_cast<unsigned long long>(event.transition_step_id),
+          static_cast<unsigned long long>(event.slot), event.sim_time_s,
+          event.action_age_s);
+      return false;
+    }
+    if (event.kind == OneShotEventKind::kTransitionComplete) {
+      rl_decision_index_ = event_driven_gate_->completedTransitions();
+      rl_last_action_held_slots_ = 1U;
+      rl_completed_interval_available_ = true;
+      rl_pending_boundary_stamp_s_ = event.sim_time_s;
+      rl_event_interval_start_sim_time_s_ =
+          event.interval_start_sim_time_s;
+      rl_event_delta_t_s_ = event.delta_t_s;
+      rl_event_last_state_slot_ = event.slot;
+      rl_event_executing_action_version_ = 0U;
+      ++rl_event_completed_transition_count_;
+      RCLCPP_INFO(
+          get_logger(),
+          "RACER_EVENT_TRANSITION_COMPLETE action_version=%llu "
+          "transition_step=%llu result_slot=%llu result_sim_time=%.9f "
+          "delta_t=%.9f held_slots=1",
+          static_cast<unsigned long long>(event.action_version),
+          static_cast<unsigned long long>(event.transition_step_id),
+          static_cast<unsigned long long>(event.slot), event.sim_time_s,
+          event.delta_t_s);
+      return true;
+    }
+    return false;
   }
 
   void publishSharedActionAck(double stamp) {
@@ -4420,28 +5413,7 @@ class CommunicationProxy final : public rclcpp::Node {
           static_cast<unsigned long long>(rl_action_epoch_));
       return;
     }
-    for (int sender = 0; sender < drone_count_; ++sender) {
-      bool route_selected = bs_all_to_all_relay_enabled_;
-      for (int receiver = 0; receiver < drone_count_; ++receiver) {
-        if (sender != receiver &&
-            rl_relay_action_[static_cast<std::size_t>(sender)]
-                            [static_cast<std::size_t>(receiver)]) {
-          route_selected = true;
-        }
-      }
-      if (route_selected ||
-          rl_upload_action_[static_cast<std::size_t>(sender)]) {
-        scheduleRlUpload(sender, stamp);
-      }
-      for (int receiver = 0; receiver < drone_count_; ++receiver) {
-        if (sender != receiver &&
-            (bs_all_to_all_relay_enabled_ ||
-             rl_relay_action_[static_cast<std::size_t>(sender)]
-                             [static_cast<std::size_t>(receiver)])) {
-          scheduleRlRelay(sender, receiver, stamp);
-        }
-      }
-    }
+    scheduleRlActionWithinSlotBudgets(stamp);
   }
 
   bool advanceSynchronousRlClock(double stamp) {
@@ -4678,18 +5650,25 @@ class CommunicationProxy final : public rclcpp::Node {
   std::shared_ptr<FastBoundarySnapshot> captureFastRlState(double stamp) {
     const auto started = std::chrono::steady_clock::now();
     auto state = std::make_shared<FastBoundarySnapshot>();
-    state->step_id = static_cast<std::uint64_t>(std::llround(
-        std::max(0.0, stamp) / rl_bs_decision_period_s_));
-    state->sim_time_s =
-        static_cast<double>(state->step_id) * rl_bs_decision_period_s_;
+    state->step_id = rl_bs_event_driven_one_shot_
+        ? rl_decision_index_
+        : static_cast<std::uint64_t>(std::llround(
+              std::max(0.0, stamp) / rl_bs_decision_period_s_));
+    state->sim_time_s = rl_bs_event_driven_one_shot_
+        ? stamp
+        : static_cast<double>(state->step_id) * rl_bs_decision_period_s_;
     state->sequence = ++rl_state_sequence_;
     state->communication_slot = rl_communication_slot_index_;
     state->decision_index = rl_decision_index_;
-    state->interval_start_sim_time_s =
-        state->step_id == 0U
-            ? 0.0
-            : static_cast<double>(state->step_id - 1U) *
-                  rl_bs_decision_period_s_;
+    state->interval_start_sim_time_s = rl_bs_event_driven_one_shot_
+        ? rl_event_interval_start_sim_time_s_
+        : (state->step_id == 0U
+               ? 0.0
+               : static_cast<double>(state->step_id - 1U) *
+                     rl_bs_decision_period_s_);
+    state->interval_duration_s = rl_bs_event_driven_one_shot_
+        ? rl_event_delta_t_s_
+        : rl_bs_decision_period_s_;
     state->action_version = rl_action_epoch_;
     state->policy_version = rl_action_policy_version_;
     state->action_generated_wall_time_ns =
@@ -4701,11 +5680,12 @@ class CommunicationProxy final : public rclcpp::Node {
         rl_action_source_communication_version_;
     state->action_source_step_id = rl_action_source_step_id_;
     state->action_source_sim_time_s = rl_action_source_sim_time_s_;
-    state->action_age =
-        rl_completed_interval_available_ && rl_have_action_
-            ? std::max(0.0, state->interval_start_sim_time_s -
-                                rl_action_source_sim_time_s_)
-            : 0.0;
+    state->action_age = rl_bs_event_driven_one_shot_
+        ? (rl_completed_interval_available_ ? rl_event_action_age_s_ : 0.0)
+        : (rl_completed_interval_available_ && rl_have_action_
+               ? std::max(0.0, state->interval_start_sim_time_s -
+                                   rl_action_source_sim_time_s_)
+               : 0.0);
     state->action_held_slots = rl_last_action_held_slots_;
     state->completed_transition = rl_completed_interval_available_;
     state->interval_uplink_prb_slots = static_cast<double>(
@@ -4813,8 +5793,20 @@ class CommunicationProxy final : public rclcpp::Node {
         state->physical_version = physical.version;
         state->coverage = coverage;
         state->coverage_delta = coverage_delta;
-        state->terminated = terminated != 0U;
-        state->truncated = truncated != 0U;
+        // The simulator and communication proxy advance independently.  A
+        // loaded proxy can be several simulated seconds behind while the
+        // latest physical block already contains Isaac's terminal flag.  Do
+        // not attach that future flag to an earlier RL transition.  One RL
+        // decision interval accommodates the normal 100 Hz/10 Hz boundary
+        // skew, including Isaac's final physics step at duration + dt.
+        const bool terminal_time_aligned =
+            sim_time <= state->sim_time_s +
+                (rl_bs_event_driven_one_shot_
+                     ? rl_bs_communication_slot_s_
+                     : rl_bs_decision_period_s_) +
+                1.0e-9;
+        state->terminated = terminal_time_aligned && terminated != 0U;
+        state->truncated = terminal_time_aligned && truncated != 0U;
       }
     }
 
@@ -4887,7 +5879,7 @@ class CommunicationProxy final : public rclcpp::Node {
     appendBinaryValue(payload, state.decision_index);
     appendBinaryValue(payload, state.sim_time_s);
     appendBinaryValue(payload, rl_bs_communication_slot_s_);
-    appendBinaryValue(payload, rl_bs_decision_period_s_);
+    appendBinaryValue(payload, state.interval_duration_s);
     appendBinaryValue(payload, state.action_version);
     appendBinaryValue(payload, state.policy_version);
     appendBinaryValue(payload, state.action_generated_wall_time_ns);
@@ -5356,8 +6348,9 @@ class CommunicationProxy final : public rclcpp::Node {
           ++bs_periodic_upload_requests_suppressed_no_link_;
           continue;
         }
-        if (bsUploadInflightChunkCount(receiver) >=
-            static_cast<std::size_t>(bs_max_inflight_chunks_per_uav_)) {
+        if (bs_max_inflight_chunks_per_uav_ > 0 &&
+            bsUploadInflightChunkCount(receiver) >=
+                static_cast<std::size_t>(bs_max_inflight_chunks_per_uav_)) {
           ++bs_periodic_upload_requests_suppressed_backpressure_;
           continue;
         }
@@ -5395,9 +6388,13 @@ class CommunicationProxy final : public rclcpp::Node {
 
     const auto candidates = sortedChunks(
         bs_chunks_, uav_chunks_[static_cast<std::size_t>(bs_active_uav_)]);
-    const std::size_t limit = std::min(
-        candidates.size(),
-        static_cast<std::size_t>(bs_max_downlink_chunks_per_turn_));
+    const std::size_t limit =
+        bs_max_downlink_chunks_per_turn_ > 0
+            ? std::min(
+                  candidates.size(),
+                  static_cast<std::size_t>(
+                      bs_max_downlink_chunks_per_turn_))
+            : candidates.size();
     const auto topic_index = chunkDataTopicIndex();
     for (std::size_t offset = 0; offset < limit; ++offset) {
       const auto &key = candidates[offset];
@@ -5419,9 +6416,13 @@ class CommunicationProxy final : public rclcpp::Node {
     if (!bs_turn_active_ || bs_active_uav_ < 0) return;
     const auto candidates = sortedChunks(
         uav_chunks_[static_cast<std::size_t>(bs_active_uav_)], bs_chunks_);
-    const std::size_t limit = std::min(
-        candidates.size(),
-        static_cast<std::size_t>(bs_max_uplink_chunks_per_turn_));
+    const std::size_t limit =
+        bs_max_uplink_chunks_per_turn_ > 0
+            ? std::min(
+                  candidates.size(),
+                  static_cast<std::size_t>(
+                      bs_max_uplink_chunks_per_turn_))
+            : candidates.size();
     const auto topic_index = chunkDataTopicIndex();
     for (std::size_t offset = 0; offset < limit; ++offset) {
       const auto &key = candidates[offset];
@@ -5591,40 +6592,54 @@ class CommunicationProxy final : public rclcpp::Node {
     }
   }
 
-  void removeFront(LinkQueue &queue) {
-    if (queue.packets.empty()) return;
-    updateRouteQueueCache(queue.packets.front(), false);
-    queue.bytes -= std::min(queue.bytes, queue.packets.front().bytes);
-    queue.packets.pop_front();
+  std::deque<PendingPacket>::iterator removePacket(
+      LinkQueue &queue, std::deque<PendingPacket>::iterator packet) {
+    if (packet == queue.packets.end()) return packet;
+    updateRouteQueueCache(*packet, false);
+    queue.bytes -= std::min(queue.bytes, packet->bytes);
+    return queue.packets.erase(packet);
   }
 
   std::mt19937 &linkRng(const LinkKey &key) {
     return link_rngs_.at(key);
   }
 
-  bool startFront(const LinkKey &key, LinkQueue &queue, double stamp,
-                  double transmission_cursor) {
-    if (queue.packets.empty()) return false;
-    auto &front = queue.packets.front();
-    if (front.transmitting || front.delivery_at > stamp) return true;
-    if (front.action_channel_snapshot) {
+  PacketStartResult startPacket(const LinkKey &key, PendingPacket &packet,
+                                double stamp,
+                                double bs_airtime_horizon) {
+    if (packet.transmitting || packet.delivery_at > stamp) {
+      return PacketStartResult::kDeferred;
+    }
+    const bool perfect_bs = perfectBsRoute(packet.route);
+    double link_snr{};
+    if (!perfect_bs && !packetChannel(packet, key, stamp, link_snr)) {
+      if (packet.action_channel_snapshot) {
+        ++rl_action_bound_transmission_attempts_;
+      }
+      return PacketStartResult::kNoLink;
+    }
+    const auto &radio = radioModel(packet.route);
+    if (perfect_bs) link_snr = 40.0;
+    double transmission_started_at = std::max(stamp, packet.delivery_at);
+    if (usesBsRadio(packet.route)) {
+      // Serialization uses the shared BS radio, but propagation does not.
+      // Admit several packets to the same 20 ms PHY window so the link can
+      // pipeline them instead of waiting for each packet to arrive first.
+      transmission_started_at =
+          std::max(transmission_started_at, bs_radio_available_at_);
+    }
+    const double serialization_delay =
+        radio.serializationDelay(link_snr, packet.bytes);
+    if (usesBsRadio(packet.route) &&
+        transmission_started_at >= bs_airtime_horizon - 1.0e-12) {
+      return PacketStartResult::kDeferred;
+    }
+    if (packet.action_channel_snapshot) {
       ++rl_action_bound_transmission_attempts_;
     }
-    const bool perfect_bs = perfectBsRoute(front.route);
-    double link_snr{};
-    if (!perfect_bs && !packetChannel(front, key, stamp, link_snr)) {
-      const PendingPacket failed = front;
-      finishBsPacket(failed, false, stamp);
-      removeFront(queue);
-      ++dropped_no_link_;
-      countBsNoLinkDrop(failed.route);
-      return false;
-    }
-    const auto &radio = radioModel(front.route);
-    if (perfect_bs) link_snr = 40.0;
     const std::string selected_mcs(radio.selectMcs(link_snr).name);
     ++mcs_counts_[selected_mcs];
-    if (usesBsRadio(front.route)) {
+    if (usesBsRadio(packet.route)) {
       ++bs_mcs_counts_[selected_mcs];
     } else {
       ++uav_mcs_counts_[selected_mcs];
@@ -5637,21 +6652,10 @@ class CommunicationProxy final : public rclcpp::Node {
             ? 0.0
             : std::uniform_real_distribution<double>(-jitter_s_, jitter_s_)(
                   linkRng(key));
-    double transmission_started_at =
-        std::max(transmission_cursor, front.delivery_at);
-    if (usesBsRadio(front.route)) {
-      // UAV<->BS UL/DL share one 50 MHz resource pool. Reserving a common
-      // serialization timeline prevents concurrent queues from each claiming
-      // the full BS subband.
-      transmission_started_at =
-          std::max(transmission_started_at, bs_radio_available_at_);
-    }
-    const double serialization_delay =
-        radio.serializationDelay(link_snr, front.bytes);
-    if (usesBsRadio(front.route)) {
+    if (usesBsRadio(packet.route)) {
       bs_radio_available_at_ = transmission_started_at + serialization_delay;
     }
-    front.delivery_at =
+    packet.delivery_at =
         transmission_started_at +
         serialization_delay +
         std::max(0.0, base_latency_s_ + random_jitter);
@@ -5659,24 +6663,24 @@ class CommunicationProxy final : public rclcpp::Node {
         1.0, std::ceil(serialization_delay / radio.slotDuration())));
     const auto prb_slots = occupied_slots *
         static_cast<std::uint64_t>(radio.config().resource_blocks);
-    if (front.route == RouteStage::kBsUplink ||
-        front.route == RouteStage::kApUplink) {
+    if (packet.route == RouteStage::kBsUplink ||
+        packet.route == RouteStage::kApUplink) {
       bs_uplink_prb_slots_ += prb_slots;
-      if (front.reserved_pair_control) {
+      if (packet.reserved_pair_control) {
         pair_control_reserved_uplink_prb_slots_ += prb_slots;
       }
-    } else if (front.route == RouteStage::kBsDownlink ||
-               front.route == RouteStage::kBsControl ||
-               front.route == RouteStage::kApDownlink) {
+    } else if (packet.route == RouteStage::kBsDownlink ||
+               packet.route == RouteStage::kBsControl ||
+               packet.route == RouteStage::kApDownlink) {
       bs_downlink_prb_slots_ += prb_slots;
-      if (front.reserved_pair_control) {
+      if (packet.reserved_pair_control) {
         pair_control_reserved_downlink_prb_slots_ += prb_slots;
       }
-    } else if (front.route == RouteStage::kDirect) {
+    } else if (packet.route == RouteStage::kDirect) {
       direct_u2u_prb_slots_ += prb_slots;
     }
-    front.transmitting = true;
-    return true;
+    packet.transmitting = true;
+    return PacketStartResult::kStarted;
   }
 
   bool deliverToUav(const PendingPacket &packet, int receiver,
@@ -5871,7 +6875,7 @@ class CommunicationProxy final : public rclcpp::Node {
         return;
       }
     }
-    if (shared_uav_ofdma_enabled_) {
+    if (shared_uav_radio_enabled_) {
       advanceUavOfdma(stamp);
       if (!ap_enabled_) return;
     }
@@ -5880,78 +6884,154 @@ class CommunicationProxy final : public rclcpp::Node {
     // even when the current action happens to select the same message.
     scheduleReservedPairControl(stamp);
     schedulePeriodicBsUploadRequests(stamp);
-    const bool rl_state_due =
-        rl_bs_synchronous_mode_ ? advanceSynchronousRlClock(stamp)
-                                : beginRlDecision(stamp);
+    const bool rl_state_due = rl_bs_event_driven_one_shot_
+        ? advanceEventDrivenOneShotClock(stamp)
+        : (rl_bs_synchronous_mode_ ? advanceSynchronousRlClock(stamp)
+                                   : beginRlDecision(stamp));
     if (!rl_bs_scheduler_enabled_) beginBsTurn(stamp);
+    // First retire every packet whose propagation delay has elapsed.  A
+    // packet remains charged to its link queue while in flight, so queue
+    // capacity and duplicate suppression continue to cover the whole trip.
     for (auto &[key, queue] : queues_) {
       if (!bsLinkMayTransmit(key)) continue;
-      double transmission_cursor = stamp;
-      while (!queue.packets.empty()) {
-        if (!startFront(key, queue, stamp, transmission_cursor)) continue;
-        auto &front = queue.packets.front();
-        if (front.delivery_at > stamp) break;
-        if (expired(front, stamp)) {
-          const PendingPacket failed = front;
+      for (auto packet = queue.packets.begin();
+           packet != queue.packets.end();) {
+        if (!eventDrivenPacketMayUseBs(*packet) ||
+            !packet->transmitting || packet->delivery_at > stamp) {
+          ++packet;
+          continue;
+        }
+        if (expired(*packet, stamp)) {
+          const PendingPacket failed = *packet;
           finishBsPacket(failed, false, stamp);
           ++dropped_ttl_;
           countBsTtlDrop(failed.route);
-          removeFront(queue);
+          packet = removePacket(queue, packet);
           continue;
         }
-        const bool perfect_bs = perfectBsRoute(front.route);
+        const bool perfect_bs = perfectBsRoute(packet->route);
         double link_snr{};
-        if (!perfect_bs && !packetChannel(front, key, stamp, link_snr)) {
-          const PendingPacket failed = front;
+        if (!perfect_bs && !packetChannel(*packet, key, stamp, link_snr)) {
+          const PendingPacket failed = *packet;
           finishBsPacket(failed, false, stamp);
           ++dropped_no_link_;
           countBsNoLinkDrop(failed.route);
-          removeFront(queue);
+          packet = removePacket(queue, packet);
           continue;
         }
-        const auto &radio = radioModel(front.route);
+        const auto &radio = radioModel(packet->route);
         const double per =
             mode_ == "ideal" || perfect_bs
                 ? 0.0
-                : radio.packetErrorRate(link_snr, front.bytes);
-        const bool failed =
+                : radio.packetErrorRate(link_snr, packet->bytes);
+        const bool transmission_failed =
             std::uniform_real_distribution<double>(0.0, 1.0)(linkRng(key)) <
             per;
-        const bool reliable = front.route == RouteStage::kBsControl ||
-                              kTopicPolicies[front.topic_index].reliable;
-        const bool bs_route = front.route == RouteStage::kBsControl ||
-                              front.route == RouteStage::kBsUplink ||
-                              front.route == RouteStage::kBsDownlink;
+        const bool reliable =
+            packet->route == RouteStage::kBsControl ||
+            kTopicPolicies[packet->topic_index].reliable;
+        const bool bs_route = packet->route == RouteStage::kBsControl ||
+                              packet->route == RouteStage::kBsUplink ||
+                              packet->route == RouteStage::kBsDownlink;
         const int retry_limit = bs_route ? bs_max_retries_ : max_retries_;
-        if (failed && reliable && front.attempts < retry_limit) {
-          ++front.attempts;
+        if (transmission_failed && reliable &&
+            packet->attempts < retry_limit) {
+          ++packet->attempts;
           ++retried_packets_;
-          front.transmitting = false;
-          front.delivery_at = stamp + retry_backoff_s_;
-          break;
-        }
-        if (failed) {
-          const PendingPacket failed_packet = front;
-          transmission_cursor = failed_packet.delivery_at;
-          finishBsPacket(failed_packet, false, stamp);
-          ++dropped_per_;
-          countBsPerDrop(failed_packet.route);
-          removeFront(queue);
+          packet->transmitting = false;
+          packet->delivery_at = stamp + retry_backoff_s_;
+          ++packet;
           continue;
         }
-        // Copy the front because a successful AP uplink can append packets to
-        // other queues before this physical packet is removed.
-        const PendingPacket completed = front;
-        transmission_cursor = completed.delivery_at;
+        if (transmission_failed) {
+          const PendingPacket failed = *packet;
+          finishBsPacket(failed, false, stamp);
+          ++dropped_per_;
+          countBsPerDrop(failed.route);
+          packet = removePacket(queue, packet);
+          continue;
+        }
+        // Copy before delivery because AP/control completion may enqueue a
+        // packet onto another pre-created link queue.
+        const PendingPacket completed = *packet;
         completeSuccessfulPacket(key, completed, stamp);
-        removeFront(queue);
+        packet = removePacket(queue, packet);
       }
+    }
+
+    // Assign the current 20 ms BS airtime globally.  Serialization is shared
+    // across all UAV-BS queues, while already-serialized packets can remain
+    // in propagation concurrently.  This realizes the same aggregate PHY
+    // budget used by scheduleRlActionWithinSlotBudgets().
+    const double bs_airtime_horizon =
+        stamp + std::max(rl_bs_communication_slot_s_, 1.0e-6);
+    while (true) {
+      LinkQueue *selected_queue{};
+      LinkKey selected_key{};
+      std::deque<PendingPacket>::iterator selected_packet{};
+      int selected_priority = std::numeric_limits<int>::min();
+      double selected_enqueued_at = std::numeric_limits<double>::infinity();
+      for (auto &[key, queue] : queues_) {
+        if (!bsLinkMayTransmit(key)) continue;
+        const bool non_bs_transmission_active = std::any_of(
+            queue.packets.begin(), queue.packets.end(),
+            [this](const PendingPacket &candidate) {
+              return candidate.transmitting &&
+                     !usesBsRadio(candidate.route);
+            });
+        for (auto packet = queue.packets.begin();
+             packet != queue.packets.end(); ++packet) {
+          if (!eventDrivenPacketMayUseBs(*packet) ||
+              packet->transmitting || packet->delivery_at > stamp ||
+              (!usesBsRadio(packet->route) &&
+               non_bs_transmission_active)) {
+            continue;
+          }
+          const int priority = packetPriority(
+              packet->route, packet->topic_index,
+              packet->reserved_pair_control);
+          if (!selected_queue || priority > selected_priority ||
+              (priority == selected_priority &&
+               packet->enqueued_at < selected_enqueued_at)) {
+            selected_queue = &queue;
+            selected_key = key;
+            selected_packet = packet;
+            selected_priority = priority;
+            selected_enqueued_at = packet->enqueued_at;
+          }
+        }
+      }
+      if (!selected_queue) break;
+      if (expired(*selected_packet, stamp)) {
+        const PendingPacket failed = *selected_packet;
+        finishBsPacket(failed, false, stamp);
+        ++dropped_ttl_;
+        countBsTtlDrop(failed.route);
+        removePacket(*selected_queue, selected_packet);
+        continue;
+      }
+      const auto result = startPacket(
+          selected_key, *selected_packet, stamp, bs_airtime_horizon);
+      if (result == PacketStartResult::kStarted) continue;
+      if (result == PacketStartResult::kNoLink) {
+        const PendingPacket failed = *selected_packet;
+        finishBsPacket(failed, false, stamp);
+        ++dropped_no_link_;
+        countBsNoLinkDrop(failed.route);
+        removePacket(*selected_queue, selected_packet);
+        continue;
+      }
+      // The shared serialization window is full. Remaining BS packets stay
+      // queued for the next physical slot and retain their action snapshot.
+      break;
     }
     if (!rl_bs_scheduler_enabled_) maybeFinishBsTurn(stamp);
     if (rl_state_due) {
       writeRlState(
           rl_bs_synchronous_mode_ ? stamp : rl_pending_boundary_stamp_s_);
-      if (!rl_bs_synchronous_mode_ && shared_communication_) {
+      if (rl_bs_event_driven_one_shot_) {
+        if (rl_completed_interval_available_) clearEventDrivenAction();
+      } else if (!rl_bs_synchronous_mode_ && shared_communication_) {
         completeRlDecisionBoundary();
       }
     }
@@ -6119,15 +7199,25 @@ class CommunicationProxy final : public rclcpp::Node {
          << initial_assignment_perfect_bs_downlinks_
          << ",\"uav_transport\":\"UDP\""
          << ",\"shared_uav_ofdma_enabled\":"
-         << (shared_uav_ofdma_enabled_ ? "true" : "false")
+         << (shared_uav_radio_enabled_ && !uav_csma_enabled_ ? "true" : "false")
+         << ",\"shared_uav_radio_enabled\":"
+         << (shared_uav_radio_enabled_ ? "true" : "false")
+         << ",\"uav_channel_access_mode\":\""
+         << uav_channel_access_mode_ << "\""
          << ",\"uav_udp_header_bytes\":" << udp_header_bytes_
          << ",\"uav_udp_retransmissions\":0"
          << ",\"uav_ofdma_total_prbs\":"
          << directRadioModel().config().resource_blocks
          << ",\"uav_ofdma_slot_duration_ms\":"
          << 1000.0 * directRadioModel().slotDuration()
-         << ",\"uav_ofdma_scheduler\":\"round_robin_equal_share\""
+         << ",\"uav_ofdma_scheduler\":\""
+         << (uav_csma_enabled_ ? "disabled_for_csma"
+                               : "round_robin_equal_share")
+         << "\""
          << ",\"uav_ofdma_half_duplex\":true"
+         << ",\"uav_csma_cw_min\":" << csma_cw_min_
+         << ",\"uav_csma_cw_max\":" << csma_cw_max_
+         << ",\"uav_csma_difs_slots\":" << csma_difs_slots_
          << ",\"uav_ofdma_diagnostic_logging\":"
          << (ofdma_diagnostic_logging_ ? "true" : "false")
          << ",\"uav_ofdma_log_packet_stride\":"
@@ -6176,6 +7266,17 @@ class CommunicationProxy final : public rclcpp::Node {
          << uav_ofdma_peak_active_senders_
          << ",\"uav_ofdma_max_allocated_prbs_per_slot\":"
          << uav_ofdma_max_allocated_prbs_per_slot_
+         << ",\"uav_csma_idle_slots\":" << uav_csma_idle_slots_
+         << ",\"uav_csma_backoff_slots\":" << uav_csma_backoff_slots_
+         << ",\"uav_csma_busy_slots\":" << uav_csma_busy_slots_
+         << ",\"uav_csma_successful_contentions\":"
+         << uav_csma_successful_contentions_
+         << ",\"uav_csma_collision_events\":"
+         << uav_csma_collision_events_
+         << ",\"uav_csma_collided_datagrams\":"
+         << uav_csma_collided_datagrams_
+         << ",\"uav_udp_receiver_collision_failures\":"
+         << uav_udp_receiver_collision_failures_
          << ",\"ideal_coalesce_window_ms\":"
          << 1000.0 * ideal_coalesce_window_s_
          << ",\"ideal_coalesced_messages\":"
@@ -6269,6 +7370,54 @@ class CommunicationProxy final : public rclcpp::Node {
          << bs_periodic_upload_chunks_per_request_
          << ",\"bs_max_inflight_chunks_per_uav\":"
          << bs_max_inflight_chunks_per_uav_
+         << ",\"bs_payload_precache_enabled\":"
+         << (bs_payload_precache_enabled_ ? "true" : "false")
+         << ",\"bs_payload_precache_batch_size\":"
+         << bs_payload_precache_batch_size_
+         << ",\"bs_max_payload_precache_inflight\":"
+         << bs_max_payload_precache_inflight_
+         << ",\"bs_payload_precache_timeout_ms\":"
+         << 1.0e3 * bs_payload_precache_timeout_s_
+         << ",\"bs_max_uplink_chunks_per_rl_slot\":"
+         << bs_max_uplink_chunks_per_rl_slot_
+         << ",\"bs_max_downlink_chunks_per_rl_slot\":"
+         << bs_max_downlink_chunks_per_rl_slot_
+         << ",\"bs_chunk_budget_admission_fraction\":"
+         << kBsMapAdmissionFraction
+         << ",\"bs_chunk_budget_reference_bytes\":"
+         << kRepresentativeMapChunkBytes
+         << ",\"bs_adaptive_chunk_budget_slots\":"
+         << bs_adaptive_chunk_budget_slots_
+         << ",\"bs_adaptive_budget_channel_samples\":"
+         << bs_adaptive_budget_channel_samples_
+         << ",\"bs_adaptive_budget_unavailable_links\":"
+         << bs_adaptive_budget_unavailable_links_
+         << ",\"bs_last_adaptive_uplink_chunk_budget\":"
+         << bs_last_adaptive_uplink_chunk_budget_
+         << ",\"bs_last_adaptive_downlink_chunk_budget\":"
+         << bs_last_adaptive_downlink_chunk_budget_
+         << ",\"bs_last_adaptive_uplink_chunks_selected\":"
+         << bs_last_adaptive_uplink_chunks_selected_
+         << ",\"bs_last_adaptive_downlink_chunks_selected\":"
+         << bs_last_adaptive_downlink_chunks_selected_
+         << ",\"bs_adaptive_uplink_chunk_budget_total\":"
+         << bs_adaptive_uplink_chunk_budget_total_
+         << ",\"bs_adaptive_downlink_chunk_budget_total\":"
+         << bs_adaptive_downlink_chunk_budget_total_
+         << ",\"bs_adaptive_uplink_chunks_selected_total\":"
+         << bs_adaptive_uplink_chunks_selected_total_
+         << ",\"bs_adaptive_downlink_chunks_selected_total\":"
+         << bs_adaptive_downlink_chunks_selected_total_
+         << ",\"bs_adaptive_budget_mcs_counts\":{\"QPSK\":"
+         << bs_adaptive_budget_mcs_counts_["QPSK"]
+         << ",\"16QAM\":" << bs_adaptive_budget_mcs_counts_["16QAM"]
+         << ",\"64QAM\":" << bs_adaptive_budget_mcs_counts_["64QAM"]
+         << ",\"256QAM\":" << bs_adaptive_budget_mcs_counts_["256QAM"]
+         << "}"
+         << ",\"bs_uplink_slot_budget_exhaustions\":"
+         << bs_uplink_slot_budget_exhaustions_
+         << ",\"bs_downlink_slot_budget_exhaustions\":"
+         << bs_downlink_slot_budget_exhaustions_
          << ",\"bs_control_ttl_s\":" << bs_control_ttl_s_
          << ",\"bs_periodic_upload_request_rounds\":"
          << bs_periodic_upload_request_rounds_
@@ -6345,6 +7494,15 @@ class CommunicationProxy final : public rclcpp::Node {
          << 1.0e3 * pair_control_reserved_max_end_to_end_delay_s_
          << ",\"rl_bs_synchronous_mode\":"
          << (rl_bs_synchronous_mode_ ? "true" : "false")
+         << ",\"rl_bs_event_driven_one_shot\":"
+         << (rl_bs_event_driven_one_shot_ ? "true" : "false")
+         << ",\"rl_event_applied_action_count\":"
+         << rl_event_applied_action_count_
+         << ",\"rl_event_completed_transition_count\":"
+         << rl_event_completed_transition_count_
+         << ",\"rl_event_rejected_action_count\":"
+         << rl_event_rejected_action_count_
+         << ",\"rl_event_last_delta_t_s\":" << rl_event_delta_t_s_
          << ",\"rl_bs_communication_slot_ms\":"
          << 1.0e3 * rl_bs_communication_slot_s_
          << ",\"rl_bs_decision_period_ms\":"
@@ -6402,6 +7560,34 @@ class CommunicationProxy final : public rclcpp::Node {
          << bs_chunk_payload_unsolicited_responses_
          << ",\"bs_upload_selection_backpressure_skips\":"
          << bs_upload_selection_backpressure_skips_
+         << ",\"payload_precache_queued\":"
+         << payload_precache_queued_
+         << ",\"payload_precache_request_messages\":"
+         << payload_precache_request_messages_
+         << ",\"payload_precache_chunks_requested\":"
+         << payload_precache_chunks_requested_
+         << ",\"payload_precache_responses_received\":"
+         << payload_precache_responses_received_
+         << ",\"payload_precache_timeouts\":"
+         << payload_precache_timeouts_
+         << ",\"payload_precache_late_responses\":"
+         << payload_precache_late_responses_
+         << ",\"payload_precache_satisfied_by_peer_data\":"
+         << payload_precache_satisfied_by_peer_data_
+         << ",\"payload_direct_pushes_received\":"
+         << payload_direct_pushes_received_
+         << ",\"payload_direct_pushes_rejected\":"
+         << payload_direct_pushes_rejected_
+         << ",\"payload_precache_pending\":"
+         << pending_payload_precache_keys_.size()
+         << ",\"payload_precache_pending_peak\":"
+         << payload_precache_pending_peak_
+         << ",\"payload_precache_inflight\":"
+         << inflight_payload_precache_.size()
+         << ",\"payload_precache_inflight_peak\":"
+         << payload_precache_inflight_peak_
+         << ",\"payload_cache_entries\":"
+         << chunk_repository_.size()
          << ",\"bs_missing_chunks_scheduled_downlink\":"
          << bs_missing_chunks_scheduled_downlink_
          << ",\"bs_missing_chunks_delivered_downlink\":"
@@ -6599,6 +7785,11 @@ class CommunicationProxy final : public rclcpp::Node {
   double jitter_s_{};
   std::size_t queue_capacity_bytes_{};
   int udp_header_bytes_{};
+  std::string uav_channel_access_mode_;
+  int csma_cw_min_{15};
+  int csma_cw_max_{1023};
+  int csma_difs_slots_{2};
+  bool uav_csma_enabled_{false};
   bool ofdma_diagnostic_logging_{true};
   int ofdma_log_packet_stride_{1000};
   int max_retries_{};
@@ -6608,17 +7799,24 @@ class CommunicationProxy final : public rclcpp::Node {
   std::size_t bs_control_bytes_{};
   int bs_max_downlink_chunks_per_turn_{};
   int bs_max_uplink_chunks_per_turn_{};
+  int bs_max_uplink_chunks_per_rl_slot_{};
+  int bs_max_downlink_chunks_per_rl_slot_{};
   bool rl_bs_scheduler_enabled_{false};
   bool force_bs_perfect_delivery_{false};
   bool bs_periodic_upload_request_enabled_{false};
   double bs_periodic_upload_request_period_s_{0.2};
   int bs_periodic_upload_chunks_per_request_{8};
   int bs_max_inflight_chunks_per_uav_{32};
+  bool bs_payload_precache_enabled_{false};
+  int bs_payload_precache_batch_size_{8};
+  int bs_max_payload_precache_inflight_{16};
+  double bs_payload_precache_timeout_s_{5.0};
   double bs_control_ttl_s_{2.0};
   bool bs_all_to_all_relay_enabled_{false};
   bool pair_control_reservation_enabled_{false};
   double pair_control_reservation_s_{1.8};
   bool rl_bs_synchronous_mode_{false};
+  bool rl_bs_event_driven_one_shot_{false};
   std::string rl_bs_action_path_;
   std::string rl_bs_state_path_;
   std::string rl_shared_memory_root_;
@@ -6645,7 +7843,7 @@ class CommunicationProxy final : public rclcpp::Node {
   LinkModel bs_model_;
   SharedOfdmaScheduler ofdma_scheduler_;
   SharedOfdmaScheduler uav_broadcast_ofdma_scheduler_;
-  bool shared_uav_ofdma_enabled_{false};
+  bool shared_uav_radio_enabled_{false};
   double bs_radio_available_at_{};
 
   std::unordered_map<LinkKey, LinkQuality, LinkKeyHash> links_;
@@ -6657,6 +7855,12 @@ class CommunicationProxy final : public rclcpp::Node {
   std::vector<UavUdpQueue> uav_udp_queues_;
   std::deque<UdpDatagram> completed_uav_datagrams_;
   std::vector<std::mt19937> uav_sender_rngs_;
+  std::vector<int> csma_backoff_slots_;
+  std::vector<int> csma_contention_windows_;
+  int csma_transmitting_sender_{-1};
+  int csma_idle_guard_slots_{};
+  std::uint64_t csma_collision_busy_slots_remaining_{};
+  std::size_t csma_last_collision_senders_{};
   std::unordered_map<LinkKey, std::mt19937, LinkKeyHash> link_rngs_;
   std::unordered_map<LinkKey, double, LinkKeyHash> active_links_;
   bool active_links_dirty_{false};
@@ -6668,9 +7872,17 @@ class CommunicationProxy final : public rclcpp::Node {
   std::unordered_map<std::string, std::uint64_t> bs_mcs_counts_;
   std::unordered_map<ChunkKey, CachedChunk, ChunkKeyHash> chunk_repository_;
   std::vector<std::unordered_set<ChunkKey, ChunkKeyHash>> uav_chunks_;
+  // Ordered materialized set differences make each PHY-slot selection cost
+  // proportional to its quota instead of to the accumulated global map.
+  std::vector<std::set<ChunkKey>> ordered_bs_missing_chunks_;
+  std::vector<std::set<ChunkKey>> ordered_uav_missing_chunks_;
   std::vector<
       std::unordered_map<ChunkKey, PendingBsChunkRequest, ChunkKeyHash>>
       pending_bs_chunk_requests_;
+  std::deque<ChunkKey> pending_payload_precache_;
+  std::unordered_set<ChunkKey, ChunkKeyHash> pending_payload_precache_keys_;
+  std::unordered_map<ChunkKey, InflightPayloadPrecache, ChunkKeyHash>
+      inflight_payload_precache_;
   std::vector<bool> bs_periodic_upload_request_pending_;
   std::vector<std::uint64_t> bs_uplink_budget_action_id_;
   std::vector<std::size_t> bs_uplink_chunks_selected_for_action_;
@@ -6707,6 +7919,8 @@ class CommunicationProxy final : public rclcpp::Node {
   BsGlobalMapMetrics latest_bs_map_metrics_;
   bool have_last_llm_bs_coverage_{false};
   double last_llm_bs_coverage_{};
+  bool rl_have_last_event_llm_state_time_{false};
+  double rl_last_event_llm_state_time_s_{};
   mutable std::mutex task_metric_mutex_;
   mutable std::mutex task_metric_snapshot_mutex_;
   mutable std::mutex task_observer_queue_mutex_;
@@ -6722,10 +7936,13 @@ class CommunicationProxy final : public rclcpp::Node {
   std::deque<std::shared_ptr<FastBoundarySnapshot>> fast_state_queue_;
   rclcpp::CallbackGroup::SharedPtr scheduler_callback_group_;
   rclcpp::CallbackGroup::SharedPtr io_callback_group_;
+  rclcpp::CallbackGroup::SharedPtr payload_cache_callback_group_;
   rclcpp::CallbackGroup::SharedPtr fast_state_callback_group_;
   rclcpp::CallbackGroup::SharedPtr telemetry_callback_group_;
   std::vector<std::vector<rclcpp::GenericPublisher::SharedPtr>> publishers_;
   std::vector<rclcpp::GenericSubscription::SharedPtr> subscriptions_;
+  std::vector<rclcpp::GenericSubscription::SharedPtr>
+      payload_cache_subscriptions_;
   std::vector<std::vector<std::shared_ptr<rclcpp::SerializedMessage>>>
       ap_latest_messages_;
   std::vector<std::vector<CachedPeerMessage>> uav_latest_peer_messages_;
@@ -6758,6 +7975,15 @@ class CommunicationProxy final : public rclcpp::Node {
   std::uint64_t rl_async_observed_slot_{};
   std::uint64_t rl_late_boundary_recoveries_{};
   double rl_pending_boundary_stamp_s_{};
+  std::unique_ptr<EventDrivenOneShotGate> event_driven_gate_;
+  double rl_event_interval_start_sim_time_s_{};
+  double rl_event_delta_t_s_{};
+  double rl_event_action_age_s_{};
+  std::uint64_t rl_event_last_state_slot_{};
+  std::uint64_t rl_event_applied_action_count_{};
+  std::uint64_t rl_event_completed_transition_count_{};
+  std::uint64_t rl_event_rejected_action_count_{};
+  std::uint64_t rl_event_executing_action_version_{};
   bool rl_sync_clock_initialized_{false};
   double rl_last_sync_stamp_s_{};
   bool rl_sync_boundary_frozen_{false};
@@ -6794,6 +8020,7 @@ class CommunicationProxy final : public rclcpp::Node {
   std::uint64_t rl_latest_action_source_guidance_id_{};
   std::uint64_t rl_latest_action_source_sim_step_{};
   std::uint64_t rl_latest_action_source_step_id_{};
+  std::uint64_t rl_latest_action_source_slot_{};
   std::uint64_t rl_latest_policy_version_{};
   std::uint64_t rl_latest_action_generated_wall_time_ns_{};
   double rl_latest_action_source_sim_time_s_{};
@@ -6919,6 +8146,13 @@ class CommunicationProxy final : public rclcpp::Node {
   std::uint64_t uav_ofdma_allocated_prb_slots_{};
   std::uint64_t uav_ofdma_peak_active_senders_{};
   int uav_ofdma_max_allocated_prbs_per_slot_{};
+  std::uint64_t uav_csma_idle_slots_{};
+  std::uint64_t uav_csma_backoff_slots_{};
+  std::uint64_t uav_csma_busy_slots_{};
+  std::uint64_t uav_csma_successful_contentions_{};
+  std::uint64_t uav_csma_collision_events_{};
+  std::uint64_t uav_csma_collided_datagrams_{};
+  std::uint64_t uav_udp_receiver_collision_failures_{};
   std::uint64_t bs_round_robin_turns_{};
   std::uint64_t bs_upload_grants_delivered_{};
   std::uint64_t bs_upload_grants_failed_{};
@@ -6943,6 +8177,32 @@ class CommunicationProxy final : public rclcpp::Node {
   std::uint64_t bs_chunk_payload_request_timeouts_{};
   std::uint64_t bs_chunk_payload_unsolicited_responses_{};
   std::uint64_t bs_upload_selection_backpressure_skips_{};
+  std::uint64_t payload_precache_queued_{};
+  std::uint64_t payload_precache_request_messages_{};
+  std::uint64_t payload_precache_chunks_requested_{};
+  std::uint64_t payload_precache_responses_received_{};
+  std::uint64_t payload_precache_timeouts_{};
+  std::uint64_t payload_precache_late_responses_{};
+  std::uint64_t payload_precache_satisfied_by_peer_data_{};
+  std::uint64_t payload_direct_pushes_received_{};
+  std::uint64_t payload_direct_pushes_rejected_{};
+  std::size_t payload_precache_pending_peak_{};
+  std::size_t payload_precache_inflight_peak_{};
+  std::uint64_t bs_adaptive_chunk_budget_slots_{};
+  std::uint64_t bs_adaptive_budget_channel_samples_{};
+  std::uint64_t bs_adaptive_budget_unavailable_links_{};
+  std::size_t bs_last_adaptive_uplink_chunk_budget_{};
+  std::size_t bs_last_adaptive_downlink_chunk_budget_{};
+  std::size_t bs_last_adaptive_uplink_chunks_selected_{};
+  std::size_t bs_last_adaptive_downlink_chunks_selected_{};
+  std::uint64_t bs_adaptive_uplink_chunk_budget_total_{};
+  std::uint64_t bs_adaptive_downlink_chunk_budget_total_{};
+  std::uint64_t bs_adaptive_uplink_chunks_selected_total_{};
+  std::uint64_t bs_adaptive_downlink_chunks_selected_total_{};
+  std::unordered_map<std::string, std::uint64_t>
+      bs_adaptive_budget_mcs_counts_;
+  std::uint64_t bs_uplink_slot_budget_exhaustions_{};
+  std::uint64_t bs_downlink_slot_budget_exhaustions_{};
   std::uint64_t bs_missing_chunks_scheduled_downlink_{};
   std::uint64_t bs_missing_chunks_delivered_downlink_{};
   std::uint64_t uav_peer_message_sequence_{};

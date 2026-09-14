@@ -98,6 +98,35 @@ double LinkModel::packetErrorRate(double snr_db, std::size_t bytes) const {
       0.0, 1.0);
 }
 
+double LinkModel::expectedReliablePacketAirtime(
+    double snr_db, std::size_t bytes, int max_retries) const {
+  if (max_retries < 0) {
+    throw std::invalid_argument("maximum retries must be non-negative");
+  }
+  const double per = packetErrorRate(snr_db, bytes);
+  double expected_attempts = 1.0;
+  double retry_probability = per;
+  for (int retry = 0; retry < max_retries; ++retry) {
+    expected_attempts += retry_probability;
+    retry_probability *= per;
+  }
+  return serializationDelay(snr_db, bytes) * expected_attempts;
+}
+
+std::size_t LinkModel::reliablePacketCapacity(
+    double snr_db, std::size_t bytes, int max_retries,
+    double available_airtime_s) const {
+  if (!std::isfinite(available_airtime_s) || available_airtime_s < 0.0) {
+    throw std::invalid_argument("available airtime must be finite and non-negative");
+  }
+  if (available_airtime_s == 0.0) return 0U;
+  const double expected_airtime_s =
+      expectedReliablePacketAirtime(snr_db, bytes, max_retries);
+  return static_cast<std::size_t>(std::max(
+      0.0,
+      std::floor(available_airtime_s / expected_airtime_s + 1.0e-9)));
+}
+
 std::size_t LinkModel::transportBlockCount(std::size_t bytes) const noexcept {
   return std::max<std::size_t>(
       1U, (bytes + config_.transport_block_bytes - 1U) /

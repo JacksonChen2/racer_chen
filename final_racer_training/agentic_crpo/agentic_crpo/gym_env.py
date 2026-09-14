@@ -35,6 +35,7 @@ class RacerCRPOEnv(gym.Env[np.ndarray, np.ndarray]):
         reward_mode: str = "negative_bs_resource",
         reward_scale: float = 1.0,
         constraint_mode: str = "task_loss",
+        constraint_episode_duration_s: float = 300.0,
         relay_fanout: RelayFanoutConstraint | None = None,
         enforce_relay_fanout: bool = True,
         fanout_priority_weights: dict[str, float] | None = None,
@@ -48,6 +49,7 @@ class RacerCRPOEnv(gym.Env[np.ndarray, np.ndarray]):
             raise ValueError("invalid environment interval or resource normalizer")
         if reward_mode not in {
             "negative_bs_resource",
+            "negative_total_prb",
             "coverage",
             "coverage_delta",
         }:
@@ -96,7 +98,10 @@ class RacerCRPOEnv(gym.Env[np.ndarray, np.ndarray]):
             include_global_guidance=include_global_guidance,
         )
         self.large_builder = LargeStateBuilder(self.n_uavs, channel_history)
-        self.task_tracker = TaskLossTracker(task_weights)
+        self.task_tracker = TaskLossTracker(
+            task_weights,
+            episode_duration_s=constraint_episode_duration_s,
+        )
         self.observation_space = spaces.Box(
             low=0.0,
             high=1.0,
@@ -160,6 +165,10 @@ class RacerCRPOEnv(gym.Env[np.ndarray, np.ndarray]):
     def _reward(self, result: Any) -> float:
         if self.reward_mode == "negative_bs_resource":
             value = -result.bs_resource / self.bs_resource_normalizer
+        elif self.reward_mode == "negative_total_prb":
+            value = -(
+                result.bs_resource + result.direct_u2u_resource
+            ) / self.bs_resource_normalizer
         elif self.reward_mode == "coverage":
             value = self.snapshot.coverage
         else:
@@ -199,6 +208,25 @@ class RacerCRPOEnv(gym.Env[np.ndarray, np.ndarray]):
         seed: int | None = None,
         options: dict[str, Any] | None = None,
     ) -> tuple[np.ndarray, dict[str, Any]]:
+        if (
+            bool(
+                getattr(
+                    self.backend,
+                    "single_mission_terminal_reset_is_noop",
+                    False,
+                )
+            )
+            and self.snapshot is not None
+            and (self.snapshot.terminated or self.snapshot.truncated)
+        ):
+            # DummyVecEnv automatically calls reset() before returning a
+            # terminal transition.  Event-driven task costs are intentionally
+            # resolved only after collection, so clearing the task tracker or
+            # the backend's state-time index here would make the final partial
+            # rollout impossible to settle.  The process exits after this one
+            # mission, hence returning the final observation is the only valid
+            # reset behavior.
+            return self._observation(), {"terminal_autoreset_noop": True}
         super().reset(seed=seed)
         del options
         self.snapshot = self.backend.reset(seed)
@@ -236,6 +264,16 @@ class RacerCRPOEnv(gym.Env[np.ndarray, np.ndarray]):
             )
         return self._observation(), {
             "L_task": self.initial_task_loss,
+            "L_task_previous": self.initial_task_loss,
+            "delta_t_s": 0.0,
+            "tilde_L_task": self.initial_task_loss,
+            "constraint_cost": 0.0,
+            "L_task_time_weighted": self.initial_task_loss,
+            "constraint_return_cumulative": 0.0,
+            "constraint_elapsed_time_s": 0.0,
+            "constraint_episode_duration_s": float(
+                self.task_tracker.episode_duration_s
+            ),
             "L_task_initial": self.initial_task_loss,
             "constraint_value": (
                 self.initial_task_loss
@@ -394,14 +432,14 @@ class RacerCRPOEnv(gym.Env[np.ndarray, np.ndarray]):
         if cost_pending:
             task_loss = self.task_tracker.previous
             cost = 0.0
-            constraint_value = task_loss
+            constraint_value = self.task_tracker.constraint_value
         else:
             task_loss, task_cost = self.task_tracker.update(
                 self.snapshot.task_metrics
             )
             if self.constraint_mode == "task_loss":
                 cost = task_cost
-                constraint_value = task_loss
+                constraint_value = self.task_tracker.constraint_value
             else:
                 assert executed_fanout is not None
                 cost = executed_fanout.cost
@@ -442,6 +480,24 @@ class RacerCRPOEnv(gym.Env[np.ndarray, np.ndarray]):
             "constraint_mode": self.constraint_mode,
             "reward_mode": self.reward_mode,
             "L_task": float(task_loss),
+            "L_task_previous": float(
+                self.task_tracker.interval_previous_loss
+            ),
+            "delta_t_s": float(self.task_tracker.interval_delta_time_s),
+            "tilde_L_task": float(self.task_tracker.interval_mean_loss),
+            "constraint_cost": float(cost),
+            "L_task_time_weighted": float(
+                self.task_tracker.constraint_value
+            ),
+            "constraint_return_cumulative": float(
+                self.task_tracker.sum_cost
+            ),
+            "constraint_elapsed_time_s": float(
+                self.task_tracker.elapsed_time_s
+            ),
+            "constraint_episode_duration_s": float(
+                self.task_tracker.episode_duration_s
+            ),
             "L_task_initial": float(self.initial_task_loss),
             "D_traj": metrics.d_traj,
             "D_cov": metrics.d_cov,
@@ -582,8 +638,30 @@ class RacerCRPOEnv(gym.Env[np.ndarray, np.ndarray]):
             task_loss, cost = self.task_tracker.update(metric)
             value = {
                 "cost": float(cost),
-                "constraint_value": float(task_loss),
+                "constraint_value": float(self.task_tracker.constraint_value),
                 "L_task": float(task_loss),
+                "L_task_previous": float(
+                    self.task_tracker.interval_previous_loss
+                ),
+                "delta_t_s": float(
+                    self.task_tracker.interval_delta_time_s
+                ),
+                "tilde_L_task": float(
+                    self.task_tracker.interval_mean_loss
+                ),
+                "constraint_cost": float(cost),
+                "L_task_time_weighted": float(
+                    self.task_tracker.constraint_value
+                ),
+                "constraint_return_cumulative": float(
+                    self.task_tracker.sum_cost
+                ),
+                "constraint_elapsed_time_s": float(
+                    self.task_tracker.elapsed_time_s
+                ),
+                "constraint_episode_duration_s": float(
+                    self.task_tracker.episode_duration_s
+                ),
                 "L_task_initial": float(self.initial_task_loss),
                 "cost_pending": False,
                 "cost_step_id": step_id,
@@ -609,6 +687,16 @@ class RacerCRPOEnv(gym.Env[np.ndarray, np.ndarray]):
         # and transition-ring sequence are the authoritative timesteps.
         status["rl_cycle_id"] = self.episode_length + 1
         status["guidance_id"] = self.observation_guidance_id
+        elapsed = (
+            float(self.snapshot.sim_time_s)
+            if self.snapshot is not None
+            else 0.0
+        )
+        status["episode_step"] = self.episode_length
+        status["elapsed_episode_time_s"] = max(0.0, elapsed)
+        status["episode_duration_s"] = float(
+            self.task_tracker.episode_duration_s
+        )
         return status
 
     def set_policy_version(self, policy_version: int) -> None:

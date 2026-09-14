@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+workspace="/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/hybrid_communication_racer"
+experiment_root="${workspace}/experiments/five_sites_same_aisle_10uav_300s_20260831"
+reference_root="${experiment_root}/qwen14b_crpo_fixed_constraint_30ep_lr2e4_b64_s384_tanh_20260901/reference"
+complete_reference="${workspace}/experiments/reproduce_7565_legacy_passive_metrics_20260902/formal_300s/warehouse_full_distributed_result.json"
+
+export RACER_QWEN8_CAMPAIGN="${experiment_root}/small_only_taskloss_ref7529_bs40dbm_sync10ep_lr1e4_b128_s384_e5_tanh_kl005_20260902"
+export RACER_QWEN8_CONFIG="${workspace}/agentic_crpo/config_small_only_taskloss_ref7529_bs40dbm_sync10ep_lr1e4_b128_e5_kl005.yaml"
+export RACER_QWEN8_REFERENCE_ROOT="${reference_root}"
+export RACER_QWEN8_GT_PATH="${reference_root}/gt_occupied_voxels.txt"
+export RACER_QWEN8_PERFECT_RESULT="${complete_reference}"
+unset RACER_QWEN8_AUXILIARY_RESULT || true
+export RACER_QWEN8_BRIDGE_DIR="/tmp/racer_agentic_crpo_small_only_taskloss_ref7529_bs40dbm_sync10ep_lr1e4_b128_e5_kl005"
+export RACER_QWEN8_EPISODES=10
+export RACER_QWEN8_BS_TX_POWER_DBM=40
+export RACER_QWEN8_LEARNING_RATE=0.0001
+export RACER_QWEN8_N_STEPS=384
+export RACER_QWEN8_BATCH_SIZE=128
+export RACER_QWEN8_N_EPOCHS=5
+export RACER_QWEN8_ACTIVATION_FN=tanh
+export RACER_QWEN8_TRAINING_LABEL=small_only_taskloss_ref7529_bs40dbm_sync_lr1e4_b128_e5_kl005_gamma015
+export RACER_REQUIRE_QWEN_MODEL=false
+export RACER_SINGLE_GPU_PAUSE_ENABLED=false
+
+exec "${workspace}/scripts/run_qwen8b_taskloss_single_gpu_30episodes_gamma015.sh"

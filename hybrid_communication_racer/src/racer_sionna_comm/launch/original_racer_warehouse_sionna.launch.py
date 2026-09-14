@@ -1,3 +1,4 @@
+import math
 from pathlib import Path
 
 from ament_index_python.packages import get_package_prefix, get_package_share_directory
@@ -25,6 +26,22 @@ def _shared_remappings(zero_id):
         ("/multi_map_manager/chunk_data_recv", rx + "/chunk_data"),
         ("/swarm_expl/global_assignment_send", tx + "/global_assignment"),
         ("/swarm_expl/global_assignment_recv", rx + "/global_assignment"),
+        (
+            "/hybrid_communication_racer/drone_state_send",
+            tx + "/hybrid_drone_state",
+        ),
+        (
+            "/hybrid_communication_racer/drone_state_recv",
+            rx + "/hybrid_drone_state",
+        ),
+        (
+            "/hybrid_communication_racer/global_assignment_send",
+            tx + "/hybrid_global_assignment",
+        ),
+        (
+            "/hybrid_communication_racer/global_assignment_recv",
+            rx + "/hybrid_global_assignment",
+        ),
     )
     return list(pairs)
 
@@ -35,10 +52,16 @@ def _launch_nodes(context):
         LaunchConfiguration("trigger_minimum_cloud_frames").perform(context)
     )
     trigger_delay_s = float(LaunchConfiguration("trigger_delay_s").perform(context))
+    coverage_update_rate_hz = float(
+        LaunchConfiguration("coverage_update_rate_hz").perform(context)
+    )
     if trigger_minimum_cloud_frames < 0:
         raise RuntimeError("trigger_minimum_cloud_frames must be non-negative")
     if trigger_delay_s < 0.0:
         raise RuntimeError("trigger_delay_s must be non-negative")
+    if not math.isfinite(coverage_update_rate_hz) or coverage_update_rate_hz <= 0.0:
+        raise RuntimeError("coverage_update_rate_hz must be finite and positive")
+    coverage_update_period_s = 1.0 / coverage_update_rate_hz
     scenario = LaunchConfiguration("scenario").perform(context)
     if scenario not in (
         "warehouse_simple", "warehouse_loaded", "warehouse_loaded_center",
@@ -82,6 +105,12 @@ def _launch_nodes(context):
     ideal_coalesce_window_ms = float(
         LaunchConfiguration("ideal_coalesce_window_ms").perform(context)
     )
+    preserve_ideal_direct_with_bs = LaunchConfiguration(
+        "preserve_ideal_direct_with_bs"
+    ).perform(context).lower() in ("1", "true", "yes", "on")
+    initial_assignment_perfect_delivery = LaunchConfiguration(
+        "initial_assignment_perfect_delivery"
+    ).perform(context).lower() in ("1", "true", "yes", "on")
     require_sionna = LaunchConfiguration("require_sionna").perform(context).lower() in (
         "1", "true", "yes", "on"
     )
@@ -162,6 +191,20 @@ def _launch_nodes(context):
     carrier_frequency_hz = float(
         LaunchConfiguration("carrier_frequency_hz").perform(context)
     )
+    bandwidth_hz = float(
+        LaunchConfiguration("bandwidth_hz").perform(context)
+    )
+    resource_blocks = int(
+        LaunchConfiguration("resource_blocks").perform(context)
+    )
+    occupied_bandwidth_hz = 12.0 * 120.0e3 * resource_blocks
+    if (
+        not math.isfinite(bandwidth_hz)
+        or bandwidth_hz <= 0.0
+        or resource_blocks <= 0
+        or occupied_bandwidth_hz > bandwidth_hz
+    ):
+        raise RuntimeError("invalid bandwidth_hz/resource_blocks allocation")
     bs_max_retries = int(
         LaunchConfiguration("bs_max_retries").perform(context)
     )
@@ -171,6 +214,9 @@ def _launch_nodes(context):
     )
     rl_bs_scheduler_enabled = LaunchConfiguration(
         "rl_bs_scheduler_enabled"
+    ).perform(context).lower() in ("1", "true", "yes", "on")
+    rl_bs_synchronous_mode = LaunchConfiguration(
+        "rl_bs_synchronous_mode"
     ).perform(context).lower() in ("1", "true", "yes", "on")
     rl_bs_action_path = LaunchConfiguration("rl_bs_action_path").perform(context)
     rl_bs_state_path = LaunchConfiguration("rl_bs_state_path").perform(context)
@@ -183,8 +229,18 @@ def _launch_nodes(context):
     require_ground_truth_map = LaunchConfiguration(
         "require_ground_truth_map"
     ).perform(context).lower() in ("1", "true", "yes", "on")
+    task_metric_observer_mode = LaunchConfiguration(
+        "task_metric_observer_mode"
+    ).perform(context)
+    if task_metric_observer_mode not in ("inline", "async", "off"):
+        raise RuntimeError(
+            "task_metric_observer_mode must be inline, async, or off"
+        )
     rl_bs_decision_period_ms = float(
         LaunchConfiguration("rl_bs_decision_period_ms").perform(context)
+    )
+    rl_bs_communication_slot_ms = float(
+        LaunchConfiguration("rl_bs_communication_slot_ms").perform(context)
     )
     random_seed = int(LaunchConfiguration("random_seed").perform(context))
     algorithm_variant = LaunchConfiguration("algorithm_variant").perform(context)
@@ -218,6 +274,9 @@ def _launch_nodes(context):
                 "exploration.mtsp_dir": str(lkh_dir),
                 "exploration.random_seed": random_seed,
                 "topo_prm.random_seed": random_seed,
+                # This ROS simulation-time timer is set to 10 Hz by the
+                # synchronous Qwen/CRPO training launcher.
+                "map_ros.coverage_diagnostic_period": coverage_update_period_s,
                 "traj_server.drone_id": drone_id,
                 "traj_server.drone_num": drone_count,
                 "multi_map_manager.chunk_size": 50 if algorithm_variant == "oracle" else 200,
@@ -383,15 +442,27 @@ def _launch_nodes(context):
                     "chunk_data_max_pending_per_link": chunk_data_max_pending_per_link,
                     "communication_range_m": communication_range_m,
                     "ideal_coalesce_window_ms": ideal_coalesce_window_ms,
+                    "preserve_ideal_direct_with_bs": (
+                        preserve_ideal_direct_with_bs
+                    ),
+                    "initial_assignment_perfect_delivery": (
+                        initial_assignment_perfect_delivery
+                    ),
                     "ap_tx_power_dbm": ap_tx_power_dbm,
                     "tx_power_dbm": uav_tx_power_dbm,
                     "carrier_frequency_hz": carrier_frequency_hz,
+                    "bandwidth_hz": bandwidth_hz,
+                    "resource_blocks": resource_blocks,
                     "max_retries": max_retries,
                     "bs_max_retries": bs_max_retries,
                     "fixed_mcs_index": fixed_mcs_index,
                     "rl_bs_scheduler_enabled": rl_bs_scheduler_enabled,
+                    "rl_bs_synchronous_mode": rl_bs_synchronous_mode,
                     "rl_bs_action_path": rl_bs_action_path,
                     "rl_bs_state_path": rl_bs_state_path,
+                    "rl_bs_communication_slot_ms": (
+                        rl_bs_communication_slot_ms
+                    ),
                     "ground_truth_occupied_voxels_path": (
                         ground_truth_occupied_voxels_path
                     ),
@@ -399,6 +470,7 @@ def _launch_nodes(context):
                         observed_occupied_voxels_path
                     ),
                     "require_ground_truth_map": require_ground_truth_map,
+                    "task_metric_observer_mode": task_metric_observer_mode,
                     "rl_bs_decision_period_ms": rl_bs_decision_period_ms,
                     "random_seed": random_seed,
                 },
@@ -422,6 +494,7 @@ def _launch_nodes(context):
                         "ap_tx_power_dbm": ap_tx_power_dbm,
                         "tx_power_dbm": uav_tx_power_dbm,
                         "carrier_frequency_hz": carrier_frequency_hz,
+                        "bandwidth_hz": bandwidth_hz,
                         "random_seed": random_seed,
                         "scene_xml": LaunchConfiguration("sionna_scene_xml").perform(context),
                         "radio_map_cache": LaunchConfiguration("radio_map_cache").perform(context),
@@ -441,6 +514,9 @@ def generate_launch_description():
                 "trigger_minimum_cloud_frames", default_value="25"
             ),
             DeclareLaunchArgument("trigger_delay_s", default_value="5.0"),
+            DeclareLaunchArgument(
+                "coverage_update_rate_hz", default_value="10.0"
+            ),
             DeclareLaunchArgument("scenario", default_value="warehouse_simple"),
             DeclareLaunchArgument("communication_mode", default_value="sionna"),
             DeclareLaunchArgument("algorithm_variant", default_value="original"),
@@ -465,6 +541,12 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("communication_range_m", default_value="4.0"),
             DeclareLaunchArgument("ideal_coalesce_window_ms", default_value="20.0"),
+            DeclareLaunchArgument(
+                "preserve_ideal_direct_with_bs", default_value="false"
+            ),
+            DeclareLaunchArgument(
+                "initial_assignment_perfect_delivery", default_value="false"
+            ),
             DeclareLaunchArgument("require_sionna", default_value="true"),
             DeclareLaunchArgument("sionna_scene_xml", default_value=""),
             DeclareLaunchArgument("radio_map_cache", default_value=""),
@@ -476,11 +558,16 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "carrier_frequency_hz", default_value="28000000000.0"
             ),
+            DeclareLaunchArgument("bandwidth_hz", default_value="100000000.0"),
+            DeclareLaunchArgument("resource_blocks", default_value="66"),
             DeclareLaunchArgument("max_retries", default_value="3"),
             DeclareLaunchArgument("bs_max_retries", default_value="3"),
             DeclareLaunchArgument("fixed_mcs_index", default_value="-1"),
             DeclareLaunchArgument(
                 "rl_bs_scheduler_enabled", default_value="false"
+            ),
+            DeclareLaunchArgument(
+                "rl_bs_synchronous_mode", default_value="false"
             ),
             DeclareLaunchArgument(
                 "rl_bs_action_path",
@@ -502,7 +589,13 @@ def generate_launch_description():
                 "require_ground_truth_map", default_value="false"
             ),
             DeclareLaunchArgument(
+                "task_metric_observer_mode", default_value="inline"
+            ),
+            DeclareLaunchArgument(
                 "rl_bs_decision_period_ms", default_value="20.0"
+            ),
+            DeclareLaunchArgument(
+                "rl_bs_communication_slot_ms", default_value="20.0"
             ),
             DeclareLaunchArgument("random_seed", default_value="42"),
             DeclareLaunchArgument(

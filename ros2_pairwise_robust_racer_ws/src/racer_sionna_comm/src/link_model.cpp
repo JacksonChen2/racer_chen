@@ -77,12 +77,16 @@ double LinkModel::serializationDelay(double snr_db, std::size_t bytes) const {
 
 double LinkModel::packetErrorRate(double snr_db, std::size_t bytes) const {
   const double tbler = transportBlockErrorRate(snr_db);
-  const std::size_t transport_blocks = std::max<std::size_t>(
-      1U, (bytes + config_.transport_block_bytes - 1U) /
-              config_.transport_block_bytes);
+  const std::size_t transport_blocks = transportBlockCount(bytes);
   return std::clamp(
       1.0 - std::pow(1.0 - tbler, static_cast<double>(transport_blocks)),
       0.0, 1.0);
+}
+
+std::size_t LinkModel::transportBlockCount(std::size_t bytes) const noexcept {
+  return std::max<std::size_t>(
+      1U, (bytes + config_.transport_block_bytes - 1U) /
+              config_.transport_block_bytes);
 }
 
 }  // namespace racer_sionna_comm

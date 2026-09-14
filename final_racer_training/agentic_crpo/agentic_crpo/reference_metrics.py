@@ -61,6 +61,7 @@ class ReferenceTaskMetricEvaluator:
         require_auxiliary_reference_metrics: bool = True,
         auxiliary_reference_result: str | None = None,
         require_explicit_task_clock: bool = False,
+        variable_task_clock: bool = False,
     ) -> None:
         self.n_uavs = int(n_uavs)
         lower = np.asarray(workspace_min, dtype=np.float64)
@@ -76,6 +77,7 @@ class ReferenceTaskMetricEvaluator:
             require_auxiliary_reference_metrics
         )
         self.require_explicit_task_clock = bool(require_explicit_task_clock)
+        self.variable_task_clock = bool(variable_task_clock)
 
         self.reference_times = np.empty(0, np.float64)
         self.reference_positions = np.empty((0, self.n_uavs, 3), np.float64)
@@ -497,11 +499,14 @@ class ReferenceTaskMetricEvaluator:
             if raw_step is not None
             else int(round(task_time_s / duration))
         )
-        if task_step < 0 or not np.isclose(
+        canonical_time = np.isclose(
             task_time_s,
             task_step * duration,
             rtol=0.0,
             atol=max(1.0e-8, duration * 1.0e-6),
+        )
+        if task_step < 0 or (
+            not self.variable_task_clock and not canonical_time
         ):
             raise ValueError(
                 "task_step/task_time_s are inconsistent with the canonical "

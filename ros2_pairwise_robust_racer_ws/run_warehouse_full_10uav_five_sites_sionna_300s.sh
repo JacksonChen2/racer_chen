@@ -3,12 +3,13 @@ set -euo pipefail
 
 workspace="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 run_id="${RACER_RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
-suite="${RACER_SUITE_DIR:-${workspace}/experiments/warehouse_full_10uav_five_sites_pairwise_robust_sionna_100hz_76800rays_300s_uav20dbm_mcs14_${run_id}}"
-case_dir="${suite}/sionna_distributed_no_retries_uav20dbm_fixed_mcs14"
+suite="${RACER_SUITE_DIR:-${workspace}/experiments/warehouse_full_10uav_five_sites_pairwise_robust_sionna_50mhz_100hz_76800rays_300s_uav20dbm_mcs14_${run_id}}"
+case_dir="${suite}/sionna_distributed_50mhz_no_retries_uav20dbm_fixed_mcs14"
 selection="${workspace}/config/warehouse_full_10uav_five_sites_layout.json"
+reference_result="${workspace}/../hybrid_communication_racer/experiments/reproduce_7565_legacy_passive_metrics_20260902/formal_300s/warehouse_full_distributed_result.json"
 scene_usd="${workspace}/../warehouse_scenes/isaac/warehouse_full_with_industrial_ap.usda"
 sionna_scene_xml="${workspace}/../warehouse_scenes/sionna/warehouse_full_with_industrial_ap_20260827_101239/warehouse.xml"
-sionna_runtime="${RACER_SIONNA_RUNTIME_DIR:-${workspace}/.sionna_runtime}"
+sionna_runtime="${RACER_SIONNA_RUNTIME_DIR:-${workspace}/../ros2_original_fidelity_sionna_ws/.sionna_runtime}"
 expected_scene_sha256="e23ed69250e6ff0391faf21e12715ac65bed0f28eab7afed80c9b5315d191c1e"
 expected_sionna_sha256="b8837c2124d49cd34cce025eebdbf6d22e8196ed609a3d28205f9d1b4c6ee168"
 active_child=""
@@ -50,6 +51,23 @@ if [[ "$(wc -w <<<"${starts}")" -ne 30 ]]; then
   printf '%s\n' "blocked:invalid_start_layout" >"${suite}/run_state.txt"
   exit 2
 fi
+if [[ ! -f "${reference_result}" ]] ||
+   ! python3 - "${selection}" "${reference_result}" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+selection = json.loads(Path(sys.argv[1]).read_text())
+reference = json.loads(Path(sys.argv[2]).read_text())
+if selection["start_positions"] != reference["metrics"]["start_positions"]:
+    raise SystemExit("the canonical layout differs from the 75% reference run")
+PY
+then
+  printf 'Canonical layout does not match reference result: %s\n' \
+    "${reference_result}" >&2
+  printf '%s\n' "blocked:start_layout_reference_mismatch" >"${suite}/run_state.txt"
+  exit 2
+fi
 
 set +u
 source /opt/ros/humble/setup.bash
@@ -65,14 +83,19 @@ if [[ "${core_prefix}" != "${workspace}/install/racer_original_core" ||
 fi
 
 python3 - "${suite}/experiment_manifest.json" "${selection}" "${scene_usd}" \
-  "${actual_scene_sha256}" "${sionna_scene_xml}" "${actual_sionna_sha256}" <<'PY'
+  "${actual_scene_sha256}" "${sionna_scene_xml}" "${actual_sionna_sha256}" \
+  "${starts}" "${reference_result}" <<'PY'
 import json
+import math
 from pathlib import Path
 import sys
 
 output = Path(sys.argv[1])
 selection_path = Path(sys.argv[2])
 selection = json.loads(selection_path.read_text())
+values = [float(value) for value in sys.argv[7].split()]
+starts = [values[index:index + 3] for index in range(0, len(values), 3)]
+region_names = [region["name"] for region in selection["regions"]]
 manifest = {
     "algorithm": "pairwise_robust_racer",
     "workspace": str(output.parents[2]),
@@ -81,10 +104,24 @@ manifest = {
     "scene_usd_sha256": sys.argv[4],
     "sionna_scene_xml": sys.argv[5],
     "sionna_scene_xml_sha256": sys.argv[6],
-    "layout": "five_good_uav_bs_sites_near_four_corners_and_center_two_uavs_each",
+    "layout": selection["layout"],
+    "selection_rule": selection["selection_rule"],
     "layout_selection_file": str(selection_path),
-    "regions": selection["regions"],
-    "start_positions": selection["start_positions"],
+    "takeoff_reference_result": sys.argv[8],
+    "takeoff_groups": [
+        {
+            "name": name,
+            "drone_ids": [2 * index + 1, 2 * index + 2],
+            "start_positions": starts[2 * index:2 * index + 2],
+        }
+        for index, name in enumerate(region_names)
+    ],
+    "start_positions": starts,
+    "minimum_start_spacing_m": min(
+        math.dist(left, right)
+        for index, left in enumerate(starts)
+        for right in starts[index + 1:]
+    ),
     "drone_count": 10,
     "duration_s": 300,
     "physics_rate_hz": 100,
@@ -100,8 +137,16 @@ manifest = {
         "uav_tx_power_dbm": 20,
         "fixed_mcs_index": 14,
         "fixed_mcs_modulation": "16QAM",
+        "bandwidth_hz": 50000000.0,
+        "subcarrier_spacing_hz": 120000.0,
+        "resource_blocks": 32,
+        "occupied_bandwidth_hz": 46080000.0,
         "max_retries": 0,
         "bs_max_retries": 0,
+    },
+    "startup_recovery": {
+        "enabled": False,
+        "exploration_trigger_delay_s": 5.0,
     },
 }
 output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
@@ -122,7 +167,11 @@ export RACER_SENSOR_RATE_HZ=10
 export RACER_CAMERA_RAY_BUDGET=76800
 export RACER_SENSOR_WORKER_COUNT=8
 export RACER_TRIGGER_MINIMUM_CLOUD_FRAMES=0
+export RACER_TRIGGER_DELAY_S=5.0
 export RACER_SCENE_QUERY_RATE_HZ=20
+export RACER_STARTUP_FREE_SPACE_YAW=0
+export RACER_STARTUP_SCAN_DURATION=0.0
+export RACER_STARTUP_UNKNOWN_CORRIDOR_DISTANCE=0.0
 export RACER_FIDELITY_HEADLESS=1
 export RACER_FIDELITY_VISUALIZE=0
 export RACER_REQUIRE_COMPLETION=0
@@ -146,15 +195,17 @@ export RACER_LOSSLESS_COMMUNICATION_RANGE_M=0.0
 export RACER_LOSSLESS_CONTROL_ONLY=false
 export RACER_COMMUNICATION_RANGE_M=4.0
 export RACER_UAV_TX_POWER_DBM=20
+export RACER_BANDWIDTH_HZ=50000000.0
+export RACER_RESOURCE_BLOCKS=32
 export RACER_MAX_RETRIES=0
 export RACER_BS_MAX_RETRIES=0
 export RACER_FIXED_MCS_INDEX=14
 export RACER_RESULT_DIR="${case_dir}"
-export RACER_LKH_DIR="/tmp/racer_pairwise_robust_10uav_sionna_300s_20dbm_mcs14_${run_id}_lkh"
-export RACER_ALGORITHM_LABEL="pairwise_robust_racer_10uav_sionna_100hz_76800rays_300s_uav20dbm_mcs14"
+export RACER_LKH_DIR="/tmp/racer_pairwise_robust_10uav_sionna_50mhz_300s_20dbm_mcs14_${run_id}_lkh"
+export RACER_ALGORITHM_LABEL="pairwise_robust_racer_10uav_reference_five_sites_sionna_50mhz_100hz_76800rays_300s_uav20dbm_mcs14"
 
 printf '%s\n' "running" >"${suite}/run_state.txt"
-printf 'START time=%s mode=sionna drones=10 duration=300 physics_hz=100 rays=76800 uav_dbm=20 mcs=14 retries=0 domain=%s\n' \
+printf 'START time=%s mode=sionna topology=distributed drones=10 takeoff_sites=5 duration=300 bandwidth_hz=50000000 resource_blocks=32 physics_hz=100 rays=76800 uav_dbm=20 mcs=14 retries=0 domain=%s\n' \
   "$(date --iso-8601=seconds)" "${ROS_DOMAIN_ID}"
 set +e
 "${workspace}/run_warehouse_simple_sionna.sh" >"${case_dir}/runner.log" 2>&1 &
@@ -167,12 +218,13 @@ set -e
 printf '%s\n' "${runner_status}" >"${case_dir}/runner_exit_status.txt"
 
 set +e
-python3 - "${case_dir}" <<'PY' >"${case_dir}/case_validation.log" 2>&1
+python3 - "${case_dir}" "${selection}" <<'PY' >"${case_dir}/case_validation.log" 2>&1
 import json
 from pathlib import Path
 import sys
 
 case_dir = Path(sys.argv[1])
+selection = json.loads(Path(sys.argv[2]).read_text())
 files = list(case_dir.glob("*_result.json"))
 if len(files) != 1:
     raise SystemExit(f"INTEGRITY_ERROR expected one result JSON, found {len(files)}")
@@ -183,6 +235,8 @@ stats = communication.get("statistics", {})
 phy = stats.get("phy", {})
 evidence = result.get("algorithm_evidence", {})
 errors = []
+if int(result.get("random_seed", -1)) != 42:
+    errors.append("random seed is not 42")
 if float(metrics.get("elapsed", 0.0)) < 299.0:
     errors.append("simulation did not reach 300 seconds")
 if float(metrics.get("physics_rate_hz", 0.0)) != 100.0:
@@ -195,8 +249,20 @@ if int(communication.get("exact_link_samples", 0)) <= 0:
     errors.append("Sionna produced no exact link samples")
 if int(phy.get("fixed_mcs_index", -1)) != 14 or float(phy.get("uav_tx_power_dbm", -1)) != 20.0:
     errors.append("PHY is not fixed MCS14 at 20 dBm")
+if float(phy.get("bandwidth_hz", -1)) != 50000000.0 or int(phy.get("resource_blocks", -1)) != 32:
+    errors.append("PHY is not configured for 50 MHz with 32 resource blocks")
 if int(phy.get("max_retries", -1)) != 0 or int(phy.get("bs_max_retries", -1)) != 0:
     errors.append("retransmission is enabled")
+if metrics.get("start_positions") != selection["start_positions"]:
+    errors.append("actual start positions differ from the canonical five-site layout")
+if metrics.get("startup_recovery", {}).get("enabled") is not False:
+    errors.append("startup recovery differs from the reference run")
+paths = metrics.get("path_lengths", [])
+coverage_per_agent = metrics.get("mapping_coverage_counts_per_agent", [])
+if len(paths) != 10 or len(coverage_per_agent) != 10:
+    errors.append("result does not contain metrics for all ten UAVs")
+if len(paths) == 10 and any(float(path) < 0.5 for path in paths):
+    errors.append(f"one or more UAVs did not complete startup takeoff: paths={paths}")
 if sorted(result.get("executed_drone_ids", [])) != list(range(1, 11)):
     errors.append("not all ten UAV algorithms executed")
 if int(evidence.get("process_crashes", 0)) != 0:
@@ -216,12 +282,17 @@ validation_status=$?
 set -e
 printf '%s\n' "${validation_status}" >"${case_dir}/case_validation_status.txt"
 
-if [[ "${runner_status}" -eq 0 && "${validation_status}" -eq 0 ]]; then
-  printf '%s\n' "completed" >"${suite}/run_state.txt"
+if [[ "${validation_status}" -eq 0 ]]; then
+  if [[ "${runner_status}" -eq 0 ]]; then
+    printf '%s\n' "completed" >"${suite}/run_state.txt"
+  else
+    printf 'completed_validated_runner_nonzero runner=%s\n' \
+      "${runner_status}" >"${suite}/run_state.txt"
+  fi
 else
   printf 'completed_with_error runner=%s validation=%s\n' \
     "${runner_status}" "${validation_status}" >"${suite}/run_state.txt"
 fi
 printf 'FINISH time=%s runner=%s validation=%s\n' \
   "$(date --iso-8601=seconds)" "${runner_status}" "${validation_status}"
-exit "${runner_status}"
+exit "${validation_status}"

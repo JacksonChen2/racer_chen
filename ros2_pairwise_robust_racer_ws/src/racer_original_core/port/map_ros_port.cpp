@@ -4,6 +4,7 @@
 #include <plan_env/sdf_map.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <iomanip>
@@ -22,13 +23,24 @@ void MapROS::init() {
       traversed_clearance_radius_, 0.0);
   node_.param("map_ros/coverage_diagnostic_period",
       coverage_diagnostic_period_, 2.0);
+  node_.param("map_ros/esdf_max_update_rate_hz",
+      esdf_max_update_rate_hz_, 2.0);
+  node_.param("map_ros/esdf_profile_period_s",
+      esdf_profile_period_s_, 2.0);
+  if (!std::isfinite(esdf_max_update_rate_hz_) ||
+      esdf_max_update_rate_hz_ <= 0.0) {
+    ROS_WARN("Invalid ESDF maximum update rate %.3f Hz; using 2 Hz",
+        esdf_max_update_rate_hz_);
+    esdf_max_update_rate_hz_ = 2.0;
+  }
   cloud_sub_ = node_.subscribe("/racer/sensor_points", 5,
       &MapROS::cloudCallback, this,
       ros::TransportHints().tcpNoDelay().bestEffort());
   odom_sub_ = node_.subscribe("/odom_world", 5,
       &MapROS::odometryCallback, this, ros::TransportHints().tcpNoDelay());
   esdf_timer_ = node_.createTimer(
-      ros::Duration(0.05), &MapROS::updateESDFCallback, this);
+      ros::Duration(1.0 / esdf_max_update_rate_hz_),
+      &MapROS::updateESDFCallback, this);
   vis_timer_ = node_.createTimer(
       ros::Duration(0.2), &MapROS::visCallback, this);
   if (coverage_diagnostic_period_ > 0.0) {
@@ -51,6 +63,10 @@ void MapROS::cloudCallback(const sensor_msgs::PointCloud2ConstPtr &message) {
   pcl::fromROSMsg(*message, point_cloud_);
   if (point_cloud_.empty()) return;
   map_->inputPointCloud(point_cloud_, static_cast<int>(point_cloud_.size()), camera_pos_);
+  // Keep occupancy and its inflated collision mask current at the sensor
+  // rate. Only the Euclidean distance transform is rate-limited below.
+  updateInflatedOccupancy();
+  markESDFDirty();
   const std::size_t previous_size = traversed_positions_.size();
   recordTraversedPosition(camera_pos_);
   if (return_corridor_enabled_ && traversed_positions_.size() > previous_size) {
@@ -62,7 +78,17 @@ void MapROS::cloudCallback(const sensor_msgs::PointCloud2ConstPtr &message) {
         traversed_positions_[finish], update_min, update_max);
     finishCorridorUpdate(update_min, update_max, false);
   }
-  esdf_need_update_ = true;
+}
+
+void MapROS::updateInflatedOccupancy() {
+  if (!map_ || !local_updated_) return;
+  map_->clearAndInflateLocalMap();
+  local_updated_ = false;
+}
+
+void MapROS::markESDFDirty() {
+  if (!esdf_dirty_) esdf_dirty_since_ = std::chrono::steady_clock::now();
+  esdf_dirty_ = true;
 }
 
 void MapROS::recordTraversedPosition(const Eigen::Vector3d &position) {
@@ -126,12 +152,10 @@ void MapROS::finishCorridorUpdate(const Eigen::Vector3d &update_min,
   map_->md_->all_min_ = map_->md_->all_min_.cwiseMin(update_min);
   map_->md_->all_max_ = map_->md_->all_max_.cwiseMax(update_max);
   local_updated_ = true;
-  esdf_need_update_ = true;
+  markESDFDirty();
   if (synchronous) {
-    map_->clearAndInflateLocalMap();
-    map_->updateESDF3d();
-    local_updated_ = false;
-    esdf_need_update_ = false;
+    updateInflatedOccupancy();
+    updateESDF(true);
   }
 }
 
@@ -159,12 +183,64 @@ void MapROS::prepareReturnCorridor() {
 
 void SDFMap::prepareReturnCorridor() { mr_->prepareReturnCorridor(); }
 
-void MapROS::updateESDFCallback(const ros::TimerEvent &) {
-  if (!map_ || !local_updated_) return;
-  map_->clearAndInflateLocalMap();
+bool MapROS::updateESDFForPlanning(SDFMap *map) {
+  if (!map || !map->mr_) return false;
+  return map->mr_->updateESDF(true);
+}
+
+bool MapROS::updateESDF(bool planner_forced) {
+  if (!map_) return false;
+  updateInflatedOccupancy();
+  if (!esdf_dirty_) return false;
+
+  const auto now = std::chrono::steady_clock::now();
+  if (!planner_forced && have_esdf_update_wall_) {
+    const double elapsed_s = std::chrono::duration<double>(
+        now - last_esdf_update_wall_).count();
+    if (elapsed_s + 1.0e-9 < 1.0 / esdf_max_update_rate_hz_) return false;
+  }
+  const double dirty_age_ms = 1000.0 * std::chrono::duration<double>(
+      now - esdf_dirty_since_).count();
+  const auto started = std::chrono::steady_clock::now();
   map_->updateESDF3d();
-  local_updated_ = false;
-  esdf_need_update_ = false;
+  const double current_ms = 1000.0 * std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - started).count();
+  esdf_dirty_ = false;
+  have_esdf_update_wall_ = true;
+  last_esdf_update_wall_ = std::chrono::steady_clock::now();
+  ++esdf_updates_;
+  if (planner_forced)
+    ++esdf_planner_updates_;
+  else
+    ++esdf_timer_updates_;
+  esdf_total_ms_ += current_ms;
+  esdf_max_ms_ = std::max(esdf_max_ms_, current_ms);
+  reportESDFProfile(current_ms, planner_forced, dirty_age_ms);
+  return true;
+}
+
+void MapROS::reportESDFProfile(double current_ms, bool planner_forced,
+    double dirty_age_ms) {
+  const auto now = std::chrono::steady_clock::now();
+  const bool report_due = last_esdf_profile_wall_.time_since_epoch().count() == 0 ||
+      std::chrono::duration<double>(now - last_esdf_profile_wall_).count() >=
+          esdf_profile_period_s_;
+  if (!report_due) return;
+  last_esdf_profile_wall_ = now;
+  ROS_INFO(
+      "RACER_ESDF_PROFILE updates=%llu timer_updates=%llu planner_updates=%llu "
+      "current_ms=%.6f mean_ms=%.6f max_ms=%.6f dirty_age_ms=%.3f "
+      "reason=%s max_rate_hz=%.3f",
+      static_cast<unsigned long long>(esdf_updates_),
+      static_cast<unsigned long long>(esdf_timer_updates_),
+      static_cast<unsigned long long>(esdf_planner_updates_), current_ms,
+      esdf_updates_ == 0 ? 0.0 : esdf_total_ms_ / esdf_updates_, esdf_max_ms_,
+      dirty_age_ms, planner_forced ? "planner" : "timer",
+      esdf_max_update_rate_hz_);
+}
+
+void MapROS::updateESDFCallback(const ros::TimerEvent &) {
+  updateESDF(false);
 }
 
 void MapROS::visCallback(const ros::TimerEvent &) {}

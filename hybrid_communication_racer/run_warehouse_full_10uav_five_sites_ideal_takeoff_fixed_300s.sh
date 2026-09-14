@@ -4,6 +4,9 @@ set -euo pipefail
 workspace="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 run_id="${RACER_RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
 random_seed="${RACER_RANDOM_SEED:-42}"
+assignment_mode="${RACER_EXPLORATION_ASSIGNMENT_MODE:-original}"
+trigger_minimum_cloud_frames="${RACER_TRIGGER_MINIMUM_CLOUD_FRAMES:-0}"
+task_metric_observer_mode="${RACER_TASK_METRIC_OBSERVER_MODE:-inline}"
 suite="${RACER_SUITE_DIR:-${workspace}/experiments/warehouse_full_10uav_five_sites_pairwise_robust_ideal_takeoff_fixed_300s_${run_id}}"
 scene_usd="${workspace}/../warehouse_scenes/isaac/warehouse_full_with_industrial_ap.usda"
 sionna_scene_xml="${workspace}/../warehouse_scenes/sionna/warehouse_full_with_industrial_ap_20260827_101239/warehouse.xml"
@@ -51,7 +54,8 @@ if [[ "$(ros2 pkg prefix racer_original_core)" != "${workspace}/install/racer_or
 fi
 
 python3 - "${suite}/experiment_manifest.json" "${selection}" \
-  "${actual_scene_sha256}" "${random_seed}" <<'PY'
+  "${actual_scene_sha256}" "${random_seed}" "${assignment_mode}" \
+  "${trigger_minimum_cloud_frames}" "${task_metric_observer_mode}" <<'PY'
 import itertools
 import json
 import math
@@ -62,8 +66,19 @@ output = Path(sys.argv[1])
 selection_path = Path(sys.argv[2])
 selection = json.loads(selection_path.read_text())
 starts = selection["start_positions"]
+assignment_mode = sys.argv[5]
 manifest = {
-    "algorithm": "pairwise_robust_racer",
+    "algorithm": (
+        "hybrid_communication_racer"
+        if assignment_mode == "global_cooperative"
+        else "pairwise_robust_racer"
+    ),
+    "exploration_assignment_mode": assignment_mode,
+    "hybrid_global_state_channel": (
+        "direct_perfect_global_information"
+        if assignment_mode == "global_cooperative"
+        else "disabled"
+    ),
     "scene": "warehouse_full_with_industrial_ap_user_modified_20260825",
     "scene_usd_sha256": sys.argv[3],
     "layout": selection["layout"],
@@ -88,6 +103,8 @@ manifest = {
         "communication_mode": "ideal",
         "network_topology": "distributed",
         "random_seed": int(sys.argv[4]),
+        "trigger_minimum_cloud_frames": int(sys.argv[6]),
+        "task_metric_observer_mode": sys.argv[7],
     },
 }
 output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
@@ -103,7 +120,7 @@ export RACER_PHYSICS_RATE_HZ=100
 export RACER_SENSOR_RATE_HZ=10
 export RACER_CAMERA_RAY_BUDGET=76800
 export RACER_SENSOR_WORKER_COUNT=8
-export RACER_TRIGGER_MINIMUM_CLOUD_FRAMES=0
+export RACER_TRIGGER_MINIMUM_CLOUD_FRAMES="${trigger_minimum_cloud_frames}"
 export RACER_SCENE_QUERY_RATE_HZ=20
 export RACER_FIDELITY_HEADLESS=1
 export RACER_FIDELITY_VISUALIZE=0
@@ -115,6 +132,7 @@ export RACER_START_POSITIONS="${start_positions}"
 export RACER_SCENE_USD="${scene_usd}"
 export RACER_SIONNA_SCENE_XML="${sionna_scene_xml}"
 export RACER_NETWORK_TOPOLOGY=distributed
+export RACER_EXPLORATION_ASSIGNMENT_MODE="${assignment_mode}"
 export RACER_COMMUNICATION_MODE=ideal
 export RACER_REQUIRE_SIONNA=false
 export RACER_NEAREST_NEIGHBOR_COUNT=0
@@ -125,6 +143,8 @@ export RACER_COMMUNICATION_RANGE_M=4.0
 export RACER_IDEAL_COALESCE_WINDOW_MS=20
 export RACER_MAX_RETRIES=0
 export RACER_BS_MAX_RETRIES=0
+export RACER_COVERAGE_UPDATE_RATE_HZ=10.0
+export RACER_TASK_METRIC_OBSERVER_MODE="${task_metric_observer_mode}"
 export RACER_WALL_TIME_MULTIPLIER="${RACER_WALL_TIME_MULTIPLIER:-300}"
 export RACER_WALL_TIME_GRACE_SECONDS="${RACER_WALL_TIME_GRACE_SECONDS:-600}"
 
@@ -142,8 +162,8 @@ run_case() {
   RACER_FIDELITY_DURATION="${duration}" \
   RACER_RECORD_TRAJECTORY_HISTORY=1 \
   RACER_RESULT_DIR="${case_dir}" \
-  RACER_LKH_DIR="/tmp/racer_pairwise_robust_takeoff_fixed_${run_id}_${name}_lkh" \
-  RACER_ALGORITHM_LABEL="pairwise_robust_10uav_takeoff_fixed_${name}_100hz_76800rays" \
+  RACER_LKH_DIR="/tmp/racer_${assignment_mode}_takeoff_fixed_${run_id}_${name}_lkh" \
+  RACER_ALGORITHM_LABEL="${assignment_mode}_10uav_takeoff_fixed_${name}_100hz_76800rays" \
     "${workspace}/run_warehouse_simple_sionna.sh" >"${case_dir}/runner.log" 2>&1 &
   active_child=$!
   printf '%s\n' "${active_child}" >"${case_dir}/runner.pid"

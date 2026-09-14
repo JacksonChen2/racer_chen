@@ -9,6 +9,7 @@
 #include <exploration_manager/GridTour.h>
 
 #include <plan_env/edt_environment.h>
+#include <plan_env/map_ros.h>
 #include <plan_env/sdf_map.h>
 #include <plan_env/multi_map_manager.h>
 #include <active_perception/perception_utils.h>
@@ -44,6 +45,7 @@ void FastExplorationFSM::init(ros::NodeHandle& nh) {
   nh.param("fsm/swarm_state_freshness", fp_->swarm_state_freshness_, 0.5);
   nh.param("fsm/work_steal_failure_threshold", fp_->work_steal_failure_threshold_, 5);
   nh.param("fsm/work_steal_idle_delay", fp_->work_steal_idle_delay_, 0.5);
+  nh.param("fsm/idle_map_wakeup_interval", fp_->idle_map_wakeup_interval_, 0.5);
   nh.param("fsm/initial_partition_enabled", initial_partition_enabled_, true);
   nh.param("fsm/initial_partition_interval", initial_partition_interval_s_, 0.5);
   nh.param("fsm/initial_partition_balance_weight", initial_partition_balance_weight_m_, 2.0);
@@ -285,6 +287,22 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent& e) {
     }
 
     case IDLE: {
+      // A viewpoint that was disconnected while the local map was small can
+      // become reachable after peer map chunks arrive.  Rebuild the frontier
+      // structure at a bounded rate and wake the normal RACER planner without
+      // fabricating free voxels or changing the assigned task.
+      const double now_s = ros::Time::now().toSec();
+      if (last_idle_map_wakeup_check_s_ < 0.0 ||
+          now_s - last_idle_map_wakeup_check_s_ >= fp_->idle_map_wakeup_interval_) {
+        last_idle_map_wakeup_check_s_ = now_s;
+        if (expl_manager_->updateFrontierStruct(fd_->odom_pos_) != 0) {
+          fd_->go_back_ = false;
+          consecutive_plan_failures_ = 0;
+          ROS_WARN("UAV %d wakes from IDLE after shared-map frontier expansion.", getId());
+          transitState(PLAN_TRAJ, "sharedMapWakeup");
+          break;
+        }
+      }
       double check_interval = (ros::Time::now() - fd_->last_check_frontier_time_).toSec();
       if (check_interval > 100.0) {
         // if (!expl_manager_->updateFrontierStruct(fd_->odom_pos_)) {
@@ -438,6 +456,11 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent& e) {
 
 int FastExplorationFSM::callExplorationPlanner() {
   ros::Time time_r = ros::Time::now() + ros::Duration(fp_->replan_time_);
+
+  // The ROS2 sensor boundary rate-limits background ESDF updates to 2 Hz.
+  // Preserve original planner semantics by synchronously refreshing a dirty
+  // transform immediately before either full planning or collision replanning.
+  MapROS::updateESDFForPlanning(expl_manager_->sdf_map_.get());
 
   int res;
   if (fd_->avoid_collision_ || fd_->go_back_) {  // Only replan trajectory

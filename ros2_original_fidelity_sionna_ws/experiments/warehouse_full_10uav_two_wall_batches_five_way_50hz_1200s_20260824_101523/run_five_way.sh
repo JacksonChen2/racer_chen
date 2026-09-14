@@ -4,6 +4,9 @@ set -euo pipefail
 workspace="/home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/ros2_original_fidelity_sionna_ws"
 suite="${RACER_SUITE_DIR:-${workspace}/experiments/warehouse_full_10uav_two_wall_batches_five_way_50hz_1200s_20260824_101523}"
 layout_tag="${RACER_LAYOUT_TAG:-two_wall}"
+formal_duration="${RACER_FORMAL_DURATION:-1200}"
+start_case_index="${RACER_START_CASE_INDEX:-1}"
+skip_preflight="${RACER_SKIP_PREFLIGHT:-false}"
 active_child=""
 
 printf '%s\n' "$$" >"${suite}/supervisor.pid"
@@ -123,7 +126,7 @@ validate_case() {
   local expected_lossless="$4"
   local policy="$5"
   python3 - "${case_dir}" "${expected_mode}" "${expected_topology}" \
-    "${expected_lossless}" "${policy}" <<'PY'
+    "${expected_lossless}" "${policy}" "${formal_duration}" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -132,6 +135,7 @@ case_dir = Path(sys.argv[1])
 expected_mode, expected_topology = sys.argv[2:4]
 expected_lossless = int(sys.argv[4])
 policy = sys.argv[5]
+expected_duration = float(sys.argv[6])
 result_files = list(case_dir.glob("*_result.json"))
 if len(result_files) != 1:
     raise SystemExit(f"INTEGRITY_ERROR expected one result JSON, found {len(result_files)}")
@@ -140,8 +144,8 @@ metrics = result.get("metrics", {})
 communication = result.get("communication", {})
 stats = communication.get("statistics", {})
 errors = []
-if float(metrics.get("elapsed", 0.0)) < 1199.0:
-    errors.append("simulation did not reach 1200 s")
+if float(metrics.get("elapsed", 0.0)) < expected_duration - 1.0:
+    errors.append(f"simulation did not reach {expected_duration:g} s")
 if result.get("algorithm_evidence", {}).get("process_crashes", 0) != 0:
     errors.append("a ROS process crashed")
 if communication.get("mode") != expected_mode:
@@ -208,7 +212,7 @@ run_case() {
   printf 'START case=%s time=%s\n' "${case_name}" "$(date --iso-8601=seconds)"
   set +e
   ROS_DOMAIN_ID="${domain_id}" \
-  RACER_FIDELITY_DURATION=1200 \
+  RACER_FIDELITY_DURATION="${formal_duration}" \
   RACER_STOP_ON_COMPLETION=1 \
   RACER_RECORD_TRAJECTORY_HISTORY=1 \
   RACER_COMMUNICATION_MODE="${mode}" \
@@ -245,18 +249,30 @@ run_case() {
 }
 
 printf '%s\n' "starting" >"${suite}/queue_state.txt"
-run_preflight
+if [[ "${skip_preflight}" != "true" ]]; then
+  run_preflight
+fi
 printf '%s\n' "running_formal_suite" >"${suite}/queue_state.txt"
-sleep 5
-run_case ideal_no_loss_original_broadcast ideal false distributed 0 4.0 ideal 51
-sleep 5
-run_case sionna_distributed_original_comm_no_retries sionna true distributed 0 4.0 sionna 52
-sleep 5
-run_case sionna_with_nearest_2_lossless sionna true distributed 2 4.0 mixed 53
-sleep 5
-run_case sionna_with_nearest_4_lossless sionna true distributed 4 4.0 mixed 54
-sleep 5
-run_case no_uav_communication ideal false distance_radius 0 1e-12 blackout 55
+if (( start_case_index <= 1 )); then
+  sleep 5
+  run_case ideal_no_loss_original_broadcast ideal false distributed 0 4.0 ideal 51
+fi
+if (( start_case_index <= 2 )); then
+  sleep 5
+  run_case sionna_distributed_original_comm_no_retries sionna true distributed 0 4.0 sionna 52
+fi
+if (( start_case_index <= 3 )); then
+  sleep 5
+  run_case sionna_with_nearest_2_lossless sionna true distributed 2 4.0 mixed 53
+fi
+if (( start_case_index <= 4 )); then
+  sleep 5
+  run_case sionna_with_nearest_4_lossless sionna true distributed 4 4.0 mixed 54
+fi
+if (( start_case_index <= 5 )); then
+  sleep 5
+  run_case no_uav_communication ideal false distance_radius 0 1e-12 blackout 55
+fi
 
 printf '%s\n' "complete" >"${suite}/active_case.txt"
 printf '%s\n' "complete" >"${suite}/queue_state.txt"

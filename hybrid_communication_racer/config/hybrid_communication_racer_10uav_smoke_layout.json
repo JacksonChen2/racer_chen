@@ -1,0 +1,25 @@
+{
+  "layout": "five_requested_sites_two_collision_checked_uavs_each",
+  "source_layout": "warehouse_full_10uav_five_sites_layout.json",
+  "validation_source": "../experiments/layout_update_10uav_five_sites_20260831/physx_selected_layout.json",
+  "selection_rule": "0.55 m clear start box; 0.40 m clear vertical takeoff corridor through z=2.75 m; at least three clear cardinal exits; 1.50-2.50 m within-site spacing; site 3 constrained to one vertical aisle",
+  "requested_site_centers_xy_m": [
+    [-20.0, 26.0],
+    [-18.0, 5.0],
+    [-11.0, 15.0],
+    [0.0, 27.0],
+    [-3.0, 5.0]
+  ],
+  "start_positions": [
+    [-20.75, 26.0, 0.75],
+    [-19.25, 26.0, 0.75],
+    [-18.75, 5.0, 0.75],
+    [-17.25, 5.0, 0.75],
+    [-11.75, 14.25, 0.75],
+    [-11.75, 15.75, 0.75],
+    [-0.75, 27.0, 0.75],
+    [0.75, 27.0, 0.75],
+    [-3.75, 5.0, 0.75],
+    [-2.25, 5.0, 0.75]
+  ]
+}

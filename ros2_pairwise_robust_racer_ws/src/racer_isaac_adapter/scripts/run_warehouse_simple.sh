@@ -41,6 +41,8 @@ coverage_target="${RACER_MAPPING_COVERAGE_TARGET:-0}"
 # diagnostic budget can leave unknown voxel curtains that the unchanged
 # non-optimistic A* correctly refuses to cross.
 ray_budget="${RACER_CAMERA_RAY_BUDGET:-76800}"
+depth_sensor_backend="${RACER_DEPTH_SENSOR_BACKEND:-warp}"
+sensor_profiling="${RACER_SENSOR_PROFILING:-1}"
 physics_hz="${RACER_PHYSICS_RATE_HZ:-1000}"
 sensor_hz="${RACER_SENSOR_RATE_HZ:-30}"
 depth_width="${RACER_DEPTH_WIDTH:-640}"
@@ -57,6 +59,14 @@ result_file="${result_dir}/warehouse_simple_result.json"
 
 scene_usd="${RACER_SCENE_USD:-${repo_root}/ros2_3d_py_ws/warehouse_simple.usd}"
 vehicle_usd="${RACER_VEHICLE_USD:-${repo_root}/isaac_assets/racer_so3_quadrotor/usd/crazyflie_with_racer_dynamics.usd}"
+if [[ "${depth_sensor_backend}" != "warp" && "${depth_sensor_backend}" != "rtx" ]]; then
+  printf 'RACER_DEPTH_SENSOR_BACKEND must be warp or rtx.\n' >&2
+  exit 2
+fi
+if [[ "${sensor_profiling}" != "0" && "${sensor_profiling}" != "1" ]]; then
+  printf 'RACER_SENSOR_PROFILING must be 0 or 1.\n' >&2
+  exit 2
+fi
 if [[ ! -x "${isaac_root}/python.sh" || ! -f "${scene_usd}" || ! -f "${vehicle_usd}" ]]; then
   printf 'Missing Isaac Python, scene USD, or vehicle USD.\n' >&2
   exit 2
@@ -114,6 +124,7 @@ isaac_args=(
   --duration "${duration}"
   --drone-count "${drone_count}"
   --camera-ray-budget "${ray_budget}"
+  --depth-sensor-backend "${depth_sensor_backend}"
   --physics-rate-hz "${physics_hz}"
   --sensor-rate-hz "${sensor_hz}"
   --depth-width "${depth_width}"
@@ -121,6 +132,11 @@ isaac_args=(
   --diagnostics
   --mapping-coverage-target "${coverage_target}"
 )
+if [[ "${sensor_profiling}" == "0" ]]; then
+  isaac_args+=(--no-sensor-profiling)
+else
+  isaac_args+=(--sensor-profiling)
+fi
 if [[ "${headless}" == "1" && "${visualize}" != "1" ]]; then
   isaac_args+=(--headless --no-animate-propellers)
 else

@@ -1,0 +1,133 @@
+schema_version: 1
+baseline: ../original_racer_ros1_ws/src/RACER/swarm_exploration
+policy: >-
+  Algorithm sources must remain byte-identical to the baseline except for the
+  explicitly recorded ROS2 API conversions and defined-behavior repairs below.
+  A repair may only cover an input for which the ROS1 source has undefined
+  behavior; normal-input source and output remain unchanged. All other work
+  belongs to build or boundary adapters.
+
+upstream_source_edits:
+  - category: time
+    file: exploration_manager/src/fast_exploration_fsm.cpp
+    change: Convert ROS2 builtin_interfaces/Time through the ros::Time compatibility constructor.
+    algorithm_effect: none
+    verified_by: racer_source_fidelity
+  - category: control_interface
+    file: exploration_manager/include/exploration_manager/fast_exploration_fsm.h, exploration_manager/src/fast_exploration_fsm.cpp
+    change: Accept a per-agent tracking-loss event from the Isaac control adapter, cancel the unexecuted trajectory, and reuse the original collision-replan branch from measured odometry while retaining next_pos and next_yaw.
+    algorithm_effect: none on HGrid, frontier/viewpoint selection, LKH allocation, collaboration, Kinodynamic A-star, NLopt B-spline, yaw, or the selected goal; this is an execution-state reset required because the physical Isaac safety layer can stop an ideal-tracking command
+    verified_by: racer_source_fidelity, racer_safety_layer_isolation
+  - category: communication
+    file: plan_env/src/multi_map_manager.cpp
+    change: Use the ROS2-generated ChunkData field voxel_occ instead of the ROS1 spelling voxel_occ_.
+    algorithm_effect: none
+    verified_by: racer_source_fidelity
+  - category: defined_behavior
+    file: plan_env/include/plan_env/sdf_map.h
+    change: Initialize use_swarm_tf_ to false before applying the already-identity map transform.
+    algorithm_effect: none; removes an uninitialized bool read and leaves all initialized transform results unchanged
+    verified_by: racer_source_fidelity
+  - category: defined_behavior
+    file: plan_manage/src/planner_manager.cpp
+    change: Represent a one-point hover/yaw tour as three coincident points with two positive-duration segments before calling the original polynomial and NLopt B-spline pipeline.
+    algorithm_effect: none for every nondegenerate input; preserves the selected position and yaw when the ROS1 code would construct a zero-segment problem and segfault
+    verified_by: racer_source_fidelity, racer_degenerate_hover_regression, Isaac GDB reproduction
+
+boundary_adapters:
+  - category: build
+    location: src/racer_original_core/CMakeLists.txt
+    change: Compile the original source files and bundled LKH-3 against ROS2 Humble and workspace-local NLopt 2.7.1.
+  - category: communication
+    location: src/racer_fidelity_msgs
+    change: ROS2 IDL equivalents of the original typed messages and SolveTSP/SolveMTSP services.
+  - category: communication
+    location: src/racer_original_core/include/ros
+    change: ROS1 API compatibility over rclcpp, including a single serialized algorithm callback queue, blocking-service semantics on a dedicated transport node, and ROS1-equivalent per-callsite throttled logging.
+  - category: sensor
+    location: src/racer_original_core/port/map_ros_port.cpp
+    change: Feed Isaac world-frame camera point clouds and odometry into the original SDFMap inputPointCloud/inflation/ESDF path.
+  - category: sensor
+    location: src/racer_original_core/include/plan_env/map_ros.h, src/racer_original_core/port/map_ros_port.cpp, src/racer_original_core/upstream/plan_env/include/plan_env/sdf_map.h, src/racer_original_core/upstream/exploration_manager/src/fast_exploration_fsm.cpp, src/racer_isaac_adapter/config/original_warehouse_simple.yaml
+    change: Cache measured Isaac odometry during exploration without changing occupancy. Only when the unchanged original FSM has set go_back and is about to invoke its unchanged planTrajToView path, mark the local 0.30 m-radius centre corridor as free and synchronously run the original inflation/ESDF update. Incremental return motion extends the same local corridor after ordinary depth fusion.
+    algorithm_effect: none during exploration; HGrid, frontier/viewpoint selection, LKH allocation and collaboration see exactly the ordinary depth-fused map. During return, the unchanged non-optimistic A-star still decides feasibility from SDFMap; no path, goal, obstacle, scene geometry, CBF constraint, or privileged safety-lidar return is injected.
+    isolation: A voxel can be cleared only inside an envelope physically traversed by the collision-monitored 0.332 m vehicle; the 0.30 m map radius is strictly smaller than that measured collision-free envelope. Return-corridor voxels stay local and are never inserted into swarm map chunks, so agents still exploring cannot acquire artificial frontiers from another agent's trail.
+    verified_by: racer_source_fidelity, racer_safety_layer_isolation, Warehouse Simple physical-return acceptance
+  - category: communication
+    location: src/racer_original_core/include/ros/ros.h, src/racer_original_core/port/map_ros_port.cpp, src/racer_isaac_adapter/src/exploration_trigger.cpp, src/racer_isaac_adapter/isaac_sim/original_racer_isaac.py
+    change: Carry only the high-bandwidth PointCloud2 sensor stream as BEST_EFFORT KEEP_LAST(5), matching ROS1 finite sensor-queue behavior by dropping obsolete frames under consumer overload instead of blocking the Isaac physics producer. All odometry, planning, LKH, collaboration and control topics remain RELIABLE.
+    algorithm_effect: none; every delivered cloud is processed by the unchanged inputPointCloud path and no synthetic data is added
+    verified_by: racer_callback_serialization, racer_safety_layer_isolation, Isaac physics-clock progress telemetry
+  - category: communication
+    location: src/racer_original_core/port/lkh_server_port.cpp
+    change: Expose the original bundled solver as ROS2 services; retain request routing to amtsp/amtsp2, and the ROS1 standalone LKH process boundary for amtsp3 ACVRP.
+  - category: control
+    location: src/racer_isaac_adapter/src/position_command_adapter.cpp
+    change: Convert the original PositionCommand samples to the Isaac velocity/yaw plant interface. Declare tracking lost only when error exceeds 1.2 m for 1.0 s while the original trajectory speed is below 0.25 m/s, or when error exceeds 3.0 m regardless of speed; then brake and publish one per-agent event so the current selected goal is replanned from physical odometry. The detector re-arms only after error falls below 0.6 m. This distinguishes v5's 8.5 m planner/entity separation at a degenerate near-hover command from bounded lag while a valid trajectory is still moving.
+    isolation: The adapter neither consumes nor modifies frontiers, HGrid, LKH tasks, map data, viewpoints, goals, or algorithm trajectories.
+  - category: sensor
+    location: src/racer_isaac_adapter/isaac_sim/original_racer_isaac.py
+    change: Publish forward depth-camera returns to the planner in world coordinates; the normal 76,800-ray budget retains every sample of the original 640x480 skip-pixel=2 depth grid, while explicit lower budgets remain diagnostic-only.
+  - category: control
+    location: src/racer_isaac_adapter/isaac_sim/safety_cpp_bridge.py
+    change: Apply CBF, lidar/PhysX-sweep obstacle and geofence barriers, collision monitoring, and emergency separation only after planning output. Conflicting narrow-gap constraints are projected far-to-near so the closest surface retains final authority. Preserve PhysX SweepHit.distance as free travel of the already inflated vehicle envelope and enforce it directly with a 0.06 m contact-offset/controller-lag reserve; v11 showed that converting only SweepHit.position into a point constraint could cross a thin rack frame.
+    isolation: Safety lidar points are never published to the original SDFMap.
+  - category: control
+    location: src/racer_isaac_adapter/isaac_sim/original_racer_isaac.py
+    change: Use the 0.332 m complete rendered-rotor envelope for the execution-only PhysX sweep and point-return hard clearance rather than the 0.284 m primitive-only approximation. The separate direct sweep constraint adds only a 0.06 m free-travel reserve plus measured-speed braking allowance, replacing the earlier 0.236 m duplicate point clearance that made a physical narrow gap infeasible.
+    isolation: This radius is used only below the planner and is never applied to SDFMap, frontiers, HGrid, LKH, trajectory optimization, yaw, or FSM decisions.
+  - category: control
+    location: src/racer_isaac_adapter/isaac_sim/original_racer_isaac.py
+    change: Remove the conflicting 0.85 m/s execution clamp and provide a bounded 2.0 m/s actuator limit for the position controller to recover SO3 attitude/motor lag above the unchanged planner feed-forward limit of 1.5 m/s; retain motor dynamics, the 1.4 m/s^2 plant acceleration bound, and speed-dependent safety braking.
+    algorithm_effect: none; the planner constraint and trajectory output remain 1.5 m/s and only closed-loop tracking correction can use the 0.5 m/s authority margin
+    verified_by: racer_safety_layer_isolation, Isaac tracking telemetry
+  - category: frame
+    location: src/racer_isaac_adapter/isaac_sim/original_racer_isaac.py
+    change: Keep odometry, point cloud, markers, and commands in one world/map frame.
+  - category: frame
+    location: src/racer_isaac_adapter/config/original_warehouse_simple.yaml
+    change: Calibrate the Warehouse planning box to inward-rounded collision-free vehicle-centre coordinates derived from the measured physical faces and the 0.332 m Isaac rotor envelope.
+    algorithm_effect: none; this changes only the Isaac Warehouse coordinate/footprint limits supplied to the unchanged original algorithms and prevents selection of physically unreachable point-model boundary poses
+  - category: communication
+    location: src/racer_isaac_adapter/launch/original_racer_warehouse.launch.py
+    change: Per-agent topic remaps plus shared original swarm/map protocol topics.
+  - category: sensor
+    location: src/racer_isaac_adapter/src/exploration_trigger.cpp
+    change: Publish the original start message only after every agent has odometry, 25 planner point-cloud frames, and a discovered trigger subscription.
+    algorithm_effect: none; this is a launch barrier before the unchanged FSM receives its first trigger
+  - category: communication
+    location: src/racer_isaac_adapter/isaac_sim/original_racer_isaac.py
+    change: Start experiment time only after each odometry and planner point-cloud publisher has discovered both the unchanged exploration node and the readiness trigger; fail after a bounded DDS discovery timeout.
+    algorithm_effect: none; this is an Isaac/ROS2 graph barrier before sensor publication and the original trigger
+  - category: communication
+    location: src/racer_isaac_adapter/scripts/monitor_completion.py
+    change: >-
+      Incrementally observe either original `finish exploration` records or
+      the equivalent original `state: FINISH` records and request simulator
+      shutdown only after every unchanged FSM has already reported completion.
+    algorithm_effect: none; the observer neither publishes planner input nor changes the original completion criterion
+  - category: validation
+    location: src/racer_isaac_adapter/scripts/run_warehouse_simple.sh
+    change: In addition to observing the unchanged original FINISH decision, require every final physical Isaac position to lie within the original 1 m return threshold of its own start position.
+    algorithm_effect: none; read-only acceptance check after FSM completion
+  - category: validation
+    location: src/racer_original_core/include/plan_env/map_ros.h, src/racer_original_core/port/map_ros_port.cpp, src/racer_isaac_adapter/isaac_sim/original_racer_isaac.py
+    change: Publish and observe the fraction of non-UNKNOWN voxels inside each original SDFMap planning box, allowing a test to stop at a requested coverage threshold.
+    algorithm_effect: none; the diagnostic only reads occupancy_buffer, publishes on a private output topic, and never writes map state or supplies planner input
+  - category: visualization
+    location: src/racer_isaac_adapter/isaac_sim/original_racer_isaac.py
+    change: Draw original Marker outputs in Isaac with wall-time viewport pacing and bounded point history.
+
+tests:
+  - racer_source_fidelity
+  - racer_bspline_same_input
+  - racer_lkh_same_input
+  - racer_safety_layer_isolation
+  - racer_wire_schema_fidelity
+  - racer_callback_serialization
+  - racer_degenerate_hover_regression
+  - racer_trigger_readiness
+  - racer_isaac_graph_readiness
+  - racer_completion_monitor
+  - warehouse_simple_single_agent_smoke
+  - warehouse_simple_five_agent_acceptance

@@ -9,6 +9,8 @@
 #include <std_msgs/msg/string.hpp>
 
 #include <Eigen/Eigen>
+#include <chrono>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -25,6 +27,9 @@ class MapROS {
   void setMap(SDFMap *map);
   void init();
   void prepareReturnCorridor();
+  // Port-only scheduling hook. The RACER planner calls this at the planning
+  // boundary so a dirty ESDF is never consumed by a new planning attempt.
+  static bool updateESDFForPlanning(SDFMap *map);
 
  private:
   void cloudCallback(const sensor_msgs::PointCloud2ConstPtr &message);
@@ -38,6 +43,11 @@ class MapROS {
       Eigen::Vector3d &update_max);
   void finishCorridorUpdate(const Eigen::Vector3d &update_min,
       const Eigen::Vector3d &update_max, bool synchronous);
+  void updateInflatedOccupancy();
+  void markESDFDirty();
+  bool updateESDF(bool planner_forced);
+  void reportESDFProfile(double current_ms, bool planner_forced,
+      double dirty_age_ms);
 
   SDFMap *map_{nullptr};
   ros::NodeHandle node_;
@@ -48,10 +58,21 @@ class MapROS {
   bool have_odom_{false};
   bool return_corridor_enabled_{false};
   bool local_updated_{false};
-  bool esdf_need_update_{false};
+  bool esdf_dirty_{false};
+  bool have_esdf_update_wall_{false};
   std::string frame_id_{"map"};
   double traversed_clearance_radius_{0.0};
   double coverage_diagnostic_period_{2.0};
+  double esdf_max_update_rate_hz_{2.0};
+  double esdf_profile_period_s_{2.0};
+  std::chrono::steady_clock::time_point esdf_dirty_since_{};
+  std::chrono::steady_clock::time_point last_esdf_update_wall_{};
+  std::chrono::steady_clock::time_point last_esdf_profile_wall_{};
+  std::uint64_t esdf_updates_{0};
+  std::uint64_t esdf_timer_updates_{0};
+  std::uint64_t esdf_planner_updates_{0};
+  double esdf_total_ms_{0.0};
+  double esdf_max_ms_{0.0};
   pcl::PointCloud<pcl::PointXYZ> point_cloud_;
   std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>
       traversed_positions_;

@@ -49,6 +49,7 @@ struct FSMParam {
   double swarm_state_freshness_;
   int work_steal_failure_threshold_;
   double work_steal_idle_delay_;
+  double idle_map_wakeup_interval_;
 };
 
 struct DroneState {

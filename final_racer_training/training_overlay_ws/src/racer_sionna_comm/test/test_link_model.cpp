@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <stdexcept>
+
 TEST(LinkModel, StrongerSnrImprovesRateAndReliability) {
   racer_sionna_comm::LinkModel model(
       {100.0e6, 120.0e3, 66, 0.82, 0.10, 1.35, 1200});
@@ -17,6 +19,27 @@ TEST(LinkModel, LargerMessagesHaveMoreErrorsAndSerializationDelay) {
             model.packetErrorRate(8.0, 600));
   EXPECT_GT(model.serializationDelay(8.0, 4800),
             model.serializationDelay(8.0, 600));
+}
+
+TEST(LinkModel, ReliablePacketCapacityUsesAdaptiveMcsAndRetryCost) {
+  racer_sionna_comm::LinkModel model(
+      {100.0e6, 120.0e3, 66, 0.82, 0.10, 1.35, 1200});
+
+  // Within QPSK, a weak channel admits fewer reliable packets because the
+  // expected retransmission airtime is higher.
+  EXPECT_GT(model.reliablePacketCapacity(4.0, 1068, 3, 0.008),
+            model.reliablePacketCapacity(-5.0, 1068, 3, 0.008));
+
+  // A larger packet spans several PHY slots at QPSK, so adaptive 64QAM can
+  // carry more packets in the same airtime.
+  EXPECT_GT(model.reliablePacketCapacity(18.0, 10000, 3, 0.008),
+            model.reliablePacketCapacity(4.0, 10000, 3, 0.008));
+  EXPECT_GT(model.expectedReliablePacketAirtime(-5.0, 1068, 3),
+            model.expectedReliablePacketAirtime(4.0, 1068, 3));
+  EXPECT_THROW(model.reliablePacketCapacity(4.0, 1068, -1, 0.008),
+               std::invalid_argument);
+  EXPECT_THROW(model.reliablePacketCapacity(4.0, 1068, 3, -0.001),
+               std::invalid_argument);
 }
 
 TEST(LinkModel, ReportsOriginalMtuPacketizationForStatistics) {

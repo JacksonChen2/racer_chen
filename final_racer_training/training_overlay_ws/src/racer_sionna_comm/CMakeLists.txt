@@ -52,6 +52,10 @@ if(BUILD_TESTING)
   target_link_libraries(racer_sionna_ofdma_scheduler_test
     racer_sionna_link_model)
   target_include_directories(racer_sionna_ofdma_scheduler_test PRIVATE include)
+  ament_add_gtest(racer_sionna_event_driven_one_shot_test
+    test/test_event_driven_one_shot.cpp)
+  target_include_directories(racer_sionna_event_driven_one_shot_test
+    PRIVATE include)
   ament_add_pytest_test(racer_sionna_ideal_proxy_test
     test/test_ideal_proxy.py TIMEOUT 70)
   ament_add_pytest_test(racer_sionna_active_links_test

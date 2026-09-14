@@ -25,10 +25,17 @@ class RuntimeHealth:
             pid = int(status[1]["pid"])
             if not process_alive(pid):
                 return f"communication_proxy_dead_pid_{pid}"
+        action_version = blocks["action"].version
+        previous_action = self.progress.get("action", (0, self.started))[0]
+        actor_just_started = previous_action == 0 and action_version > 0
         for name in ("physical", "transition_ring", "action"):
             version = blocks[name].version
             previous, changed = self.progress.get(name, (0, self.started))
-            if version != previous:
+            if version != previous or (actor_just_started and name != "action"):
+                # Physical and transition seed records can be published long
+                # before model warmup completes.  Rebase their progress clocks
+                # when the first action arrives so startup latency is not
+                # mistaken for a post-action stall.
                 changed = now
             self.progress[name] = (version, changed)
             if version == 0:

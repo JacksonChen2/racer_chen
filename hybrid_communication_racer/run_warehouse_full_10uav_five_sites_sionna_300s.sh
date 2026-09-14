@@ -4,12 +4,15 @@ set -euo pipefail
 workspace="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 run_id="${RACER_RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
 random_seed="${RACER_RANDOM_SEED:-42}"
-suite="${RACER_SUITE_DIR:-${workspace}/experiments/warehouse_full_10uav_five_sites_pairwise_robust_sionna_100hz_76800rays_300s_uav20dbm_mcs14_${run_id}}"
-case_dir="${suite}/sionna_distributed_no_retries_uav20dbm_fixed_mcs14"
+bandwidth_hz="${RACER_BANDWIDTH_HZ:-100000000.0}"
+resource_blocks="${RACER_RESOURCE_BLOCKS:-66}"
+suite="${RACER_SUITE_DIR:-${workspace}/experiments/warehouse_full_10uav_five_sites_pairwise_robust_sionna_bw${bandwidth_hz}_rb${resource_blocks}_100hz_76800rays_300s_uav20dbm_mcs14_${run_id}}"
+case_dir="${suite}/sionna_distributed_no_bs_no_retries_uav20dbm_fixed_mcs14"
 selection="${workspace}/config/warehouse_full_10uav_five_sites_layout.json"
+reference_result="${workspace}/experiments/five_sites_same_aisle_10uav_300s_20260831/sionna_300s/sionna_distributed_no_retries_uav20dbm_fixed_mcs14/warehouse_full_distributed_result.json"
 scene_usd="${workspace}/../warehouse_scenes/isaac/warehouse_full_with_industrial_ap.usda"
 sionna_scene_xml="${workspace}/../warehouse_scenes/sionna/warehouse_full_with_industrial_ap_20260827_101239/warehouse.xml"
-sionna_runtime="${RACER_SIONNA_RUNTIME_DIR:-${workspace}/.sionna_runtime}"
+sionna_runtime="${RACER_SIONNA_RUNTIME_DIR:-${workspace}/../ros2_original_fidelity_sionna_ws/.sionna_runtime}"
 expected_scene_sha256="e23ed69250e6ff0391faf21e12715ac65bed0f28eab7afed80c9b5315d191c1e"
 expected_sionna_sha256="b8837c2124d49cd34cce025eebdbf6d22e8196ed609a3d28205f9d1b4c6ee168"
 active_child=""
@@ -46,9 +49,28 @@ if [[ ! -d "${sionna_runtime}/sionna" ]]; then
 fi
 
 starts="$(jq -r '.start_positions | flatten | map(tostring) | join(" ")' "${selection}")"
-if [[ "$(wc -w <<<"${starts}")" -ne 30 ]]; then
+if [[ "$(wc -w <<<"${starts}")" -ne 30 ]] ||
+   [[ ! "${resource_blocks}" =~ ^[1-9][0-9]*$ ]] ||
+   ! python3 -c 'import math,sys; bandwidth=float(sys.argv[1]); resource_blocks=int(sys.argv[2]); occupied=12.0*120000.0*resource_blocks; raise SystemExit(not (math.isfinite(bandwidth) and bandwidth > 0.0 and occupied <= bandwidth))' "${bandwidth_hz}" "${resource_blocks}"; then
   printf 'Expected exactly 10 XYZ start positions in %s\n' "${selection}" >&2
   printf '%s\n' "blocked:invalid_start_layout" >"${suite}/run_state.txt"
+  exit 2
+fi
+if [[ ! -f "${reference_result}" ]] ||
+   ! python3 - "${selection}" "${reference_result}" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+selection = json.loads(Path(sys.argv[1]).read_text())
+reference = json.loads(Path(sys.argv[2]).read_text())
+if selection["start_positions"] != reference["metrics"]["start_positions"]:
+    raise SystemExit("canonical starts differ from the 69.5291% reference")
+PY
+then
+  printf 'Start layout differs from reference result: %s\n' \
+    "${reference_result}" >&2
+  printf '%s\n' "blocked:start_layout_reference_mismatch" >"${suite}/run_state.txt"
   exit 2
 fi
 
@@ -67,7 +89,8 @@ fi
 
 python3 - "${suite}/experiment_manifest.json" "${selection}" "${scene_usd}" \
   "${actual_scene_sha256}" "${sionna_scene_xml}" "${actual_sionna_sha256}" \
-  "${random_seed}" <<'PY'
+  "${random_seed}" "${bandwidth_hz}" "${resource_blocks}" \
+  "${reference_result}" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -86,6 +109,7 @@ manifest = {
     "layout": selection["layout"],
     "selection_rule": selection["selection_rule"],
     "layout_selection_file": str(selection_path),
+    "reference_result": sys.argv[10],
     "regions": selection["regions"],
     "start_positions": selection["start_positions"],
     "drone_count": 10,
@@ -103,6 +127,14 @@ manifest = {
         "uav_tx_power_dbm": 20,
         "fixed_mcs_index": 14,
         "fixed_mcs_modulation": "16QAM",
+        "bandwidth_hz": float(sys.argv[8]),
+        "subcarrier_spacing_hz": 120000.0,
+        "resource_blocks": int(sys.argv[9]),
+        "occupied_bandwidth_hz": 12.0 * 120000.0 * int(sys.argv[9]),
+        "shared_uav_ofdma": True,
+        "uav_transport": "UDP",
+        "uav_udp_directed_unicast": True,
+        "bs_enabled": False,
         "max_retries": 0,
         "bs_max_retries": 0,
     },
@@ -125,7 +157,11 @@ export RACER_SENSOR_RATE_HZ=10
 export RACER_CAMERA_RAY_BUDGET=76800
 export RACER_SENSOR_WORKER_COUNT=8
 export RACER_TRIGGER_MINIMUM_CLOUD_FRAMES=0
+export RACER_TRIGGER_DELAY_S=5.0
 export RACER_SCENE_QUERY_RATE_HZ=20
+export RACER_STARTUP_FREE_SPACE_YAW=0
+export RACER_STARTUP_SCAN_DURATION=0.0
+export RACER_STARTUP_UNKNOWN_CORRIDOR_DISTANCE=0.0
 export RACER_FIDELITY_HEADLESS=1
 export RACER_FIDELITY_VISUALIZE=0
 export RACER_REQUIRE_COMPLETION=0
@@ -136,6 +172,9 @@ export RACER_WALL_TIME_MULTIPLIER="${RACER_WALL_TIME_MULTIPLIER:-300}"
 export RACER_WALL_TIME_GRACE_SECONDS="${RACER_WALL_TIME_GRACE_SECONDS:-600}"
 export RACER_RANDOM_SEED="${random_seed}"
 export RACER_START_POSITIONS="${starts}"
+export RACER_COVERAGE_UPDATE_RATE_HZ=10.0
+export RACER_TASK_METRIC_OBSERVER_MODE=inline
+export RACER_EXPLORATION_ASSIGNMENT_MODE=original
 
 export RACER_SCENE_USD="${scene_usd}"
 export RACER_SIONNA_SCENE_XML="${sionna_scene_xml}"
@@ -143,22 +182,30 @@ export RACER_SIONNA_RADIO_MAP_CACHE="${suite}/no_radio_map_cache.npz"
 export RACER_NETWORK_TOPOLOGY=distributed
 export RACER_COMMUNICATION_MODE=sionna
 export RACER_REQUIRE_SIONNA=true
+export RACER_RL_BS_SCHEDULER_ENABLED=false
+export RACER_RL_SYNC_ENABLED=false
 export RACER_NEAREST_NEIGHBOR_COUNT=0
 export RACER_LOSSLESS_NEAREST_NEIGHBOR_COUNT=0
 export RACER_LOSSLESS_COMMUNICATION_RANGE_M=0.0
 export RACER_LOSSLESS_CONTROL_ONLY=false
+export RACER_DIRECTED_MESSAGE_UNICAST=false
+export RACER_CHUNK_DATA_PRE_ENQUEUE_DEDUP=false
+export RACER_CHUNK_DATA_MAX_PENDING_PER_LINK=0
 export RACER_COMMUNICATION_RANGE_M=4.0
 export RACER_UAV_TX_POWER_DBM=20
+export RACER_BANDWIDTH_HZ="${bandwidth_hz}"
+export RACER_RESOURCE_BLOCKS="${resource_blocks}"
 export RACER_MAX_RETRIES=0
 export RACER_BS_MAX_RETRIES=0
 export RACER_FIXED_MCS_INDEX=14
 export RACER_RESULT_DIR="${case_dir}"
-export RACER_LKH_DIR="/tmp/racer_pairwise_robust_10uav_sionna_300s_20dbm_mcs14_${run_id}_lkh"
-export RACER_ALGORITHM_LABEL="pairwise_robust_racer_10uav_sionna_100hz_76800rays_300s_uav20dbm_mcs14"
+export RACER_LKH_DIR="/tmp/racer_hybrid_pairwise_robust_10uav_sionna_bw${bandwidth_hz}_rb${resource_blocks}_300s_20dbm_mcs14_${run_id}_lkh"
+export RACER_ALGORITHM_LABEL="hybrid_pairwise_robust_racer_10uav_no_bs_sionna_bw${bandwidth_hz}_rb${resource_blocks}_100hz_76800rays_300s_uav20dbm_mcs14"
 
 printf '%s\n' "running" >"${suite}/run_state.txt"
-printf 'START time=%s mode=sionna drones=10 duration=300 physics_hz=100 rays=76800 uav_dbm=20 mcs=14 retries=0 domain=%s seed=%s\n' \
-  "$(date --iso-8601=seconds)" "${ROS_DOMAIN_ID}" "${random_seed}"
+printf 'START time=%s workspace=hybrid mode=sionna topology=distributed bs=off drones=10 duration=300 bandwidth_hz=%s resource_blocks=%s physics_hz=100 rays=76800 uav_dbm=20 mcs=14 retries=0 domain=%s seed=%s\n' \
+  "$(date --iso-8601=seconds)" "${bandwidth_hz}" "${resource_blocks}" \
+  "${ROS_DOMAIN_ID}" "${random_seed}"
 set +e
 "${workspace}/run_warehouse_simple_sionna.sh" >"${case_dir}/runner.log" 2>&1 &
 active_child=$!
@@ -170,13 +217,17 @@ set -e
 printf '%s\n' "${runner_status}" >"${case_dir}/runner_exit_status.txt"
 
 set +e
-python3 - "${case_dir}" "${random_seed}" <<'PY' >"${case_dir}/case_validation.log" 2>&1
+python3 - "${case_dir}" "${random_seed}" "${bandwidth_hz}" \
+  "${resource_blocks}" "${selection}" <<'PY' >"${case_dir}/case_validation.log" 2>&1
 import json
 from pathlib import Path
 import sys
 
 case_dir = Path(sys.argv[1])
 expected_seed = int(sys.argv[2])
+expected_bandwidth_hz = float(sys.argv[3])
+expected_resource_blocks = int(sys.argv[4])
+selection = json.loads(Path(sys.argv[5]).read_text())
 files = list(case_dir.glob("*_result.json"))
 if len(files) != 1:
     raise SystemExit(f"INTEGRITY_ERROR expected one result JSON, found {len(files)}")
@@ -204,8 +255,22 @@ if int(communication.get("exact_link_samples", 0)) <= 0:
     errors.append("Sionna produced no exact link samples")
 if int(phy.get("fixed_mcs_index", -1)) != 14 or float(phy.get("uav_tx_power_dbm", -1)) != 20.0:
     errors.append("PHY is not fixed MCS14 at 20 dBm")
+if float(phy.get("bandwidth_hz", -1)) != expected_bandwidth_hz:
+    errors.append(f"PHY bandwidth is not {expected_bandwidth_hz}")
+if int(phy.get("resource_blocks", -1)) != expected_resource_blocks:
+    errors.append(f"PHY resource blocks are not {expected_resource_blocks}")
 if int(phy.get("max_retries", -1)) != 0 or int(phy.get("bs_max_retries", -1)) != 0:
     errors.append("retransmission is enabled")
+if stats.get("network_topology") != "distributed" or stats.get("ap_enabled") is not False:
+    errors.append("experiment is not distributed/no-BS")
+if stats.get("shared_uav_ofdma_enabled") is not True:
+    errors.append("shared UAV OFDMA is not active")
+if stats.get("uav_transport") != "UDP" or stats.get("uav_udp_directed_unicast") is not True:
+    errors.append("UDP directed unicast is not active")
+if metrics.get("start_positions") != selection["start_positions"]:
+    errors.append("actual starts differ from the 69.5291% reference layout")
+if metrics.get("startup_recovery", {}).get("enabled") is not False:
+    errors.append("startup recovery differs from the reference run")
 if sorted(result.get("executed_drone_ids", [])) != list(range(1, 11)):
     errors.append("not all ten UAV algorithms executed")
 if int(evidence.get("process_crashes", 0)) != 0:

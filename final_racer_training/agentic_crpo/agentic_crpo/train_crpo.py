@@ -15,7 +15,8 @@ from torch import nn
 from .config import load_config, save_resolved_config
 from .constraint import print_calibration, resolve_constraint
 from .crpo_policy import DUAL_ENCODER_ARCHITECTURE
-from .crpo_ppo import CRPOPPO
+from .crpo_ppo import CONSTRAINT_COST_VERSION, CRPOPPO
+from .episode_tracker import EpisodeCostTracker
 from .factory import make_env
 
 
@@ -75,6 +76,50 @@ def _prepare_resume_for_new_episode(model: CRPOPPO) -> None:
     model._last_obs = None
     model._last_original_obs = None
     model._last_episode_starts = None
+    tracker = getattr(model, "episode_cost_tracker", None)
+    if tracker is not None:
+        tracker.reset_active()
+
+
+def _migrate_constraint_state_for_resume(
+    model: CRPOPPO,
+    *,
+    expected_estimator: str,
+    episode_cost_window: int,
+    telescoping_tolerance: float,
+) -> dict[str, object] | None:
+    """Reset statistics when a checkpoint used an older cost definition."""
+
+    saved_cost_version = getattr(model, "constraint_cost_version", None)
+    requires_migration = (
+        model.constraint_estimator != expected_estimator
+        or saved_cost_version != CONSTRAINT_COST_VERSION
+    )
+    if not requires_migration:
+        return None
+    if expected_estimator != "time_weighted_mean":
+        raise ValueError(
+            "resume checkpoint constraint definition mismatch: "
+            f"checkpoint={model.constraint_estimator}, "
+            f"config={expected_estimator}"
+        )
+    migration = {
+        "checkpoint": model.constraint_estimator,
+        "configured": expected_estimator,
+        "checkpoint_cost_version": saved_cost_version,
+        "configured_cost_version": CONSTRAINT_COST_VERSION,
+        "historical_constraint_records_cleared": True,
+    }
+    model.constraint_estimator = expected_estimator
+    model.constraint_cost_version = CONSTRAINT_COST_VERSION
+    model.episode_cost_window = int(episode_cost_window)
+    model.telescoping_tolerance = float(telescoping_tolerance)
+    model.episode_cost_tracker = EpisodeCostTracker(
+        model.n_envs,
+        model.episode_cost_window,
+        model.telescoping_tolerance,
+    )
+    return migration
 
 
 def _mission_has_ended(env: object) -> bool:
@@ -291,11 +336,19 @@ def main() -> None:
                 f"checkpoint={saved_variant}, config={experiment_variant}"
             )
         expected_estimator = str(crpo["constraint_estimator"])
-        if model.constraint_estimator != expected_estimator:
-            raise ValueError(
-                "resume checkpoint constraint estimator mismatch: "
-                f"checkpoint={model.constraint_estimator}, "
-                f"config={expected_estimator}"
+        migration = _migrate_constraint_state_for_resume(
+            model,
+            expected_estimator=expected_estimator,
+            episode_cost_window=int(crpo["episode_cost_window"]),
+            telescoping_tolerance=float(
+                config["constraint"].get("telescoping_tolerance", 1.0e-6)
+            ),
+        )
+        if migration is not None:
+            print(
+                "RACER_CONSTRAINT_ESTIMATOR_MIGRATION "
+                + json.dumps(migration, separators=(",", ":")),
+                flush=True,
             )
         model.gamma_task = constraint.gamma_task
         model.eta = constraint.eta
@@ -370,6 +423,9 @@ def main() -> None:
         "cost_updates": model.cost_updates,
         "last_mode": model.crpo_mode,
         "last_J_C_hat": model.j_cost_hat,
+        "constraint_estimator": model.constraint_estimator,
+        "constraint_estimator_source": model.constraint_estimator_source,
+        "constraint_cost_version": model.constraint_cost_version,
         "constraint_calibration": constraint.as_dict(),
         "ppo_hyperparameters": ppo,
         "qwen_config": config["qwen"],

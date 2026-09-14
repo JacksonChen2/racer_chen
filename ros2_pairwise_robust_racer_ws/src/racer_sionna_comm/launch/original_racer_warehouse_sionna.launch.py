@@ -34,8 +34,11 @@ def _launch_nodes(context):
     trigger_minimum_cloud_frames = int(
         LaunchConfiguration("trigger_minimum_cloud_frames").perform(context)
     )
+    trigger_delay_s = float(LaunchConfiguration("trigger_delay_s").perform(context))
     if trigger_minimum_cloud_frames < 0:
         raise RuntimeError("trigger_minimum_cloud_frames must be non-negative")
+    if trigger_delay_s < 0.0:
+        raise RuntimeError("trigger_delay_s must be non-negative")
     scenario = LaunchConfiguration("scenario").perform(context)
     if scenario not in (
         "warehouse_simple", "warehouse_loaded", "warehouse_loaded_center",
@@ -155,6 +158,12 @@ def _launch_nodes(context):
     )
     uav_tx_power_dbm = float(
         LaunchConfiguration("uav_tx_power_dbm").perform(context)
+    )
+    bandwidth_hz = float(
+        LaunchConfiguration("bandwidth_hz").perform(context)
+    )
+    resource_blocks = int(
+        LaunchConfiguration("resource_blocks").perform(context)
     )
     bs_max_retries = int(
         LaunchConfiguration("bs_max_retries").perform(context)
@@ -300,7 +309,7 @@ def _launch_nodes(context):
             parameters=[
                 {
                     "use_sim_time": True,
-                    "delay": 5.0,
+                    "delay": trigger_delay_s,
                     "repeats": 10,
                     "drone_count": drone_count,
                     "minimum_cloud_frames": trigger_minimum_cloud_frames,
@@ -336,6 +345,8 @@ def _launch_nodes(context):
                     "ideal_coalesce_window_ms": ideal_coalesce_window_ms,
                     "ap_tx_power_dbm": ap_tx_power_dbm,
                     "tx_power_dbm": uav_tx_power_dbm,
+                    "bandwidth_hz": bandwidth_hz,
+                    "resource_blocks": resource_blocks,
                     "max_retries": max_retries,
                     "bs_max_retries": bs_max_retries,
                     "fixed_mcs_index": fixed_mcs_index,
@@ -360,6 +371,7 @@ def _launch_nodes(context):
                         "ap_position": ap_position,
                         "ap_tx_power_dbm": ap_tx_power_dbm,
                         "tx_power_dbm": uav_tx_power_dbm,
+                        "bandwidth_hz": bandwidth_hz,
                         "random_seed": random_seed,
                         "scene_xml": LaunchConfiguration("sionna_scene_xml").perform(context),
                         "radio_map_cache": LaunchConfiguration("radio_map_cache").perform(context),
@@ -378,6 +390,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "trigger_minimum_cloud_frames", default_value="25"
             ),
+            DeclareLaunchArgument("trigger_delay_s", default_value="5.0"),
             DeclareLaunchArgument("scenario", default_value="warehouse_simple"),
             DeclareLaunchArgument("communication_mode", default_value="sionna"),
             DeclareLaunchArgument("algorithm_variant", default_value="original"),
@@ -407,6 +420,8 @@ def generate_launch_description():
             DeclareLaunchArgument("ap_position_z", default_value=""),
             DeclareLaunchArgument("ap_tx_power_dbm", default_value="33.0"),
             DeclareLaunchArgument("uav_tx_power_dbm", default_value="23.0"),
+            DeclareLaunchArgument("bandwidth_hz", default_value="100000000.0"),
+            DeclareLaunchArgument("resource_blocks", default_value="66"),
             DeclareLaunchArgument("max_retries", default_value="3"),
             DeclareLaunchArgument("bs_max_retries", default_value="3"),
             DeclareLaunchArgument("fixed_mcs_index", default_value="-1"),

@@ -24,6 +24,7 @@ scene_usd="${final_root}/assets/warehouse_scenes/isaac/warehouse_full_with_indus
 sionna_scene_xml="${final_root}/assets/sionna_scene/warehouse.xml"
 sionna_runtime="${final_root}/ros2_ws/.sionna_runtime"
 python_env="/home/jiazheng/ai_envs/racer-crpo/bin/python"
+nvidia_runtime_helper="${training_root}/scripts/configure_nvidia_driver_runtime.sh"
 episodes="${RACER_QWEN8_EPISODES:-30}"
 episode_duration="${RACER_QWEN8_DURATION:-300}"
 train_learning_rate="${RACER_QWEN8_LEARNING_RATE:-0.0002}"
@@ -106,7 +107,8 @@ set -u
 
 if [[ ! -x "${python_env}" || ! -f "${config}" ||
       ! -f "${scene_usd}" || ! -x "${runner}" ||
-      ! -f "${communication_overlay}" || ! -f "${adapter_overlay}" ]]; then
+      ! -f "${communication_overlay}" || ! -f "${adapter_overlay}" ||
+      ! -f "${nvidia_runtime_helper}" ]]; then
   printf '%s\n' "blocked:missing_runtime_input" >"${campaign}/run_state.txt"
   exit 2
 fi
@@ -134,6 +136,11 @@ export FASTDDS_DEFAULT_PROFILES_FILE="${workspace}/config/fastdds_large_scale.xm
 export FASTRTPS_DEFAULT_PROFILES_FILE="${FASTDDS_DEFAULT_PROFILES_FILE}"
 export SIONNA_RUNTIME_DIR="${sionna_runtime}"
 export CUDA_VISIBLE_DEVICES=0
+source "${nvidia_runtime_helper}"
+if ! racer_configure_nvidia_driver_runtime "${python_env}"; then
+  printf '%s\n' "blocked:nvidia_driver_runtime" >"${campaign}/run_state.txt"
+  exit 2
+fi
 
 export RACER_FIDELITY_SCENARIO=warehouse_full
 export RACER_FIDELITY_DURATION="${episode_duration}"

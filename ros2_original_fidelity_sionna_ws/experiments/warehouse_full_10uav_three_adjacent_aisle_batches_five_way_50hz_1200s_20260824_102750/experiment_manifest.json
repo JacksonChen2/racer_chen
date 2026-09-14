@@ -2,7 +2,14 @@
   "suite": "warehouse_full_10uav_three_adjacent_aisle_batches_five_way",
   "scene": "warehouse_full_with_industrial_ap",
   "drone_count": 10,
-  "duration_s": 1200,
+  "duration_s": 900,
+  "duration_change": {
+    "requested_at": "2026-08-24T12:16:00+08:00",
+    "requested_limit_s": 900,
+    "first_case_actual_stop_s": 930,
+    "first_case_result_status": "manually interrupted after the request arrived; raw logs retained, no final result JSON",
+    "remaining_cases_native_duration_s": 900
+  },
   "physics_rate_hz": 50,
   "sensor_rate_hz": 10,
   "camera_ray_budget": 19200,

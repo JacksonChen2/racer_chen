@@ -12,6 +12,7 @@ from .backend import (
     RacerBackend,
     SharedMemoryBackend,
 )
+from .event_driven_backend import EventDrivenOneShotSharedMemoryBackend
 from .gym_env import RacerCRPOEnv
 from .qwen_global_agent import (
     GuidanceManager,
@@ -133,6 +134,49 @@ def make_backend(config: dict[str, Any], force_mock: bool = False) -> RacerBacke
             ),
             max_relay_recipients_per_uav=fanout_limit,
         )
+    if kind == "shared_memory_event_driven_one_shot":
+        normalization = config["environment"]["normalization"]
+        constraint = config.get("constraint", {})
+        fanout_limit = (
+            int(constraint["max_relay_recipients_per_uav"])
+            if constraint.get("type") == "relay_fanout"
+            and bool(constraint.get("hard_enforcement", True))
+            else None
+        )
+        root = str(
+            backend.get("shared_memory_root")
+            or os.environ.get("RACER_SHARED_MEMORY_ROOT", "")
+        )
+        if not root:
+            raise ValueError(
+                "event-driven shared_memory backend requires "
+                "shared_memory_root or RACER_SHARED_MEMORY_ROOT"
+            )
+        return EventDrivenOneShotSharedMemoryBackend(
+            n,
+            root,
+            perfect_reference_result=backend.get(
+                "perfect_reference_result"
+            ),
+            auxiliary_reference_result=backend.get(
+                "auxiliary_reference_result"
+            ),
+            workspace_min=tuple(normalization["position_min"]),
+            workspace_max=tuple(normalization["position_max"]),
+            redundancy_cell_m=float(
+                backend.get("redundancy_cell_m", 1.0)
+            ),
+            fixed_exploration_time_s=float(
+                backend.get("fixed_exploration_time_s", 300.0)
+            ),
+            require_auxiliary_reference_metrics=bool(
+                backend.get("require_auxiliary_reference_metrics", True)
+            ),
+            require_perfect_reference=bool(
+                backend.get("require_perfect_reference", True)
+            ),
+            max_relay_recipients_per_uav=fanout_limit,
+        )
     raise ValueError(f"unknown backend kind: {kind}")
 
 
@@ -157,7 +201,15 @@ def make_env(
     backend_kind = str(
         config["environment"]["backend"].get("kind", "mock")
     )
-    if qwen_enabled and backend_kind == "shared_memory" and not force_mock:
+    shared_memory_kinds = {
+        "shared_memory",
+        "shared_memory_event_driven_one_shot",
+    }
+    if (
+        qwen_enabled
+        and backend_kind in shared_memory_kinds
+        and not force_mock
+    ):
         root = str(
             config["environment"]["backend"].get("shared_memory_root")
             or os.environ.get("RACER_SHARED_MEMORY_ROOT", "")
@@ -186,7 +238,9 @@ def make_env(
                 )
             )
     if not (
-        qwen_enabled and backend_kind == "shared_memory" and not force_mock
+        qwen_enabled
+        and backend_kind in shared_memory_kinds
+        and not force_mock
     ):
         manager = GuidanceManager(
             agent,
@@ -198,6 +252,14 @@ def make_env(
     normalization = environment["normalization"]
     task = config["task_loss"]
     reward = config.get("reward", {})
+    resource_normalizer = environment.get(
+        "resource_normalizer", environment.get("bs_resource_normalizer")
+    )
+    if resource_normalizer is None:
+        raise ValueError(
+            "environment.resource_normalizer is required "
+            "(legacy bs_resource_normalizer is also accepted)"
+        )
     fanout = (
         RelayFanoutConstraint(n, fanout_limit)
         if fanout_limit is not None
@@ -223,13 +285,16 @@ def make_env(
             max_missing_bytes=float(normalization["max_missing_bytes"]),
             max_queue_bytes=float(normalization["max_queue_bytes"]),
         ),
-        bs_resource_normalizer=float(environment["bs_resource_normalizer"]),
+        bs_resource_normalizer=float(resource_normalizer),
         include_global_guidance=bool(
             environment.get("include_global_guidance", True)
         ),
         reward_mode=str(reward.get("type", "negative_bs_resource")),
         reward_scale=float(reward.get("scale", 1.0)),
         constraint_mode=constraint_mode,
+        constraint_episode_duration_s=float(
+            constraint_config.get("episode_duration_s", 300.0)
+        ),
         relay_fanout=fanout,
         enforce_relay_fanout=bool(
             constraint_config.get("hard_enforcement", True)

@@ -83,6 +83,7 @@
     fsm.initial_partition_enabled: true
     fsm.initial_partition_interval: 0.5
     fsm.initial_partition_balance_weight: 2.0
+    fsm.idle_map_wakeup_interval: 0.5
 
     partitioning.min_unknown: 4000
     partitioning.min_frontier: 100

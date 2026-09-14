@@ -15,6 +15,24 @@ source /opt/ros/humble/setup.bash
 source "${final_root}/ros2_ws/install/setup.bash"
 set -u
 
+# The training data path adds one opt-in hook to MultiMapManager: every sealed
+# local chunk is pushed into the Proxy's local payload repository.  Rebuild the
+# core before the communication overlay so a clean training build cannot keep
+# using a stale planner binary without this hook.
+base_workspace="${final_root}/ros2_ws"
+cd "${base_workspace}"
+colcon --log-base log build \
+  --base-paths src \
+  --build-base build \
+  --install-base install \
+  --packages-select racer_original_core \
+  --symlink-install \
+  --event-handlers console_direct+
+
+set +u
+source "${base_workspace}/install/setup.bash"
+set -u
+
 cd "${overlay}"
 colcon --log-base log build \
   --base-paths src \

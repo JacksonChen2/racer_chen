@@ -7,12 +7,13 @@ planning remain in the original RACER C++ sources.  The default
 plant is the generated 0.98 kg RACER SO3 plus-quadrotor; the legacy Crazyflie
 profile remains available for comparison.  The RACER profile follows the
 upstream ROS 1 simulator rather than the paper's real vehicle: a 1 kHz plant,
-200 Hz odometry/IMU, and a 640x480 30 Hz ideal pinhole depth camera.
+200 Hz odometry/IMU, and a 640x480 30 Hz ideal pinhole ray camera. The default
+camera backend is a GPU-batched NVIDIA Warp static-mesh ray caster; RTX depth
+remains available only as a comparison/fallback backend.
 """
 
 import argparse
 import asyncio
-from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 import faulthandler
 import json
@@ -20,6 +21,7 @@ import math
 import os
 from pathlib import Path
 import signal
+import sys
 import time
 from typing import Sequence, Tuple
 
@@ -48,6 +50,37 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--sensor-rate-hz", type=float, default=30.0)
     parser.add_argument("--depth-width", type=int, default=640)
     parser.add_argument("--depth-height", type=int, default=480)
+    parser.add_argument(
+        "--depth-sensor-backend",
+        choices=("warp", "rtx"),
+        default="warp",
+        help=(
+            "forward exploration sensor backend; warp uses one GPU-batched "
+            "static-mesh raycast and rtx retains the former rendered depth "
+            "camera as an explicit comparison/fallback"
+        ),
+    )
+    parser.add_argument(
+        "--sensor-profiling",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "emit one RACER_3D_SENSOR_PROFILE JSON record per point-cloud "
+            "frame with raycast/acquisition, PointCloud2 construction and "
+            "ROS publication wall time"
+        ),
+    )
+    parser.add_argument(
+        "--contact-regression",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "poll the former full ContactSensor frames alongside the "
+            "event-driven sparse path; intended only for same-trajectory "
+            "correctness/profiling tests because it restores the old raw "
+            "buffer and polling overhead"
+        ),
+    )
     parser.add_argument(
         "--scenario", default="acceptance_15x9x2"
     )
@@ -126,6 +159,41 @@ def parse_arguments() -> argparse.Namespace:
         help="per-UAV PhysX execution-safety sweep refresh rate",
     )
     parser.add_argument(
+        "--startup-free-space-yaw",
+        action="store_true",
+        help=(
+            "select each initial yaw using collision-scene sphere sweeps, "
+            "then run the configured pre-trigger scan/corridor sequence"
+        ),
+    )
+    parser.add_argument(
+        "--startup-scan-duration",
+        type=float,
+        default=0.0,
+        help="seconds used for one stationary 360-degree pre-trigger scan",
+    )
+    parser.add_argument(
+        "--startup-unknown-corridor-distance",
+        type=float,
+        default=0.0,
+        help=(
+            "pre-trigger distance allowed through map-UNKNOWN space only "
+            "after a collision-scene sphere sweep verifies the corridor"
+        ),
+    )
+    parser.add_argument(
+        "--startup-corridor-speed",
+        type=float,
+        default=0.25,
+        help="commanded speed for the verified pre-trigger corridor",
+    )
+    parser.add_argument(
+        "--startup-settle-duration",
+        type=float,
+        default=1.0,
+        help="stationary settling time after the pre-trigger corridor",
+    )
+    parser.add_argument(
         "--vehicle-model",
         choices=("racer_so3", "crazyflie"),
         default="racer_so3",
@@ -174,6 +242,14 @@ def parse_arguments() -> argparse.Namespace:
 
 
 ARGS = parse_arguments()
+# With colcon --symlink-install, ``__file__`` resolves to the source tree while
+# the compiled pybind11 module remains beside the invoked install-tree script.
+# Preserve both locations across SimulationApp's Python-path initialization.
+_INVOKED_ISAAC_DIR = Path(sys.argv[0]).absolute().parent
+_SOURCE_ISAAC_DIR = Path(__file__).resolve().parent
+for _module_dir in (_INVOKED_ISAAC_DIR, _SOURCE_ISAAC_DIR):
+    if str(_module_dir) not in sys.path:
+        sys.path.insert(0, str(_module_dir))
 if ARGS.scene_usd is not None:
     ARGS.scene_usd = ARGS.scene_usd.expanduser().resolve()
     if not ARGS.scene_usd.is_file():
@@ -188,6 +264,14 @@ if ARGS.sensor_worker_count <= 0:
     raise SystemExit("--sensor-worker-count must be positive")
 if ARGS.scene_query_rate_hz <= 0.0:
     raise SystemExit("--scene-query-rate-hz must be positive")
+if ARGS.startup_scan_duration < 0.0:
+    raise SystemExit("--startup-scan-duration must be non-negative")
+if ARGS.startup_unknown_corridor_distance < 0.0:
+    raise SystemExit("--startup-unknown-corridor-distance must be non-negative")
+if ARGS.startup_corridor_speed <= 0.0:
+    raise SystemExit("--startup-corridor-speed must be positive")
+if ARGS.startup_settle_duration < 0.0:
+    raise SystemExit("--startup-settle-duration must be non-negative")
 if ARGS.visualization_max_map_points <= 0:
     raise SystemExit("--visualization-max-map-points must be positive")
 if ARGS.interactive_render_hz <= 0.0:
@@ -218,6 +302,11 @@ from isaacsim.core.utils.extensions import enable_extension  # noqa: E402
 
 
 enable_extension("isaacsim.ros2.bridge")
+if ARGS.vehicle_model == "racer_so3":
+    # Isaac Lab's RayCasterCamera is built on NVIDIA Warp. Isaac Sim ships the
+    # same GPU mesh-query runtime even when the separate Isaac Lab package is
+    # not installed on the target machine.
+    enable_extension("omni.warp.core")
 if ARGS.visualize_exploration:
     enable_extension("isaacsim.util.debug_draw")
 simulation_app.update()
@@ -229,14 +318,26 @@ import rclpy  # noqa: E402
 from geometry_msgs.msg import Twist  # noqa: E402
 from isaacsim.core.api import World  # noqa: E402
 from isaacsim.core.api.objects import FixedCuboid  # noqa: E402
-from isaacsim.core.prims import SingleRigidPrim  # noqa: E402
+from isaacsim.core.prims import RigidPrim, SingleRigidPrim  # noqa: E402
 from isaacsim.core.utils.viewports import set_camera_view  # noqa: E402
 from isaacsim.sensors.camera import Camera  # noqa: E402
 from isaacsim.sensors.physics import ContactSensor  # noqa: E402
 from isaacsim.sensors.physx import RotatingLidarPhysX  # noqa: E402
 from nav_msgs.msg import Odometry, Path as RosPath  # noqa: E402
-from omni.physx import get_physx_scene_query_interface  # noqa: E402
-from pxr import Gf, PhysxSchema, Usd, UsdGeom, UsdLux, UsdPhysics  # noqa: E402
+from omni.physx import (  # noqa: E402
+    get_physx_scene_query_interface,
+    get_physx_simulation_interface,
+)
+from omni.physx.bindings._physx import ContactEventType  # noqa: E402
+from pxr import (  # noqa: E402
+    Gf,
+    PhysicsSchemaTools,
+    PhysxSchema,
+    Usd,
+    UsdGeom,
+    UsdLux,
+    UsdPhysics,
+)
 from rclpy.node import Node  # noqa: E402
 from rclpy.qos import QoSProfile, ReliabilityPolicy  # noqa: E402
 from rosgraph_msgs.msg import Clock  # noqa: E402
@@ -253,6 +354,12 @@ from pointcloud_cpp_bridge import (  # noqa: E402
     create_xyzi_cloud,
     read_xyzi_cloud,
 )
+if ARGS.vehicle_model == "racer_so3":
+    from warp_raycast_camera import WarpRayCasterCameraBatch  # noqa: E402
+    from racer_control_batch_cpp import solve_control_batch  # noqa: E402
+else:
+    WarpRayCasterCameraBatch = None
+    solve_control_batch = None
 from racer_so3_cpp_bridge import (  # noqa: E402
     MASS as RACER_SO3_MASS,
     hover_rpm as racer_hover_rpm,
@@ -375,10 +482,8 @@ SWARM_CONTROL_DISTANCE = max(0.55, 2.0 * VEHICLE_RADIUS + 0.632)
 # SO3 attitude/motor lag. Obstacle and peer filters below still reduce this
 # actuator bound dynamically using measured velocity and braking distance.
 SOURCE_MAX_SPEED = 2.0 if ARGS.vehicle_model == "racer_so3" else 0.35
-SAFETY_POINT_MEMORY_SECONDS = 0.35
-SAFETY_POINT_MEMORY_RADIUS = 2.4
+SAFETY_RAY_MAX_RANGE = 2.4
 SAFETY_POINT_VOXEL_SIZE = 0.08
-SAFETY_POINT_LIMIT = 2000
 SAFETY_LIDAR_POINT_LIMIT = 1200
 SAFETY_LIDAR_HORIZONTAL_RESOLUTION_DEG = 2.5
 SAFETY_LIDAR_VERTICAL_RESOLUTION_DEG = 5.0
@@ -386,7 +491,7 @@ SAFETY_LIDAR_VERTICAL_RESOLUTION_DEG = 5.0
 # lamp between beams.  A low-level rigid-body sweep closes that geometric gap
 # without feeding privileged scene information into RACER's planning map.
 SCENE_QUERY_PERIOD = 1.0 / ARGS.scene_query_rate_hz
-SCENE_QUERY_RANGE = 2.4
+SCENE_QUERY_RANGE = SAFETY_RAY_MAX_RANGE
 # The sphere itself already encloses the full rotor/arm collision geometry.
 # Retain an additional free-travel reserve for PhysX contact offset, attitude
 # lag and the configured scene-query interval.  The speed-scaled term keeps a
@@ -419,11 +524,12 @@ def _low_level_safety_description() -> str:
         return "AABB stopping-distance velocity barrier"
     if SCENARIO.safety_min is not None and SCENARIO.safety_max is not None:
         return (
-            "depth plus 360-degree safety-lidar, PhysX rigid-body sweep, "
+            "low-density 360-degree Warp safety rays, PhysX rigid-body sweep, "
             "and flight-volume stopping-distance barriers"
         )
     return (
-        "depth points plus PhysX rigid-body sweep stopping-distance "
+        "low-density 360-degree Warp safety rays plus PhysX rigid-body sweep "
+        "stopping-distance "
         "velocity barrier"
     )
 
@@ -492,6 +598,7 @@ def _solve_control_job(job):
         sweep_constraints,
         peer_states,
     ) = job
+    safety_decision_started = time.perf_counter()
     point_constraints = None
     if ARGS.scene_usd is None:
         applied_command = np.asarray(
@@ -554,6 +661,9 @@ def _solve_control_job(job):
             sweep_constraints,
             point_constraints,
         )
+    safety_decision_ms = 1000.0 * (
+        time.perf_counter() - safety_decision_started
+    )
     if ARGS.vehicle_model == "racer_so3":
         wrench = velocity_motor_wrench(
             applied_command,
@@ -575,7 +685,13 @@ def _solve_control_job(job):
     intervened = float(
         np.linalg.norm(applied_command - requested_command)
     ) > 1.0e-3
-    return drone_id, applied_command, wrench, intervened
+    return (
+        drone_id,
+        applied_command,
+        wrench,
+        intervened,
+        safety_decision_ms,
+    )
 
 
 def _backend_array_to_numpy(value) -> np.ndarray:
@@ -682,8 +798,8 @@ def _add_racer_so3(
     world: World, stage, drone_id: int, start: Sequence[float]
 ) -> Tuple[
     SingleRigidPrim,
-    Camera,
-    RotatingLidarPhysX,
+    object,
+    object,
     Tuple[ContactSensor, ...],
 ]:
     """Reference the generated RACER asset and attach runtime sensors."""
@@ -723,50 +839,49 @@ def _add_racer_so3(
             reset_xform_properties=True,
         )
     )
-    depth_camera = world.scene.add(
-        Camera(
-            prim_path=body_path + "/depth_camera",
-            name=f"racer_depth_camera_{drone_id}",
-            frequency=ARGS.sensor_rate_hz,
-            resolution=(DEPTH_WIDTH, DEPTH_HEIGHT),
-            translation=CAMERA_TRANSLATION,
-            # Identity in Isaac's robotics camera convention makes camera
-            # +Z optical point along body +X, exactly matching cam02body in
-            # the upstream pcl_render_node.
-            orientation=np.asarray((1.0, 0.0, 0.0, 0.0)),
+    depth_camera = None
+    if ARGS.depth_sensor_backend == "rtx":
+        depth_camera = world.scene.add(
+            Camera(
+                prim_path=body_path + "/depth_camera",
+                name=f"racer_depth_camera_{drone_id}",
+                frequency=ARGS.sensor_rate_hz,
+                resolution=(DEPTH_WIDTH, DEPTH_HEIGHT),
+                translation=CAMERA_TRANSLATION,
+                # Identity in Isaac's robotics camera convention makes camera
+                # +Z optical point along body +X, exactly matching cam02body
+                # in the upstream pcl_render_node.
+                orientation=np.asarray((1.0, 0.0, 0.0, 0.0)),
+            )
         )
-    )
-    depth_camera.set_opencv_pinhole_properties(
-        cx=DEPTH_CX,
-        cy=DEPTH_CY,
-        fx=DEPTH_FX,
-        fy=DEPTH_FY,
-        pinhole=[0.0] * 12,
-    )
-    depth_camera.set_clipping_range(
-        # The mapper discards source measurements below 0.2 m. Matching that
-        # usable near range also prevents imported self geometry inside the
-        # ideal camera's blind zone from becoming a false obstacle.
-        near_distance=DEPTH_MIN_RANGE,
-        far_distance=DEPTH_RENDER_HORIZON,
-    )
-    # The upstream forward depth camera remains the exploration sensor. A
-    # coarse full-sphere PhysX lidar supplies the near-field safety layer so
-    # thin rack posts cannot disappear in lateral/rear camera blind zones.
-    safety_lidar = world.scene.add(
-        RotatingLidarPhysX(
-            prim_path=body_path + "/safety_lidar",
-            name=f"racer_safety_lidar_{drone_id}",
-            translation=LIDAR_TRANSLATION,
-            rotation_frequency=0.0,
-            fov=(360.0, 180.0),
-            resolution=(
-                SAFETY_LIDAR_HORIZONTAL_RESOLUTION_DEG,
-                SAFETY_LIDAR_VERTICAL_RESOLUTION_DEG,
-            ),
-            valid_range=(SELF_FILTER_RADIUS, SAFETY_POINT_MEMORY_RADIUS),
+        depth_camera.set_opencv_pinhole_properties(
+            cx=DEPTH_CX,
+            cy=DEPTH_CY,
+            fx=DEPTH_FX,
+            fy=DEPTH_FY,
+            pinhole=[0.0] * 12,
         )
-    )
+        depth_camera.set_clipping_range(
+            # The mapper discards source measurements below 0.2 m. Matching
+            # that usable near range also prevents imported self geometry
+            # inside the ideal camera's blind zone from becoming an obstacle.
+            near_distance=DEPTH_MIN_RANGE,
+            far_distance=DEPTH_RENDER_HORIZON,
+        )
+    else:
+        # Keep an explicit mount prim for inspection/debugging, but create no
+        # Hydra render product. Warp consumes the same body pose and pinhole
+        # intrinsics directly.
+        mount = UsdGeom.Xform.Define(stage, body_path + "/depth_camera")
+        if np.linalg.norm(CAMERA_TRANSLATION) > 0.0:
+            mount.AddTranslateOp().Set(Gf.Vec3d(*CAMERA_TRANSLATION))
+    # The upstream forward depth camera remains the exploration sensor. The
+    # independent execution layer now receives only a low-density 360-degree
+    # Warp ray set configured after the static scene mesh is built. Keep an
+    # explicit mount Xform for inspection without creating a PhysX lidar.
+    safety_mount = UsdGeom.Xform.Define(stage, body_path + "/safety_lidar")
+    safety_mount.AddTranslateOp().Set(Gf.Vec3d(*LIDAR_TRANSLATION))
+    safety_lidar = None
 
     collision_prims = [
         prim
@@ -790,6 +905,14 @@ def _add_racer_so3(
             f"{[str(prim.GetPath()) for prim in collision_prims]}; "
             f"descendants={descendants}"
         )
+    # Contact reporting remains enabled on every collider. The default
+    # statistics path below uses one PhysX contact-event subscription to find
+    # the small set of active colliders, then asks only those sensors for the
+    # lightweight bool/scalar reading. Legacy full-frame polling is enabled
+    # only for an explicit A/B run.
+    # Merely omitting add_raw_contact_data_to_frame() is insufficient in
+    # Isaac Sim 5.1: ContactSensor.get_current_frame() itself unconditionally
+    # fetches the raw contact buffer on every call.
     contacts = []
     for collision_index, collision_prim in enumerate(collision_prims):
         collision_path = str(collision_prim.GetPath())
@@ -866,36 +989,72 @@ def build_world():
         safety_sensors.append(safety_sensor)
         contacts.append(vehicle_contacts)
     world.reset()
-    for body in bodies:
-        body._rigid_prim_view.enable_gravities()
-        if ARGS.vehicle_model == "racer_so3":
-            imported_mass = float(
-                _backend_array_to_numpy(
-                    body._rigid_prim_view.get_masses()
-                ).reshape(-1)[0]
+    body_paths = [
+        (
+            f"/World/Drones/drone_{drone_id}/base_link"
+            if ARGS.vehicle_model == "racer_so3"
+            else f"/World/Drones/drone_{drone_id}"
+        )
+        for drone_id in range(len(bodies))
+    ]
+    # Isaac Sim 5.1's RigidPrim is the vectorized successor to the old
+    # RigidPrimView. Keep the World's NumPy frontend so the unchanged RACER
+    # controller sees the same float values, while all PhysX I/O below goes
+    # through this single native tensor view.
+    rigid_body_view = RigidPrim(
+        prim_paths_expr=body_paths,
+        name="racer_uav_rigid_body_tensor_view",
+        reset_xform_properties=False,
+    )
+    rigid_body_view.initialize()
+    if rigid_body_view.count != len(bodies):
+        raise RuntimeError(
+            "UAV rigid-body tensor view count mismatch: "
+            f"expected {len(bodies)}, found {rigid_body_view.count}"
+        )
+    if list(rigid_body_view.prim_paths) != body_paths:
+        raise RuntimeError(
+            "UAV rigid-body tensor view order does not match drone IDs: "
+            f"{rigid_body_view.prim_paths}"
+        )
+    rigid_body_view.enable_gravities()
+    imported_masses = np.asarray(
+        _backend_array_to_numpy(rigid_body_view.get_masses()), dtype=float
+    ).reshape(-1)
+    if ARGS.vehicle_model == "racer_so3":
+        mismatched = np.flatnonzero(
+            ~np.isclose(imported_masses, RACER_SO3_MASS, rtol=1.0e-5)
+        )
+        if len(mismatched):
+            raise RuntimeError(
+                "SO3 USD mass mismatch for UAV indices "
+                f"{mismatched.tolist()}: {imported_masses[mismatched].tolist()}"
             )
-            if not math.isclose(
-                imported_mass, RACER_SO3_MASS, rel_tol=1.0e-5
-            ):
-                raise RuntimeError(
-                    f"SO3 USD mass mismatch: {imported_mass}"
-                )
-        # World.reset() advances initialization physics in Isaac Sim 5.1.
-        # Clear that transient before the rotor controller starts.
-        body.set_linear_velocity(np.zeros(3, dtype=float))
-        body.set_angular_velocity(np.zeros(3, dtype=float))
+    # World.reset() advances initialization physics in Isaac Sim 5.1. Clear
+    # that transient for every UAV with one tensor write before the rotor
+    # controller starts.
+    rigid_body_view.set_velocities(
+        np.zeros((len(bodies), 6), dtype=np.float32)
+    )
     for range_sensor in range_sensors:
-        if ARGS.vehicle_model == "racer_so3":
+        if (
+            ARGS.vehicle_model == "racer_so3"
+            and ARGS.depth_sensor_backend == "rtx"
+        ):
             range_sensor.add_distance_to_image_plane_to_frame()
-        else:
+        elif ARGS.vehicle_model != "racer_so3":
             range_sensor.add_point_cloud_data_to_frame()
     for safety_sensor in safety_sensors:
         if safety_sensor is not None:
             safety_sensor.add_point_cloud_data_to_frame()
-    for vehicle_contacts in contacts:
-        for contact in vehicle_contacts:
-            contact.add_raw_contact_data_to_frame()
-    return world, bodies, range_sensors, safety_sensors, contacts
+    return (
+        world,
+        bodies,
+        rigid_body_view,
+        range_sensors,
+        safety_sensors,
+        contacts,
+    )
 
 
 def _yaw_from_quaternion(quaternion: Sequence[float]) -> float:
@@ -1044,13 +1203,55 @@ class PropellerVisualAnimator:
 
 
 class IsaacRacer3DBridge(Node):
-    def __init__(self, bodies, range_sensors, safety_sensors, contacts) -> None:
+    def __init__(
+        self,
+        bodies,
+        rigid_body_view,
+        range_sensors,
+        safety_sensors,
+        contacts,
+        warp_raycaster=None,
+    ) -> None:
         super().__init__("isaac_racer_3d_bridge")
         self.bodies = bodies
+        self.rigid_body_view = rigid_body_view
         self.range_sensors = range_sensors
         self.safety_sensors = safety_sensors
         self.contacts = contacts
+        self.warp_raycaster = warp_raycaster
+        self.warp_raycaster_report = (
+            warp_raycaster.report() if warp_raycaster is not None else None
+        )
         self.drone_count = len(bodies)
+        if self.rigid_body_view.count != self.drone_count:
+            raise RuntimeError(
+                "rigid-body tensor view does not cover every UAV"
+            )
+        self.rigid_body_masses = np.asarray(
+            _backend_array_to_numpy(self.rigid_body_view.get_masses()),
+            dtype=float,
+        ).reshape(-1)
+        self.rigid_io_profile = {
+            name: {"calls": 0, "total_ms": 0.0, "max_ms": 0.0}
+            for name in (
+                "pre_state_batch_read",
+                "force_torque_batch_write",
+                "post_state_batch_read",
+            )
+        }
+        self.pre_control_positions = np.zeros(
+            (self.drone_count, 3), dtype=float
+        )
+        self.pre_control_orientations = np.tile(
+            np.asarray((1.0, 0.0, 0.0, 0.0), dtype=float),
+            (self.drone_count, 1),
+        )
+        self.pre_control_velocities = np.zeros(
+            (self.drone_count, 3), dtype=float
+        )
+        self.pre_control_angular_velocities = np.zeros(
+            (self.drone_count, 3), dtype=float
+        )
         self.sensor_executor = (
             ThreadPoolExecutor(
                 max_workers=min(ARGS.sensor_worker_count, self.drone_count),
@@ -1064,10 +1265,15 @@ class IsaacRacer3DBridge(Node):
             if self.sensor_executor is not None
             else 1
         )
-        self.commands = [np.zeros(3) for _ in bodies]
-        self.applied_commands = [np.zeros(3) for _ in bodies]
+        self.commands = np.zeros((self.drone_count, 3), dtype=float)
+        self.applied_commands = np.zeros(
+            (self.drone_count, 3), dtype=float
+        )
         self.safety_points = [np.empty((0, 3), dtype=float) for _ in bodies]
         self.scene_query_points = [
+            np.empty((0, 3), dtype=float) for _ in bodies
+        ]
+        self.execution_safety_points = [
             np.empty((0, 3), dtype=float) for _ in bodies
         ]
         self.scene_query_constraints = [[] for _ in bodies]
@@ -1076,25 +1282,41 @@ class IsaacRacer3DBridge(Node):
         self.scene_query_hits = 0
         self.min_sweep_free_travel = math.inf
         self.scene_query = get_physx_scene_query_interface()
-        # A single forward depth frame forgets a shelf as soon as it leaves
-        # the camera frustum. Keep a short, world-frame, voxelized history so
-        # the 1 kHz rigid-body controller can still brake beside/behind it.
-        self.safety_point_history = [deque() for _ in bodies]
-        self.yaw_commands = [0.0 for _ in bodies]
+        # Safety points are one current low-density 360-degree Warp scan per
+        # UAV. Dense mapping-camera hits never enter this execution-only path;
+        # the PhysX swept vehicle envelope remains the thin-obstacle backstop.
+        self.yaw_commands = np.zeros(self.drone_count, dtype=float)
         self.yaw_targets = [0.0 for _ in bodies]
-        self.positions = [np.zeros(3) for _ in bodies]
-        self.velocities = [np.zeros(3) for _ in bodies]
-        self.accelerations = [np.zeros(3) for _ in bodies]
+        self.startup_yaws = [0.0 for _ in bodies]
+        self.startup_corridor_clearances = [0.0 for _ in bodies]
+        self.startup_corridor_enabled = [False for _ in bodies]
+        self.positions = np.zeros((self.drone_count, 3), dtype=float)
+        self.orientations = np.tile(
+            np.asarray((1.0, 0.0, 0.0, 0.0), dtype=float),
+            (self.drone_count, 1),
+        )
+        self.velocities = np.zeros((self.drone_count, 3), dtype=float)
+        self.angular_velocities = np.zeros(
+            (self.drone_count, 3), dtype=float
+        )
+        self.accelerations = np.zeros((self.drone_count, 3), dtype=float)
         self.previous_velocities = [None for _ in bodies]
         self.path_lengths = [0.0 for _ in bodies]
         self.previous_positions = [None for _ in bodies]
-        self.motor_thrusts = [np.zeros(4) for _ in bodies]
-        self.motor_rpms = [
-            np.full(4, racer_hover_rpm())
-            if ARGS.vehicle_model == "racer_so3"
-            else np.zeros(4)
-            for _ in bodies
-        ]
+        self.motor_thrusts = np.zeros((self.drone_count, 4), dtype=float)
+        self.motor_rpms = np.full(
+            (self.drone_count, 4),
+            racer_hover_rpm() if ARGS.vehicle_model == "racer_so3" else 0.0,
+            dtype=float,
+        )
+        self.control_obstacle_minimums = np.asarray(
+            [obstacle.minimum for obstacle in SCENARIO.obstacles],
+            dtype=float,
+        ).reshape((-1, 3))
+        self.control_obstacle_maximums = np.asarray(
+            [obstacle.maximum for obstacle in SCENARIO.obstacles],
+            dtype=float,
+        ).reshape((-1, 3))
         self.propeller_visuals = PropellerVisualAnimator(
             omni.usd.get_context().get_stage(),
             [
@@ -1116,12 +1338,110 @@ class IsaacRacer3DBridge(Node):
         self.collision_events = 0
         self.contact_active = [False for _ in bodies]
         self.max_contact_force = 0.0
+        legacy_sensors_per_uav = (
+            7 if ARGS.vehicle_model == "racer_so3" else 1
+        )
+        self.contact_profile = {
+            "fast_path": {
+                "steps": 0,
+                "light_sensor_reading_calls": 0,
+                "total_ms": 0.0,
+                "max_ms": 0.0,
+            },
+            "event_callback": {
+                "calls": 0,
+                "headers": 0,
+                "total_ms": 0.0,
+                "max_ms": 0.0,
+            },
+            "legacy_reference": {
+                "enabled": bool(ARGS.contact_regression),
+                "steps": 0,
+                "sensor_get_current_frame_calls": 0,
+                "expected_sensor_calls_per_step": (
+                    self.drone_count * legacy_sensors_per_uav
+                ),
+                "total_ms": 0.0,
+                "max_ms": 0.0,
+            },
+        }
+        self.contact_regression = {
+            "compared_steps": 0,
+            "active_mismatch_steps": 0,
+            "active_mismatch_uav_samples": 0,
+            "force_compared_uav_samples": 0,
+            "force_absolute_error_sum_n": 0.0,
+            "force_max_absolute_error_n": 0.0,
+            "legacy_collision_events": 0,
+            "legacy_max_contact_force_n": 0.0,
+        }
+        self.legacy_contact_active = [False for _ in bodies]
+        self.contact_pairs_by_sensor = [
+            [set() for _ in sensors] for sensors in self.contacts
+        ]
+        self.contact_sensor_by_collider_path = {}
+        self.contact_sensor_by_collider_handle = {}
+        for drone_id, sensors in enumerate(self.contacts):
+            for sensor_index, sensor in enumerate(sensors):
+                collider_path = sensor.prim_path.rsplit("/", 1)[0]
+                if collider_path in self.contact_sensor_by_collider_path:
+                    raise RuntimeError(
+                        "duplicate contact sensor collider path: "
+                        f"{collider_path}"
+                    )
+                self.contact_sensor_by_collider_path[collider_path] = (
+                    drone_id,
+                    sensor_index,
+                )
+        self.contact_event_subscription = (
+            get_physx_simulation_interface().subscribe_contact_report_events(
+                self._on_contact_report_event
+            )
+        )
         self.min_inter_drone = math.inf
         self.min_obstacle_clearance = math.inf
         self.cloud_frames = 0
+        self.sensor_profile_frames = 0
+        self.sensor_profile_sums_ms = {
+            "raycasting": 0.0,
+            "safety_raycasting": 0.0,
+            "safety_pointcloud_process": 0.0,
+            "rtx_render_step": 0.0,
+            "decode_backprojection": 0.0,
+            "sensor_postprocess": 0.0,
+            "pointcloud2": 0.0,
+            "publish": 0.0,
+            "total": 0.0,
+        }
+        self.sensor_profile_max_ms = {
+            name: 0.0 for name in self.sensor_profile_sums_ms
+        }
+        self.pending_rtx_render_step_ms = 0.0
         self.raw_diagnostics_printed = False
         self.control_steps = 0
         self.safety_interventions = 0
+        self.safety_decision_profile_frames = 0
+        self.safety_decision_profile_sum_ms = 0.0
+        self.safety_decision_profile_max_ms = 0.0
+        self.safety_decision_worker_max_sum_ms = 0.0
+        self.safety_decision_worker_max_max_ms = 0.0
+        self.last_safety_decision_ms = 0.0
+        self.control_batch_profile_frames = 0
+        self.control_batch_profile_sum_ms = 0.0
+        self.control_batch_profile_max_ms = 0.0
+        self.control_batch_openmp_threads = 0
+        self.control_batch_component_sum_ms = {
+            name: 0.0
+            for name in (
+                "constraint_build",
+                "obstacle_projection",
+                "swarm_cbf",
+                "so3",
+            )
+        }
+        self.control_batch_component_max_ms = {
+            name: 0.0 for name in self.control_batch_component_sum_ms
+        }
         self.mission_complete = False
         self.mapping_coverage = [None for _ in bodies]
         self.mapping_coverage_counts = [None for _ in bodies]
@@ -1218,6 +1538,222 @@ class IsaacRacer3DBridge(Node):
                 qos,
             )
         self._read_physics(count_distance=False)
+
+    def _record_rigid_io_profile(self, name: str, elapsed_ms: float) -> None:
+        profile = self.rigid_io_profile[name]
+        profile["calls"] += 1
+        profile["total_ms"] += elapsed_ms
+        profile["max_ms"] = max(profile["max_ms"], elapsed_ms)
+
+    def reset_rigid_io_profile(self) -> None:
+        for profile in self.rigid_io_profile.values():
+            profile["calls"] = 0
+            profile["total_ms"] = 0.0
+            profile["max_ms"] = 0.0
+
+    def rigid_io_profile_report(self):
+        return {
+            "view": "isaacsim.core.prims.RigidPrim",
+            "backend": "PhysX tensor view with NumPy frontend",
+            "uav_count": self.drone_count,
+            **{
+                name: {
+                    "calls": profile["calls"],
+                    "mean_ms": (
+                        profile["total_ms"] / profile["calls"]
+                        if profile["calls"]
+                        else 0.0
+                    ),
+                    "max_ms": profile["max_ms"],
+                }
+                for name, profile in self.rigid_io_profile.items()
+            },
+        }
+
+    def reset_contact_profile(self) -> None:
+        fast = self.contact_profile["fast_path"]
+        fast.update(
+            steps=0,
+            light_sensor_reading_calls=0,
+            total_ms=0.0,
+            max_ms=0.0,
+        )
+        callback = self.contact_profile["event_callback"]
+        callback.update(calls=0, headers=0, total_ms=0.0, max_ms=0.0)
+        legacy = self.contact_profile["legacy_reference"]
+        legacy.update(
+            steps=0,
+            sensor_get_current_frame_calls=0,
+            total_ms=0.0,
+            max_ms=0.0,
+        )
+        self.contact_regression.update(
+            compared_steps=0,
+            active_mismatch_steps=0,
+            active_mismatch_uav_samples=0,
+            force_compared_uav_samples=0,
+            force_absolute_error_sum_n=0.0,
+            force_max_absolute_error_n=0.0,
+            legacy_collision_events=0,
+            legacy_max_contact_force_n=0.0,
+        )
+        self.legacy_contact_active = [
+            False for _ in range(self.drone_count)
+        ]
+        self.contact_pairs_by_sensor = [
+            [set() for _ in sensors] for sensors in self.contacts
+        ]
+
+    def contact_profile_report(self) -> dict:
+        fast = self.contact_profile["fast_path"]
+        callback = self.contact_profile["event_callback"]
+        legacy = self.contact_profile["legacy_reference"]
+        compared = self.contact_regression["force_compared_uav_samples"]
+        return {
+            "backend": (
+                "PhysX contact events plus sparse ContactSensor reading"
+            ),
+            "raw_contact_data_requested": False,
+            "uav_count": self.drone_count,
+            "fast_path": {
+                "steps": fast["steps"],
+                "light_sensor_reading_calls": (
+                    fast["light_sensor_reading_calls"]
+                ),
+                "mean_step_ms": (
+                    fast["total_ms"] / fast["steps"]
+                    if fast["steps"]
+                    else 0.0
+                ),
+                "max_step_ms": fast["max_ms"],
+            },
+            "event_callback": {
+                "calls": callback["calls"],
+                "headers": callback["headers"],
+                "mean_callback_ms": (
+                    callback["total_ms"] / callback["calls"]
+                    if callback["calls"]
+                    else 0.0
+                ),
+                "max_callback_ms": callback["max_ms"],
+                "amortized_ms_per_physics_step": (
+                    callback["total_ms"] / fast["steps"]
+                    if fast["steps"]
+                    else 0.0
+                ),
+            },
+            "mean_total_contact_handling_ms_per_step": (
+                (fast["total_ms"] + callback["total_ms"])
+                / fast["steps"]
+                if fast["steps"]
+                else 0.0
+            ),
+            "legacy_reference": {
+                "enabled": legacy["enabled"],
+                "steps": legacy["steps"],
+                "sensor_get_current_frame_calls": (
+                    legacy["sensor_get_current_frame_calls"]
+                ),
+                "expected_sensor_calls_per_step": (
+                    legacy["expected_sensor_calls_per_step"]
+                ),
+                "mean_step_ms": (
+                    legacy["total_ms"] / legacy["steps"]
+                    if legacy["steps"]
+                    else None
+                ),
+                "max_step_ms": (
+                    legacy["max_ms"] if legacy["steps"] else None
+                ),
+            },
+            "regression": {
+                **self.contact_regression,
+                "force_mean_absolute_error_n": (
+                    self.contact_regression[
+                        "force_absolute_error_sum_n"
+                    ] / compared
+                    if compared
+                    else 0.0
+                ),
+                "fast_collision_events": self.collision_events,
+                "fast_max_contact_force_n": self.max_contact_force,
+                "force_definition_note": (
+                    "both paths use the maximum scalar reading among that "
+                    "UAV's collider sensors; the fast path queries only "
+                    "event-active colliders"
+                ),
+            },
+        }
+
+    def control_batch_profile_report(self):
+        frames = self.control_batch_profile_frames
+        denominator = max(1, frames * self.drone_count)
+        return {
+            "backend": (
+                "pybind11 C++ OpenMP batch with GIL released"
+                if ARGS.vehicle_model == "racer_so3"
+                else "legacy Python per-UAV controller"
+            ),
+            "frames": frames,
+            "uav_count": self.drone_count,
+            "openmp_threads": self.control_batch_openmp_threads,
+            "mean_step_wall_ms": (
+                self.control_batch_profile_sum_ms / frames
+                if frames
+                else 0.0
+            ),
+            "max_step_wall_ms": self.control_batch_profile_max_ms,
+            "mean_worker_component_ms": {
+                name: total / denominator
+                for name, total in self.control_batch_component_sum_ms.items()
+            },
+            "max_worker_component_ms": self.control_batch_component_max_ms,
+        }
+
+    def _read_rigid_body_state_batch(self, profile_name: str):
+        """Read all transforms and 6-D velocities from one tensor view."""
+
+        started = time.perf_counter()
+        # PhysX exposes transforms and velocities as two native tensor
+        # buffers. Each is fetched once for the complete view; importantly,
+        # there are no per-prim PhysX getters here.
+        positions_value, orientations_value = (
+            self.rigid_body_view.get_world_poses(clone=False)
+        )
+        velocities_value = self.rigid_body_view.get_velocities(clone=False)
+        positions = np.array(
+            _backend_array_to_numpy(positions_value), dtype=float, copy=True
+        ).reshape((self.drone_count, 3))
+        orientations = np.array(
+            _backend_array_to_numpy(orientations_value),
+            dtype=float,
+            copy=True,
+        ).reshape((self.drone_count, 4))
+        velocities = np.array(
+            _backend_array_to_numpy(velocities_value), dtype=float, copy=True
+        ).reshape((self.drone_count, 6))
+        linear_velocities = velocities[:, :3]
+        angular_velocities = velocities[:, 3:]
+        if not all(
+            np.all(np.isfinite(values))
+            for values in (
+                positions,
+                orientations,
+                linear_velocities,
+                angular_velocities,
+            )
+        ):
+            raise RuntimeError("non-finite UAV state returned by PhysX tensor view")
+        self._record_rigid_io_profile(
+            profile_name,
+            1000.0 * (time.perf_counter() - started),
+        )
+        return (
+            positions,
+            orientations,
+            linear_velocities,
+            angular_velocities,
+        )
 
     def _visual_map(self, message: PointCloud2) -> None:
         points, _ = read_xyzi_cloud(message)
@@ -1425,6 +1961,122 @@ class IsaacRacer3DBridge(Node):
             and max(valid) >= ARGS.mapping_coverage_target
         )
 
+    def configure_startup_recovery(self) -> None:
+        """Choose truth-checked launch headings without seeding the RACER map."""
+
+        if not ARGS.startup_free_space_yaw or ARGS.scene_usd is None:
+            return
+        query_range = max(
+            SCENE_QUERY_RANGE,
+            ARGS.startup_unknown_corridor_distance
+            + SCENE_QUERY_CLEARANCE
+            + 0.25,
+        )
+        samples = 72
+        startup_orientations = self.orientations.copy()
+        for drone_id, position_value in enumerate(self.positions):
+            position = np.asarray(position_value, dtype=float)
+            own_prefix = f"/World/Drones/drone_{drone_id}/"
+            best_yaw = 0.0
+            best_clearance = -math.inf
+            for sample in range(samples):
+                yaw = 2.0 * math.pi * sample / samples
+                direction = np.asarray((math.cos(yaw), math.sin(yaw), 0.0))
+                direction_hits = []
+
+                def report(hit):
+                    rigid_body = str(hit.rigid_body)
+                    collision = str(getattr(hit, "collision", ""))
+                    if not (
+                        rigid_body.startswith(own_prefix)
+                        or collision.startswith(own_prefix)
+                    ):
+                        distance = float(getattr(hit, "distance", math.inf))
+                        if math.isfinite(distance) and distance >= 0.0:
+                            direction_hits.append(distance)
+                    return True
+
+                self.scene_query.sweep_sphere_all(
+                    VEHICLE_RADIUS,
+                    Gf.Vec3f(*position),
+                    Gf.Vec3f(*direction),
+                    query_range,
+                    report,
+                )
+                clearance = min(direction_hits) if direction_hits else query_range
+                if clearance > best_clearance:
+                    best_clearance = clearance
+                    best_yaw = yaw
+
+            self.startup_yaws[drone_id] = best_yaw
+            self.startup_corridor_clearances[drone_id] = best_clearance
+            self.startup_corridor_enabled[drone_id] = bool(
+                best_clearance
+                >= ARGS.startup_unknown_corridor_distance
+                + SCENE_QUERY_CLEARANCE
+            )
+            self.yaw_commands[drone_id] = best_yaw
+            self.yaw_targets[drone_id] = best_yaw
+            startup_orientations[drone_id] = np.asarray(
+                (
+                    math.cos(0.5 * best_yaw),
+                    0.0,
+                    0.0,
+                    math.sin(0.5 * best_yaw),
+                ),
+                dtype=float,
+            )
+        self.rigid_body_view.set_world_poses(
+            orientations=startup_orientations.astype(np.float32)
+        )
+        self.orientations = startup_orientations
+        print(
+            "RACER_3D_STARTUP_RECOVERY "
+            + json.dumps(
+                {
+                    "mode": "max_free_yaw_scan_truth_checked_unknown_corridor",
+                    "yaw_samples": samples,
+                    "selected_yaws_rad": self.startup_yaws,
+                    "corridor_clearances_m": self.startup_corridor_clearances,
+                    "corridor_enabled": self.startup_corridor_enabled,
+                    "scan_duration_s": ARGS.startup_scan_duration,
+                    "corridor_distance_m": ARGS.startup_unknown_corridor_distance,
+                    "corridor_speed_mps": ARGS.startup_corridor_speed,
+                    "settle_duration_s": ARGS.startup_settle_duration,
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+
+    def _startup_override(self, drone_id: int):
+        if not ARGS.startup_free_space_yaw:
+            return None
+        scan_end = ARGS.startup_scan_duration
+        corridor_duration = (
+            ARGS.startup_unknown_corridor_distance
+            / ARGS.startup_corridor_speed
+        )
+        corridor_end = scan_end + corridor_duration
+        startup_end = corridor_end + ARGS.startup_settle_duration
+        if self.elapsed >= startup_end:
+            return None
+        yaw = self.startup_yaws[drone_id]
+        command = np.zeros(3, dtype=float)
+        if self.elapsed < scan_end and scan_end > 0.0:
+            yaw += 2.0 * math.pi * self.elapsed / scan_end
+        elif (
+            self.elapsed < corridor_end
+            and self.startup_corridor_enabled[drone_id]
+        ):
+            command[:2] = ARGS.startup_corridor_speed * np.asarray(
+                (math.cos(yaw), math.sin(yaw))
+            )
+        yaw_rate_limit = SOURCE_MAX_YAW_RATE
+        if self.elapsed < scan_end and scan_end > 0.0:
+            yaw_rate_limit = max(yaw_rate_limit, 2.0 * math.pi / scan_end)
+        return command, yaw, yaw_rate_limit
+
     def _query_external_safety_points(
         self,
         drone_id: int,
@@ -1509,14 +2161,26 @@ class IsaacRacer3DBridge(Node):
         return points[np.sort(unique_indices)]
 
     def _execution_safety_points(self, drone_id: int) -> np.ndarray:
+        return self.execution_safety_points[drone_id]
+
+    def _refresh_execution_safety_points(self, drone_id: int) -> None:
+        """Merge safety sources only when one source changes, not at 1 kHz."""
+
         sources = (
             self.safety_points[drone_id],
             self.scene_query_points[drone_id],
         )
         nonempty = [points for points in sources if len(points)]
         if not nonempty:
-            return np.empty((0, 3), dtype=float)
-        return np.concatenate(nonempty, axis=0)
+            self.execution_safety_points[drone_id] = np.empty(
+                (0, 3), dtype=float
+            )
+        elif len(nonempty) == 1:
+            self.execution_safety_points[drone_id] = nonempty[0]
+        else:
+            self.execution_safety_points[drone_id] = np.concatenate(
+                nonempty, axis=0
+            )
 
     def apply_motor_wrenches(self) -> None:
         self.control_steps += 1
@@ -1527,20 +2191,25 @@ class IsaacRacer3DBridge(Node):
                 or self.control_steps % 500 == 0
             )
         )
-        states = []
-        angular_velocities = []
-        for body in self.bodies:
-            position, orientation = body.get_world_pose()
-            states.append(
-                (
-                    np.asarray(position, dtype=float),
-                    np.asarray(orientation, dtype=float),
-                    np.asarray(body.get_linear_velocity(), dtype=float),
-                )
+        (
+            self.pre_control_positions,
+            self.pre_control_orientations,
+            self.pre_control_velocities,
+            self.pre_control_angular_velocities,
+        ) = self._read_rigid_body_state_batch("pre_state_batch_read")
+        states = [
+            (
+                self.pre_control_positions[drone_id],
+                self.pre_control_orientations[drone_id],
+                self.pre_control_velocities[drone_id],
             )
-            angular_velocities.append(
-                np.asarray(body.get_angular_velocity(), dtype=float)
-            )
+            for drone_id in range(self.drone_count)
+        ]
+        requested_commands = np.empty(
+            (self.drone_count, 3), dtype=float
+        )
+        safety_points_batch = []
+        sweep_constraints_batch = []
         control_jobs = []
         for drone_id in range(self.drone_count):
             if phase_checkpoint:
@@ -1549,6 +2218,15 @@ class IsaacRacer3DBridge(Node):
                     f"phase=control_drone_{drone_id}_begin",
                     flush=True,
                 )
+            requested_command = self.commands[drone_id].copy()
+            yaw_rate_limit = SOURCE_MAX_YAW_RATE
+            startup_override = self._startup_override(drone_id)
+            if startup_override is not None:
+                (
+                    requested_command,
+                    self.yaw_targets[drone_id],
+                    yaw_rate_limit,
+                ) = startup_override
             yaw_error = (
                 self.yaw_targets[drone_id]
                 - self.yaw_commands[drone_id]
@@ -1557,8 +2235,8 @@ class IsaacRacer3DBridge(Node):
             self.yaw_commands[drone_id] += float(
                 np.clip(
                     yaw_error,
-                    -SOURCE_MAX_YAW_RATE * PHYSICS_DT,
-                    SOURCE_MAX_YAW_RATE * PHYSICS_DT,
+                    -yaw_rate_limit * PHYSICS_DT,
+                    yaw_rate_limit * PHYSICS_DT,
                 )
             )
             position, orientation, velocity = states[drone_id]
@@ -1573,8 +2251,9 @@ class IsaacRacer3DBridge(Node):
                     drone_id,
                     position,
                     velocity,
-                    self.commands[drone_id],
+                    requested_command,
                 )
+                self._refresh_execution_safety_points(drone_id)
                 self.last_scene_query[drone_id] = self.elapsed
             if phase_checkpoint:
                 print(
@@ -1583,68 +2262,224 @@ class IsaacRacer3DBridge(Node):
                     flush=True,
                 )
             execution_safety_points = self._execution_safety_points(drone_id)
-            peer_states = [
-                (peer_id, peer_position, peer_velocity)
-                for peer_id, (
-                    peer_position,
-                    _,
-                    peer_velocity,
-                ) in enumerate(states)
-                if peer_id != drone_id
-            ]
-            control_jobs.append(
-                (
-                    drone_id,
-                    self.commands[drone_id].copy(),
-                    position,
-                    orientation,
-                    velocity,
-                    angular_velocities[drone_id],
-                    self.yaw_commands[drone_id],
-                    self.motor_rpms[drone_id].copy(),
-                    execution_safety_points,
-                    self.scene_query_constraints[drone_id],
-                    peer_states,
+            requested_commands[drone_id] = requested_command
+            safety_points_batch.append(execution_safety_points)
+            sweep_constraints_batch.append(
+                self.scene_query_constraints[drone_id]
+            )
+            if ARGS.vehicle_model != "racer_so3":
+                peer_states = [
+                    (peer_id, peer_position, peer_velocity)
+                    for peer_id, (
+                        peer_position,
+                        _,
+                        peer_velocity,
+                    ) in enumerate(states)
+                    if peer_id != drone_id
+                ]
+                control_jobs.append(
+                    (
+                        drone_id,
+                        requested_command,
+                        position,
+                        orientation,
+                        velocity,
+                        self.pre_control_angular_velocities[drone_id],
+                        self.yaw_commands[drone_id],
+                        self.motor_rpms[drone_id].copy(),
+                        execution_safety_points,
+                        self.scene_query_constraints[drone_id],
+                        peer_states,
+                    )
                 )
-            )
 
-        if self.sensor_executor is None:
-            control_results = map(_solve_control_job, control_jobs)
-        else:
-            control_results = self.sensor_executor.map(
-                _solve_control_job, control_jobs
+        safety_decision_batch_started = time.perf_counter()
+        batch_result = None
+        if ARGS.vehicle_model == "racer_so3":
+            batch_result = solve_control_batch(
+                requested_commands,
+                self.pre_control_positions,
+                self.pre_control_orientations,
+                self.pre_control_velocities,
+                self.pre_control_angular_velocities,
+                self.motor_rpms,
+                safety_points_batch,
+                sweep_constraints_batch,
+                self.yaw_commands,
+                PHYSICS_DT,
+                SOURCE_MAX_SPEED,
+                OBSTACLE_CONTROL_CLEARANCE,
+                SCENE_QUERY_CLEARANCE,
+                SWARM_CONTROL_DISTANCE,
+                ARGS.scene_usd is not None,
+                SCENARIO.safety_min,
+                SCENARIO.safety_max,
+                self.control_obstacle_minimums,
+                self.control_obstacle_maximums,
             )
-        for drone_id, applied_command, wrench, intervened in control_results:
-            body = self.bodies[drone_id]
+            control_results = None
+        elif self.sensor_executor is None:
+            control_results = list(map(_solve_control_job, control_jobs))
+        else:
+            control_results = list(
+                self.sensor_executor.map(_solve_control_job, control_jobs)
+            )
+        safety_decision_batch_ms = 1000.0 * (
+            time.perf_counter() - safety_decision_batch_started
+        )
+        if batch_result is not None:
+            worker_safety_ms = (
+                np.asarray(batch_result["constraint_build_ms"])
+                + np.asarray(batch_result["obstacle_projection_ms"])
+                + np.asarray(batch_result["swarm_cbf_ms"])
+            )
+            worker_max_ms = float(
+                np.max(worker_safety_ms, initial=0.0)
+            )
+            self.control_batch_profile_frames += 1
+            self.control_batch_profile_sum_ms += safety_decision_batch_ms
+            self.control_batch_profile_max_ms = max(
+                self.control_batch_profile_max_ms,
+                safety_decision_batch_ms,
+            )
+            self.control_batch_openmp_threads = int(
+                batch_result["openmp_threads"]
+            )
+            for profile_name, result_name in (
+                ("constraint_build", "constraint_build_ms"),
+                ("obstacle_projection", "obstacle_projection_ms"),
+                ("swarm_cbf", "swarm_cbf_ms"),
+                ("so3", "so3_ms"),
+            ):
+                values = np.asarray(batch_result[result_name], dtype=float)
+                self.control_batch_component_sum_ms[profile_name] += float(
+                    np.sum(values)
+                )
+                self.control_batch_component_max_ms[profile_name] = max(
+                    self.control_batch_component_max_ms[profile_name],
+                    float(np.max(values, initial=0.0)),
+                )
+        else:
+            worker_max_ms = max(
+                (result[4] for result in control_results), default=0.0
+            )
+        self.safety_decision_profile_frames += 1
+        self.safety_decision_profile_sum_ms += safety_decision_batch_ms
+        self.safety_decision_profile_max_ms = max(
+            self.safety_decision_profile_max_ms,
+            safety_decision_batch_ms,
+        )
+        self.safety_decision_worker_max_sum_ms += worker_max_ms
+        self.safety_decision_worker_max_max_ms = max(
+            self.safety_decision_worker_max_max_ms,
+            worker_max_ms,
+        )
+        self.last_safety_decision_ms = safety_decision_batch_ms
+        if (
+            ARGS.sensor_profiling
+            and (self.control_steps == 1 or self.control_steps % 100 == 0)
+        ):
+            print(
+                "RACER_3D_SAFETY_DECISION_PROFILE "
+                + json.dumps(
+                    {
+                        "control_step": self.control_steps,
+                        "simulation_time_s": self.elapsed,
+                        "uav_count": self.drone_count,
+                        "safety_decision_batch_ms": safety_decision_batch_ms,
+                        "safety_decision_worker_max_ms": worker_max_ms,
+                        "control_backend": (
+                            "cpp_openmp_batch"
+                            if batch_result is not None
+                            else "python_per_uav"
+                        ),
+                        "control_components_mean_per_uav_ms": (
+                            {
+                                name: float(
+                                    np.mean(batch_result[result_name])
+                                )
+                                for name, result_name in (
+                                    (
+                                        "constraint_build",
+                                        "constraint_build_ms",
+                                    ),
+                                    (
+                                        "obstacle_projection",
+                                        "obstacle_projection_ms",
+                                    ),
+                                    ("swarm_cbf", "swarm_cbf_ms"),
+                                    ("so3", "so3_ms"),
+                                )
+                            }
+                            if batch_result is not None
+                            else None
+                        ),
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+        if batch_result is not None:
+            applied_batch = np.asarray(
+                batch_result["applied_commands"], dtype=float
+            )
+            intervention_batch = np.asarray(
+                batch_result["intervened"], dtype=bool
+            )
+            force_batch = np.asarray(
+                batch_result["forces"], dtype=np.float32
+            )
+            torque_batch = np.asarray(
+                batch_result["torques"], dtype=np.float32
+            )
+            self.motor_rpms[...] = batch_result["motor_rpm"]
+            self.motor_thrusts[...] = batch_result["motor_thrust"]
+        else:
+            applied_batch = np.zeros(
+                (self.drone_count, 3), dtype=float
+            )
+            intervention_batch = np.zeros(self.drone_count, dtype=bool)
+            force_batch = np.zeros(
+                (self.drone_count, 3), dtype=np.float32
+            )
+            torque_batch = np.zeros(
+                (self.drone_count, 3), dtype=np.float32
+            )
+            for (
+                drone_id,
+                applied_command,
+                wrench,
+                intervened,
+                _safety_decision_ms,
+            ) in control_results:
+                applied_batch[drone_id] = applied_command
+                intervention_batch[drone_id] = intervened
+                force_batch[drone_id] = wrench.local_force
+                torque_batch[drone_id] = wrench.local_torque
+                self.motor_thrusts[drone_id] = wrench.motor_thrusts
+
+        for drone_id in range(self.drone_count):
+            applied_command = applied_batch[drone_id]
+            intervened = intervention_batch[drone_id]
             velocity = states[drone_id][2]
             if intervened:
                 self.safety_interventions += 1
             self.applied_commands[drone_id] = applied_command
-            if ARGS.vehicle_model == "racer_so3":
-                self.motor_rpms[drone_id] = wrench.motor_rpm
-            # Tensor force commands are one-substep values. Submit force and
-            # torque together so neither component overwrites the other.
-            body._rigid_prim_view.apply_forces_and_torques_at_pos(
-                forces=wrench.local_force.reshape((1, 3)).astype(np.float32),
-                torques=wrench.local_torque.reshape((1, 3)).astype(np.float32),
-                is_global=False,
-            )
-            self.motor_thrusts[drone_id] = wrench.motor_thrusts
             if (
                 ARGS.diagnostics
                 and drone_id == 0
                 and self.control_steps in (1, 10, 50, 250, 500, 1000, 1500)
             ):
-                diag_position, diag_orientation = body.get_world_pose()
+                diag_position = self.pre_control_positions[drone_id]
+                diag_orientation = self.pre_control_orientations[drone_id]
                 print(
                     "RACER_3D_CONTROL "
                     + json.dumps(
                         {
                             "step": self.control_steps,
                             "mass": float(
-                                _backend_array_to_numpy(
-                                    body._rigid_prim_view.get_masses()
-                                ).reshape(-1)[0]
+                                self.rigid_body_masses[drone_id]
                             ),
                             "position": np.asarray(diag_position).tolist(),
                             "orientation_wxyz": np.asarray(
@@ -1657,12 +2492,18 @@ class IsaacRacer3DBridge(Node):
                                 drone_id
                             ].tolist(),
                             "applied_command": applied_command.tolist(),
-                            "angular_velocity": angular_velocities[
+                            "angular_velocity": self.pre_control_angular_velocities[
                                 drone_id
                             ].tolist(),
-                            "local_force": wrench.local_force.tolist(),
-                            "local_torque": wrench.local_torque.tolist(),
-                            "motors": wrench.motor_thrusts.tolist(),
+                            "local_force": force_batch[
+                                drone_id
+                            ].tolist(),
+                            "local_torque": torque_batch[
+                                drone_id
+                            ].tolist(),
+                            "motors": self.motor_thrusts[
+                                drone_id
+                            ].tolist(),
                             "motor_rpm": (
                                 self.motor_rpms[drone_id].tolist()
                                 if ARGS.vehicle_model == "racer_so3"
@@ -1686,6 +2527,18 @@ class IsaacRacer3DBridge(Node):
                     f"phase=control_drone_{drone_id}_done",
                     flush=True,
                 )
+        # Match the old local-frame, one-substep force semantics while issuing
+        # exactly one PhysX tensor write for all UAVs.
+        force_write_started = time.perf_counter()
+        self.rigid_body_view.apply_forces_and_torques_at_pos(
+            forces=force_batch,
+            torques=torque_batch,
+            is_global=False,
+        )
+        self._record_rigid_io_profile(
+            "force_torque_batch_write",
+            1000.0 * (time.perf_counter() - force_write_started),
+        )
         self.propeller_visuals.step(self.motor_rpms, PHYSICS_DT)
         if phase_checkpoint:
             print(
@@ -1694,11 +2547,17 @@ class IsaacRacer3DBridge(Node):
                 flush=True,
             )
 
-    def _read_physics(self, count_distance: bool = True) -> None:
-        for drone_id, body in enumerate(self.bodies):
-            position, _ = body.get_world_pose()
-            velocity = np.asarray(body.get_linear_velocity(), dtype=float)
-            position = np.asarray(position, dtype=float)
+    def _read_physics(
+        self, count_distance: bool = True, batch_state=None
+    ) -> None:
+        if batch_state is None:
+            batch_state = self._read_rigid_body_state_batch(
+                "post_state_batch_read"
+            )
+        positions, orientations, velocities, angular_velocities = batch_state
+        for drone_id, (position, velocity) in enumerate(
+            zip(positions, velocities)
+        ):
             if count_distance and self.previous_positions[drone_id] is not None:
                 step = float(
                     np.linalg.norm(
@@ -1715,8 +2574,219 @@ class IsaacRacer3DBridge(Node):
                 else (velocity - previous_velocity) / PHYSICS_DT
             )
             self.previous_velocities[drone_id] = velocity.copy()
-            self.positions[drone_id] = position
-            self.velocities[drone_id] = velocity
+        self.positions = positions
+        self.orientations = orientations
+        self.velocities = velocities
+        self.angular_velocities = angular_velocities
+
+    def _on_contact_report_event(self, contact_headers, _contact_data) -> None:
+        """Maintain active collider pairs without per-step sensor polling."""
+
+        started = time.perf_counter()
+        for header in contact_headers:
+            pair_key = tuple(
+                sorted((int(header.collider0), int(header.collider1)))
+            )
+            found_or_persisting = header.type in (
+                ContactEventType.CONTACT_FOUND,
+                ContactEventType.CONTACT_PERSIST,
+            )
+            for collider_handle in (header.collider0, header.collider1):
+                handle = int(collider_handle)
+                if handle not in self.contact_sensor_by_collider_handle:
+                    collider_path = str(
+                        PhysicsSchemaTools.intToSdfPath(collider_handle)
+                    )
+                    self.contact_sensor_by_collider_handle[handle] = (
+                        self.contact_sensor_by_collider_path.get(collider_path)
+                    )
+                sensor_key = self.contact_sensor_by_collider_handle[handle]
+                if sensor_key is None:
+                    continue
+                drone_id, sensor_index = sensor_key
+                pairs = self.contact_pairs_by_sensor[drone_id][sensor_index]
+                if found_or_persisting:
+                    pairs.add(pair_key)
+                else:
+                    pairs.discard(pair_key)
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        profile = self.contact_profile["event_callback"]
+        profile["calls"] += 1
+        profile["headers"] += len(contact_headers)
+        profile["total_ms"] += elapsed_ms
+        profile["max_ms"] = max(profile["max_ms"], elapsed_ms)
+
+    def _read_contact_fast_path(self):
+        """Read bool/force only for colliders marked active by PhysX."""
+
+        started = time.perf_counter()
+        active = np.zeros(self.drone_count, dtype=bool)
+        force = np.zeros(self.drone_count, dtype=float)
+        calls = 0
+        for drone_id, sensors in enumerate(self.contacts):
+            for sensor_index, sensor in enumerate(sensors):
+                if not self.contact_pairs_by_sensor[drone_id][sensor_index]:
+                    continue
+                # ContactSensor.get_current_frame() always fetches the raw
+                # contact buffer in Isaac Sim 5.1. The underlying reading API
+                # retrieves only is_valid/in_contact/value and preserves the
+                # former scalar force definition.
+                reading = (
+                    sensor._contact_sensor_interface.get_sensor_reading(
+                        sensor.prim_path
+                    )
+                )
+                calls += 1
+                if not reading.is_valid:
+                    continue
+                sensor_force = float(reading.value)
+                force[drone_id] = max(force[drone_id], sensor_force)
+                active[drone_id] = (
+                    active[drone_id]
+                    or (
+                        bool(reading.in_contact)
+                        and sensor_force > 1.0e-4
+                    )
+                )
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        profile = self.contact_profile["fast_path"]
+        profile["steps"] += 1
+        profile["light_sensor_reading_calls"] += calls
+        profile["total_ms"] += elapsed_ms
+        profile["max_ms"] = max(profile["max_ms"], elapsed_ms)
+        return active, force
+
+    def _read_contact_legacy_reference(self):
+        """Poll the former sensors only during explicit regression runs."""
+
+        started = time.perf_counter()
+        active = np.zeros(self.drone_count, dtype=bool)
+        force = np.zeros(self.drone_count, dtype=float)
+        calls = 0
+        for drone_id, sensors in enumerate(self.contacts):
+            frames = [sensor.get_current_frame() for sensor in sensors]
+            calls += len(sensors)
+            force[drone_id] = max(
+                (float(frame.get("force", 0.0)) for frame in frames),
+                default=0.0,
+            )
+            active[drone_id] = any(
+                bool(frame.get("in_contact", False))
+                and float(frame.get("force", 0.0)) > 1.0e-4
+                for frame in frames
+            )
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        profile = self.contact_profile["legacy_reference"]
+        profile["steps"] += 1
+        profile["sensor_get_current_frame_calls"] += calls
+        profile["total_ms"] += elapsed_ms
+        profile["max_ms"] = max(profile["max_ms"], elapsed_ms)
+        return active, force
+
+    def _record_contact_event(self, drone_id: int, force: float) -> None:
+        nearest_name = "external_usd"
+        center_clearance = None
+        body_clearance = None
+        if ARGS.scene_usd is None:
+            clearances = [
+                point_box_signed_clearance(
+                    self.positions[drone_id], obstacle
+                )
+                for obstacle in SCENARIO.obstacles
+            ]
+            nearest_index = int(np.argmin(clearances))
+            nearest_name = SCENARIO.obstacles[nearest_index].name
+            center_clearance = clearances[nearest_index]
+            body_clearance = center_clearance - DRONE_RADIUS
+        print(
+            "RACER_3D_CONTACT "
+            + json.dumps(
+                {
+                    "drone_id": drone_id,
+                    "elapsed": self.elapsed,
+                    "position": self.positions[drone_id].tolist(),
+                    "velocity": self.velocities[drone_id].tolist(),
+                    "command": self.commands[drone_id].tolist(),
+                    "applied_command": self.applied_commands[
+                        drone_id
+                    ].tolist(),
+                    "force": force,
+                    "sweep_constraints": [
+                        {
+                            "direction": direction.tolist(),
+                            "free_travel": distance,
+                        }
+                        for direction, distance
+                        in self.scene_query_constraints[drone_id]
+                    ],
+                    "nearest_obstacle": nearest_name,
+                    "center_clearance": center_clearance,
+                    "body_clearance": body_clearance,
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+
+    def _update_contact_metrics(self) -> None:
+        active, force = self._read_contact_fast_path()
+        if ARGS.contact_regression:
+            legacy_active, legacy_force = (
+                self._read_contact_legacy_reference()
+            )
+            mismatch = active != legacy_active
+            self.contact_regression["compared_steps"] += 1
+            self.contact_regression["active_mismatch_steps"] += int(
+                bool(np.any(mismatch))
+            )
+            self.contact_regression[
+                "active_mismatch_uav_samples"
+            ] += int(np.count_nonzero(mismatch))
+            absolute_error = np.abs(force - legacy_force)
+            self.contact_regression[
+                "force_compared_uav_samples"
+            ] += self.drone_count
+            self.contact_regression[
+                "force_absolute_error_sum_n"
+            ] += float(np.sum(absolute_error))
+            self.contact_regression[
+                "force_max_absolute_error_n"
+            ] = max(
+                self.contact_regression[
+                    "force_max_absolute_error_n"
+                ],
+                float(np.max(absolute_error, initial=0.0)),
+            )
+            for drone_id in range(self.drone_count):
+                if (
+                    legacy_active[drone_id]
+                    and not self.legacy_contact_active[drone_id]
+                ):
+                    self.contact_regression[
+                        "legacy_collision_events"
+                    ] += 1
+                self.legacy_contact_active[drone_id] = bool(
+                    legacy_active[drone_id]
+                )
+            self.contact_regression[
+                "legacy_max_contact_force_n"
+            ] = max(
+                self.contact_regression["legacy_max_contact_force_n"],
+                float(np.max(legacy_force, initial=0.0)),
+            )
+
+        for drone_id in range(self.drone_count):
+            is_active = bool(active[drone_id])
+            contact_force = float(force[drone_id])
+            # Preserve the existing per-UAV non-contact -> contact edge
+            # definition exactly; persistent contact never increments again.
+            if is_active and not self.contact_active[drone_id]:
+                self.collision_events += 1
+                self._record_contact_event(drone_id, contact_force)
+            self.contact_active[drone_id] = is_active
+            self.max_contact_force = max(
+                self.max_contact_force, contact_force
+            )
 
     def _update_metrics(self) -> None:
         distances = list(pairwise_distances(self.positions))
@@ -1746,66 +2816,7 @@ class IsaacRacer3DBridge(Node):
                         )
                         - VEHICLE_RADIUS,
                     )
-        for drone_id, sensors in enumerate(self.contacts):
-            frames = [sensor.get_current_frame() for sensor in sensors]
-            force = max(
-                (float(frame.get("force", 0.0)) for frame in frames),
-                default=0.0,
-            )
-            active = any(
-                bool(frame.get("in_contact", False))
-                and float(frame.get("force", 0.0)) > 1.0e-4
-                for frame in frames
-            )
-            if active and not self.contact_active[drone_id]:
-                self.collision_events += 1
-                nearest_name = "external_usd"
-                center_clearance = None
-                body_clearance = None
-                if ARGS.scene_usd is None:
-                    clearances = [
-                        point_box_signed_clearance(
-                            self.positions[drone_id], obstacle
-                        )
-                        for obstacle in SCENARIO.obstacles
-                    ]
-                    nearest_index = int(np.argmin(clearances))
-                    nearest_name = SCENARIO.obstacles[
-                        nearest_index
-                    ].name
-                    center_clearance = clearances[nearest_index]
-                    body_clearance = center_clearance - DRONE_RADIUS
-                print(
-                    "RACER_3D_CONTACT "
-                    + json.dumps(
-                        {
-                            "drone_id": drone_id,
-                            "elapsed": self.elapsed,
-                            "position": self.positions[drone_id].tolist(),
-                            "velocity": self.velocities[drone_id].tolist(),
-                            "command": self.commands[drone_id].tolist(),
-                            "applied_command": self.applied_commands[
-                                drone_id
-                            ].tolist(),
-                            "force": force,
-                            "sweep_constraints": [
-                                {
-                                    "direction": direction.tolist(),
-                                    "free_travel": distance,
-                                }
-                                for direction, distance
-                                in self.scene_query_constraints[drone_id]
-                            ],
-                            "nearest_obstacle": nearest_name,
-                            "center_clearance": center_clearance,
-                            "body_clearance": body_clearance,
-                        },
-                        sort_keys=True,
-                    ),
-                    flush=True,
-                )
-            self.contact_active[drone_id] = active
-            self.max_contact_force = max(self.max_contact_force, force)
+        self._update_contact_metrics()
 
     def step_observations(self) -> None:
         self.elapsed += PHYSICS_DT
@@ -1818,7 +2829,10 @@ class IsaacRacer3DBridge(Node):
         clock.clock.sec = seconds
         clock.clock.nanosec = nanoseconds
         self.clock_publisher.publish(clock)
-        self._read_physics()
+        post_step_state = self._read_rigid_body_state_batch(
+            "post_state_batch_read"
+        )
+        self._read_physics(batch_state=post_step_state)
         self._update_metrics()
         # This bridge intentionally does not consume its own /clock topic.
         # Stamp every source message directly with the physics time just
@@ -1830,15 +2844,46 @@ class IsaacRacer3DBridge(Node):
         if self.elapsed - self.last_depth >= DEPTH_PERIOD - 1.0e-9:
             self.last_depth = self.elapsed
             self._publish_clouds(stamp)
+        if (
+            ARGS.sensor_profiling
+            and (self.control_steps == 1 or self.control_steps % 100 == 0)
+        ):
+            print(
+                "RACER_3D_RIGID_IO_PROFILE "
+                + json.dumps(
+                    {
+                        "control_step": self.control_steps,
+                        "simulation_time_s": self.elapsed,
+                        **self.rigid_io_profile_report(),
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+            print(
+                "RACER_3D_CONTACT_PROFILE "
+                + json.dumps(
+                    {
+                        "control_step": self.control_steps,
+                        "simulation_time_s": self.elapsed,
+                        **self.contact_profile_report(),
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
 
     def depth_render_due(self) -> bool:
         return self.elapsed - self.last_depth >= DEPTH_PERIOD - PHYSICS_DT
 
     def _publish_odometry_and_imu(self, stamp) -> None:
-        for drone_id, body in enumerate(self.bodies):
-            position, orientation = body.get_world_pose()
-            velocity = body.get_linear_velocity()
-            angular = body.get_angular_velocity()
+        for drone_id in range(self.drone_count):
+            position = self.positions[drone_id]
+            orientation = self.orientations[drone_id]
+            velocity = self.velocities[drone_id]
+            angular = self.angular_velocities[drone_id]
             message = Odometry()
             message.header.stamp = stamp
             message.header.frame_id = "map"
@@ -1889,36 +2934,6 @@ class IsaacRacer3DBridge(Node):
         return world.astype(np.float32), ranges < 6.97
 
     @staticmethod
-    def _safety_lidar_world_points(
-        raw_points: np.ndarray,
-        position: Sequence[float],
-        orientation: Sequence[float],
-    ) -> np.ndarray:
-        values = np.asarray(raw_points, dtype=float).reshape((-1, 3))
-        finite = np.all(np.isfinite(values), axis=1)
-        values = values[finite]
-        ranges = np.linalg.norm(values, axis=1)
-        valid = (
-            (ranges > SELF_FILTER_RADIUS)
-            & (ranges <= SAFETY_POINT_MEMORY_RADIUS + 0.05)
-        )
-        values = values[valid]
-        ranges = ranges[valid]
-        if len(values) > SAFETY_LIDAR_POINT_LIMIT:
-            nearest = np.argpartition(
-                ranges, SAFETY_LIDAR_POINT_LIMIT - 1
-            )[:SAFETY_LIDAR_POINT_LIMIT]
-            values = values[nearest]
-        rotation = quaternion_matrix(orientation)
-        sensor_origin = (
-            np.asarray(position, dtype=float)
-            + rotation @ LIDAR_TRANSLATION
-        )
-        return (
-            values @ rotation.T + sensor_origin
-        ).astype(np.float32)
-
-    @staticmethod
     def _depth_world_points(
         depth_image: np.ndarray,
         position: Sequence[float],
@@ -1963,77 +2978,149 @@ class IsaacRacer3DBridge(Node):
     def _transform_sensor_capture(capture):
         """Pure NumPy per-UAV work suitable for the sensor worker pool."""
 
-        drone_id, position, orientation, raw, raw_safety = capture
+        drone_id, position, orientation, raw, _raw_safety = capture
         if ARGS.vehicle_model == "racer_so3":
             mapping_points, mapping_hit = (
                 IsaacRacer3DBridge._depth_world_points(
                     raw, position, orientation
                 )
             )
-            safety_hits = np.empty((0, 3), dtype=float)
-            if raw_safety is not None:
-                safety_hits = IsaacRacer3DBridge._safety_lidar_world_points(
-                    raw_safety, position, orientation
-                )
         else:
             mapping_points, mapping_hit = (
                 IsaacRacer3DBridge._legacy_lidar_world_points(
                     raw, position, orientation
                 )
             )
-            safety_hits = np.empty((0, 3), dtype=float)
         return (
             drone_id,
             np.asarray(position, dtype=float),
             tuple(np.asarray(raw).shape),
             mapping_points,
             mapping_hit,
-            safety_hits,
+            np.empty((0, 3), dtype=float),
         )
 
     def _publish_clouds(self, stamp) -> None:
-        captures = []
-        for drone_id, (body, range_sensor) in enumerate(
-            zip(self.bodies, self.range_sensors)
-        ):
-            position, orientation = body.get_world_pose()
-            if ARGS.vehicle_model == "racer_so3":
-                raw = range_sensor.get_depth()
-                if raw is None:
-                    continue
-                raw = _backend_array_to_numpy(raw)
-                # Only the original forward depth-camera rays are published
-                # to RACER. The 360-degree lidar belongs exclusively to the
-                # independent low-level safety layer and must not alter map,
-                # frontier, allocation or trajectory decisions.
-                safety_frame = self.safety_sensors[
-                    drone_id
-                ].get_current_frame()
-                raw_safety = safety_frame.get("point_cloud")
-                if raw_safety is not None:
-                    raw_safety = _backend_array_to_numpy(raw_safety)
-            else:
-                raw = range_sensor.get_current_frame().get("point_cloud")
-                if raw is None:
-                    continue
-                raw = _backend_array_to_numpy(raw)
-                raw_safety = None
-            captures.append(
-                (
-                    drone_id,
-                    np.asarray(position, dtype=float),
-                    np.asarray(orientation, dtype=float),
-                    raw,
-                    raw_safety,
+        frame_started = time.perf_counter()
+        raycasting_ms = 0.0
+        safety_raycasting_ms = 0.0
+        safety_pointcloud_process_ms = 0.0
+        rtx_render_step_ms = self.pending_rtx_render_step_ms
+        self.pending_rtx_render_step_ms = 0.0
+        decode_backprojection_ms = 0.0
+        # Reuse the single post-world-step tensor snapshot. Ray casting,
+        # legacy sensors and PointCloud2 construction all observe the same
+        # state as odometry, IMU, metrics and trajectory recording.
+        vehicle_positions = self.positions
+        vehicle_orientations = self.orientations
+        safety_hits_by_drone = {}
+        if ARGS.vehicle_model == "racer_so3":
+            if self.warp_raycaster is None:
+                raise RuntimeError(
+                    "RACER SO3 execution safety requires the Warp ray caster"
                 )
+            (
+                compact_safety_points,
+                compact_safety_distances,
+                safety_raycasting_ms,
+                gpu_safety_process_ms,
+            ) = self.warp_raycaster.cast_safety(
+                vehicle_positions,
+                vehicle_orientations,
+                quaternion_matrix,
+            )
+            cpu_safety_process_started = time.perf_counter()
+            for drone_id, (points, distances) in enumerate(
+                zip(compact_safety_points, compact_safety_distances)
+            ):
+                # GPU range filtering and voxelization have already reduced
+                # the scan. Retain the former conservative nearest-point cap
+                # before handing the small current scan to the supervisor.
+                if len(points) > SAFETY_LIDAR_POINT_LIMIT:
+                    nearest = np.argpartition(
+                        distances, SAFETY_LIDAR_POINT_LIMIT - 1
+                    )[:SAFETY_LIDAR_POINT_LIMIT]
+                    points = points[nearest]
+                safety_hits_by_drone[drone_id] = np.asarray(
+                    points, dtype=np.float32
+                )
+            safety_pointcloud_process_ms = (
+                gpu_safety_process_ms
+                + 1000.0
+                * (time.perf_counter() - cpu_safety_process_started)
+            )
+        if (
+            ARGS.vehicle_model == "racer_so3"
+            and ARGS.depth_sensor_backend == "warp"
+        ):
+            (
+                points_batch,
+                hit_batch,
+                _hit_distances,
+                raycasting_ms,
+            ) = self.warp_raycaster.cast(
+                vehicle_positions,
+                vehicle_orientations,
+                quaternion_matrix,
+            )
+            transformed = []
+            for drone_id, position in enumerate(vehicle_positions):
+                transformed.append(
+                    (
+                        drone_id,
+                        position,
+                        (self.warp_raycaster.ray_count, 3),
+                        points_batch[drone_id],
+                        hit_batch[drone_id],
+                        safety_hits_by_drone[drone_id],
+                    )
+                )
+        else:
+            captures = []
+            for drone_id, range_sensor in enumerate(self.range_sensors):
+                position = vehicle_positions[drone_id]
+                orientation = vehicle_orientations[drone_id]
+                if ARGS.vehicle_model == "racer_so3":
+                    raw = range_sensor.get_depth()
+                    if raw is None:
+                        continue
+                    raw = _backend_array_to_numpy(raw)
+                else:
+                    raw = range_sensor.get_current_frame().get("point_cloud")
+                    if raw is None:
+                        continue
+                    raw = _backend_array_to_numpy(raw)
+                captures.append(
+                    (
+                        drone_id,
+                        np.asarray(position, dtype=float),
+                        np.asarray(orientation, dtype=float),
+                        raw,
+                        None,
+                    )
+                )
+            transform_started = time.perf_counter()
+            if self.sensor_executor is None:
+                transformed = list(map(self._transform_sensor_capture, captures))
+            else:
+                transformed = list(
+                    self.sensor_executor.map(
+                        self._transform_sensor_capture, captures
+                    )
+                )
+            if ARGS.vehicle_model == "racer_so3":
+                transformed = [
+                    (*entry[:-1], safety_hits_by_drone[entry[0]])
+                    for entry in transformed
+                ]
+            decode_backprojection_ms = 1000.0 * (
+                time.perf_counter() - transform_started
             )
 
-        if self.sensor_executor is None:
-            transformed = map(self._transform_sensor_capture, captures)
-        else:
-            transformed = self.sensor_executor.map(
-                self._transform_sensor_capture, captures
-            )
+        pointcloud2_ms = 0.0
+        publish_ms = 0.0
+        published_clouds = 0
+        hit_count = 0
         for (
             drone_id,
             position,
@@ -2044,55 +3131,13 @@ class IsaacRacer3DBridge(Node):
         ) in transformed:
             if len(mapping_points) < 12:
                 continue
+            hit_count += int(np.count_nonzero(mapping_hit))
             camera_hits = np.asarray(mapping_points[mapping_hit], dtype=float)
-            current_hits = (
-                np.concatenate((camera_hits, safety_hits), axis=0)
-                if len(safety_hits)
-                else camera_hits
-            )
-            history = self.safety_point_history[drone_id]
-            history.append((self.elapsed, current_hits))
-            while (
-                history
-                and self.elapsed - history[0][0]
-                > SAFETY_POINT_MEMORY_SECONDS
-            ):
-                history.popleft()
-            nonempty_history = [
-                entry[1] for entry in history if len(entry[1])
-            ]
-            remembered = (
-                np.concatenate(nonempty_history, axis=0)
-                if nonempty_history
-                else np.empty((0, 3), dtype=float)
-            )
-            center = np.asarray(position, dtype=float)
-            offsets = remembered - center
-            valid = (
-                np.all(np.isfinite(remembered), axis=1)
-                & (
-                    np.linalg.norm(offsets, axis=1)
-                    <= SAFETY_POINT_MEMORY_RADIUS
-                )
-            )
-            remembered = remembered[valid]
-            if len(remembered):
-                voxels = np.floor(
-                    remembered / SAFETY_POINT_VOXEL_SIZE
-                ).astype(np.int64)
-                _, unique_indices = np.unique(
-                    voxels, axis=0, return_index=True
-                )
-                remembered = remembered[np.sort(unique_indices)]
-                if len(remembered) > SAFETY_POINT_LIMIT:
-                    distances = np.linalg.norm(
-                        remembered - center, axis=1
-                    )
-                    nearest = np.argpartition(
-                        distances, SAFETY_POINT_LIMIT - 1
-                    )[:SAFETY_POINT_LIMIT]
-                    remembered = remembered[nearest]
-            self.safety_points[drone_id] = remembered
+            # The supervisor sees only the current low-density 360-degree
+            # safety scan. Mapping-camera hits remain exclusive to RACER's
+            # PointCloud2/SDFMap path and are never copied into safety state.
+            self.safety_points[drone_id] = safety_hits
+            self._refresh_execution_safety_points(drone_id)
             if self.debug_draw is not None and len(camera_hits):
                 combined = np.concatenate(
                     (self.visual_map_points, camera_hits.astype(np.float32)),
@@ -2126,7 +3171,11 @@ class IsaacRacer3DBridge(Node):
                     + json.dumps(
                         {
                             "sensor": (
-                                "depth_plus_360_safety_lidar"
+                                (
+                                    "warp_raycaster_camera_plus_gpu_360_safety_rays"
+                                    if ARGS.depth_sensor_backend == "warp"
+                                    else "rtx_depth_plus_gpu_360_safety_rays"
+                                )
                                 if ARGS.vehicle_model == "racer_so3"
                                 else "legacy_rotating_lidar"
                             ),
@@ -2144,10 +3193,97 @@ class IsaacRacer3DBridge(Node):
                     flush=True,
                 )
                 self.raw_diagnostics_printed = True
-            self.cloud_publishers[drone_id].publish(
-                create_xyzi_cloud(stamp, "world", mapping_points, mapping_hit)
+            construct_started = time.perf_counter()
+            message = create_xyzi_cloud(
+                stamp, "world", mapping_points, mapping_hit
+            )
+            pointcloud2_ms += 1000.0 * (
+                time.perf_counter() - construct_started
+            )
+            publish_started = time.perf_counter()
+            self.cloud_publishers[drone_id].publish(message)
+            publish_ms += 1000.0 * (
+                time.perf_counter() - publish_started
             )
             self.cloud_frames += 1
+            published_clouds += 1
+
+        total_ms = (
+            rtx_render_step_ms
+            + 1000.0 * (time.perf_counter() - frame_started)
+        )
+        sensor_postprocess_ms = max(
+            0.0,
+            total_ms
+            - rtx_render_step_ms
+            - raycasting_ms
+            - safety_raycasting_ms
+            - safety_pointcloud_process_ms
+            - decode_backprojection_ms
+            - pointcloud2_ms
+            - publish_ms,
+        )
+        self.sensor_profile_frames += 1
+        profile_values = {
+            "raycasting": raycasting_ms,
+            "safety_raycasting": safety_raycasting_ms,
+            "safety_pointcloud_process": safety_pointcloud_process_ms,
+            "rtx_render_step": rtx_render_step_ms,
+            "decode_backprojection": decode_backprojection_ms,
+            "sensor_postprocess": sensor_postprocess_ms,
+            "pointcloud2": pointcloud2_ms,
+            "publish": publish_ms,
+            "total": total_ms,
+        }
+        for name, value in profile_values.items():
+            self.sensor_profile_sums_ms[name] += value
+            self.sensor_profile_max_ms[name] = max(
+                self.sensor_profile_max_ms[name], value
+            )
+        if ARGS.sensor_profiling:
+            print(
+                "RACER_3D_SENSOR_PROFILE "
+                + json.dumps(
+                    {
+                        "backend": (
+                            ARGS.depth_sensor_backend
+                            if ARGS.vehicle_model == "racer_so3"
+                            else "physx_lidar"
+                        ),
+                        "frame": self.sensor_profile_frames,
+                        "simulation_time_s": self.elapsed,
+                        "uav_clouds": published_clouds,
+                        "rays_per_uav": (
+                            self.warp_raycaster.ray_count
+                            if self.warp_raycaster is not None
+                            else ARGS.camera_ray_budget
+                        ),
+                        "hit_points": hit_count,
+                        "raycasting_ms": raycasting_ms,
+                        "safety_raycasting_ms": safety_raycasting_ms,
+                        "safety_pointcloud_process_ms": (
+                            safety_pointcloud_process_ms
+                        ),
+                        "safety_decision_last_batch_ms": (
+                            self.last_safety_decision_ms
+                        ),
+                        "safety_points": int(
+                            sum(len(points) for points in self.safety_points)
+                        ),
+                        "rtx_render_step_ms": rtx_render_step_ms,
+                        "decode_backprojection_ms": (
+                            decode_backprojection_ms
+                        ),
+                        "sensor_postprocess_ms": sensor_postprocess_ms,
+                        "pointcloud2_construct_ms": pointcloud2_ms,
+                        "publish_ms": publish_ms,
+                        "sensor_total_ms": total_ms,
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
 
     def shutdown_sensor_workers(self) -> None:
         if self.sensor_executor is not None:
@@ -2190,8 +3326,13 @@ class IsaacRacer3DBridge(Node):
                 else "local rotor thrust and attitude torque"
             ),
             "sensor_source": (
-                "Isaac ideal pinhole depth camera plus 360-degree "
-                "near-field PhysX safety lidar"
+                (
+                    "NVIDIA Warp GPU-batched static-mesh pinhole ray caster "
+                    "plus GPU-filtered 360-degree Warp safety rays"
+                    if ARGS.depth_sensor_backend == "warp"
+                    else "Isaac RTX ideal pinhole depth camera plus "
+                    "GPU-filtered 360-degree Warp safety rays"
+                )
                 if ARGS.vehicle_model == "racer_so3"
                 else "Isaac RotatingLidarPhysX point cloud"
             ),
@@ -2215,19 +3356,27 @@ class IsaacRacer3DBridge(Node):
                     "rate_hz": 1.0 / DEPTH_PERIOD,
                     "skip_pixel": DEPTH_SKIP_PIXEL,
                     "point_cloud_ray_budget": ARGS.camera_ray_budget,
+                    "depth_sensor_backend": ARGS.depth_sensor_backend,
+                    "warp_raycaster": self.warp_raycaster_report,
                     "cpu_sensor_workers": self.sensor_worker_count,
                     "self_return_filter_radius_m": SELF_FILTER_RADIUS,
                     "mount_translation_body_m": CAMERA_TRANSLATION.tolist(),
-                    "safety_lidar_horizontal_fov_deg": 360.0,
-                    "safety_lidar_vertical_fov_deg": 180.0,
-                    "safety_lidar_horizontal_resolution_deg": (
+                    "mount_orientation_body_wxyz": [1.0, 0.0, 0.0, 0.0],
+                    "optical_to_body_axes": "[z,-x,-y] -> [x,y,z]",
+                    "safety_ray_horizontal_fov_deg": 360.0,
+                    "safety_ray_vertical_fov_deg": 180.0,
+                    "safety_ray_horizontal_resolution_deg": (
                         SAFETY_LIDAR_HORIZONTAL_RESOLUTION_DEG
                     ),
-                    "safety_lidar_vertical_resolution_deg": (
+                    "safety_ray_vertical_resolution_deg": (
                         SAFETY_LIDAR_VERTICAL_RESOLUTION_DEG
                     ),
-                    "safety_lidar_min_range_m": SELF_FILTER_RADIUS,
-                    "safety_lidar_max_range_m": SAFETY_POINT_MEMORY_RADIUS,
+                    "safety_ray_min_range_m": SELF_FILTER_RADIUS,
+                    "safety_ray_max_range_m": SAFETY_RAY_MAX_RANGE,
+                    "safety_ray_voxel_size_m": SAFETY_POINT_VOXEL_SIZE,
+                    "safety_ray_point_limit_per_uav": (
+                        SAFETY_LIDAR_POINT_LIMIT
+                    ),
                 }
                 if ARGS.vehicle_model == "racer_so3"
                 else {
@@ -2240,6 +3389,7 @@ class IsaacRacer3DBridge(Node):
             "collision_events": self.collision_events,
             "physics_contact_events": self.collision_events,
             "max_contact_force": self.max_contact_force,
+            "contact_profile": self.contact_profile_report(),
             "min_inter_drone": (
                 self.min_inter_drone
                 if math.isfinite(self.min_inter_drone)
@@ -2252,6 +3402,17 @@ class IsaacRacer3DBridge(Node):
             ),
             "path_lengths": self.path_lengths,
             "start_positions": [list(point) for point in STARTS],
+            "startup_recovery": {
+                "enabled": ARGS.startup_free_space_yaw,
+                "selected_yaws_rad": self.startup_yaws,
+                "scan_duration_s": ARGS.startup_scan_duration,
+                "unknown_corridor_distance_m": (
+                    ARGS.startup_unknown_corridor_distance
+                ),
+                "corridor_clearances_m": self.startup_corridor_clearances,
+                "corridor_enabled": self.startup_corridor_enabled,
+                "settle_duration_s": ARGS.startup_settle_duration,
+            },
             "positions": [point.tolist() for point in self.positions],
             "motor_thrusts_n": [
                 values.tolist() for values in self.motor_thrusts
@@ -2264,6 +3425,37 @@ class IsaacRacer3DBridge(Node):
             "odometry_rate_hz": 1.0 / ODOM_PERIOD,
             "imu_rate_hz": 1.0 / ODOM_PERIOD,
             "point_cloud_frames": self.cloud_frames,
+            "sensor_profile": {
+                "frames": self.sensor_profile_frames,
+                "mean_ms": {
+                    name: (
+                        total / self.sensor_profile_frames
+                        if self.sensor_profile_frames
+                        else 0.0
+                    )
+                    for name, total in self.sensor_profile_sums_ms.items()
+                },
+                "max_ms": self.sensor_profile_max_ms,
+            },
+            "safety_decision_profile": {
+                "frames": self.safety_decision_profile_frames,
+                "mean_batch_ms": (
+                    self.safety_decision_profile_sum_ms
+                    / self.safety_decision_profile_frames
+                    if self.safety_decision_profile_frames
+                    else 0.0
+                ),
+                "max_batch_ms": self.safety_decision_profile_max_ms,
+                "mean_worker_max_ms": (
+                    self.safety_decision_worker_max_sum_ms
+                    / self.safety_decision_profile_frames
+                    if self.safety_decision_profile_frames
+                    else 0.0
+                ),
+                "max_worker_ms": self.safety_decision_worker_max_max_ms,
+            },
+            "control_batch_profile": self.control_batch_profile_report(),
+            "rigid_body_io_profile": self.rigid_io_profile_report(),
             "safety_point_refresh_hz": 1.0 / DEPTH_PERIOD,
             "safety_interventions": self.safety_interventions,
             "scene_query_updates": self.scene_query_updates,
@@ -2287,7 +3479,14 @@ class IsaacRacer3DBridge(Node):
 
 
 def main() -> None:
-    world, bodies, range_sensors, safety_sensors, contacts = build_world()
+    (
+        world,
+        bodies,
+        rigid_body_view,
+        range_sensors,
+        safety_sensors,
+        contacts,
+    ) = build_world()
     if ARGS.visualize_exploration:
         start_center = np.mean(np.asarray(STARTS, dtype=float), axis=0)
         camera_target = np.asarray(
@@ -2298,11 +3497,52 @@ def main() -> None:
         )
         set_camera_view(camera_eye, camera_target)
         simulation_app.update()
+    warp_raycaster = None
+    if ARGS.vehicle_model == "racer_so3":
+        warp_raycaster = WarpRayCasterCameraBatch(
+            omni.usd.get_context().get_stage(),
+            camera_count=len(bodies),
+            image_width=DEPTH_WIDTH,
+            image_height=DEPTH_HEIGHT,
+            sample_rows=DEPTH_SAMPLE_ROWS,
+            sample_cols=DEPTH_SAMPLE_COLS,
+            fx=DEPTH_FX,
+            fy=DEPTH_FY,
+            cx=DEPTH_CX,
+            cy=DEPTH_CY,
+            near_depth=DEPTH_MIN_RANGE,
+            map_depth=DEPTH_MAP_RANGE,
+            render_depth=DEPTH_RENDER_HORIZON,
+            mount_translation=CAMERA_TRANSLATION,
+            safety_horizontal_resolution_deg=(
+                SAFETY_LIDAR_HORIZONTAL_RESOLUTION_DEG
+            ),
+            safety_vertical_resolution_deg=(
+                SAFETY_LIDAR_VERTICAL_RESOLUTION_DEG
+            ),
+            safety_near_range=SELF_FILTER_RADIUS,
+            safety_max_range=SAFETY_RAY_MAX_RANGE,
+            safety_voxel_size=SAFETY_POINT_VOXEL_SIZE,
+            safety_mount_translation=LIDAR_TRANSLATION,
+        )
+        print(
+            "RACER_3D_WARP_RAYCASTER_READY "
+            + json.dumps(warp_raycaster.report(), sort_keys=True),
+            flush=True,
+        )
     rclpy.init()
     bridge = IsaacRacer3DBridge(
-        bodies, range_sensors, safety_sensors, contacts
+        bodies,
+        rigid_body_view,
+        range_sensors,
+        safety_sensors,
+        contacts,
+        warp_raycaster=warp_raycaster,
     )
-    if ARGS.vehicle_model == "racer_so3":
+    if (
+        ARGS.vehicle_model == "racer_so3"
+        and ARGS.depth_sensor_backend == "rtx"
+    ):
         async def wait_for_depth_products() -> None:
             await asyncio.gather(
                 *(
@@ -2347,6 +3587,7 @@ def main() -> None:
                 ),
                 flush=True,
             )
+    if ARGS.vehicle_model == "racer_so3":
         # Do not spend experiment time before DDS has connected both consumers
         # of every sensor stream: the unchanged exploration node and the
         # launch-readiness trigger.  This is strictly a ROS 2/Isaac transport
@@ -2402,13 +3643,19 @@ def main() -> None:
         world.step(render=False)
     # Sensor prims need warm-up physics, but that warm-up is not part of the
     # experiment. Restore the exact launch state after callbacks are active.
-    for drone_id, body in enumerate(bodies):
-        body.set_world_pose(
-            position=np.asarray(STARTS[drone_id], dtype=float),
-            orientation=np.asarray((1.0, 0.0, 0.0, 0.0), dtype=float),
-        )
-        body.set_linear_velocity(np.zeros(3, dtype=float))
-        body.set_angular_velocity(np.zeros(3, dtype=float))
+    reset_positions = np.asarray(STARTS, dtype=np.float32)
+    reset_orientations = np.tile(
+        np.asarray((1.0, 0.0, 0.0, 0.0), dtype=np.float32),
+        (len(bodies), 1),
+    )
+    rigid_body_view.set_world_poses(
+        positions=reset_positions,
+        orientations=reset_orientations,
+    )
+    rigid_body_view.set_velocities(
+        np.zeros((len(bodies), 6), dtype=np.float32)
+    )
+    for drone_id in range(len(bodies)):
         bridge.previous_positions[drone_id] = np.asarray(
             STARTS[drone_id], dtype=float
         )
@@ -2426,22 +3673,51 @@ def main() -> None:
     bridge.last_odom = -math.inf
     bridge.last_depth = -math.inf
     bridge.cloud_frames = 0
+    bridge.sensor_profile_frames = 0
+    bridge.sensor_profile_sums_ms = {
+        name: 0.0 for name in bridge.sensor_profile_sums_ms
+    }
+    bridge.sensor_profile_max_ms = {
+        name: 0.0 for name in bridge.sensor_profile_max_ms
+    }
     bridge.control_steps = 0
     bridge.safety_interventions = 0
+    bridge.safety_decision_profile_frames = 0
+    bridge.safety_decision_profile_sum_ms = 0.0
+    bridge.safety_decision_profile_max_ms = 0.0
+    bridge.safety_decision_worker_max_sum_ms = 0.0
+    bridge.safety_decision_worker_max_max_ms = 0.0
+    bridge.last_safety_decision_ms = 0.0
+    bridge.control_batch_profile_frames = 0
+    bridge.control_batch_profile_sum_ms = 0.0
+    bridge.control_batch_profile_max_ms = 0.0
+    bridge.control_batch_openmp_threads = 0
+    bridge.control_batch_component_sum_ms = {
+        name: 0.0 for name in bridge.control_batch_component_sum_ms
+    }
+    bridge.control_batch_component_max_ms = {
+        name: 0.0 for name in bridge.control_batch_component_max_ms
+    }
+    bridge.reset_rigid_io_profile()
+    bridge.reset_contact_profile()
     bridge.scene_query_updates = 0
     bridge.scene_query_hits = 0
     bridge.scene_query_points = [
         np.empty((0, 3), dtype=float) for _ in bodies
     ]
-    bridge.last_scene_query = [-math.inf for _ in bodies]
-    bridge.applied_commands = [np.zeros(3) for _ in bodies]
-    bridge.positions = [
-        np.asarray(point, dtype=float) for point in STARTS
+    bridge.execution_safety_points = [
+        np.empty((0, 3), dtype=float) for _ in bodies
     ]
-    bridge.velocities = [np.zeros(3, dtype=float) for _ in bodies]
+    bridge.last_scene_query = [-math.inf for _ in bodies]
+    bridge.applied_commands = np.zeros((len(bodies), 3), dtype=float)
+    bridge.positions = np.asarray(STARTS, dtype=float)
+    bridge.orientations = reset_orientations.astype(float)
+    bridge.velocities = np.zeros((len(bodies), 3), dtype=float)
+    bridge.angular_velocities = np.zeros((len(bodies), 3), dtype=float)
     bridge.min_inter_drone = math.inf
     bridge.min_obstacle_clearance = math.inf
     bridge.path_lengths = [0.0 for _ in bodies]
+    bridge.configure_startup_recovery()
     bridge.update_visualization(force=True)
     if ARGS.control_probe:
         bridge.commands[0] = np.asarray(
@@ -2449,7 +3725,11 @@ def main() -> None:
         )
         bridge.yaw_targets[0] = 2.0
     offscreen_camera_textures = []
-    if ARGS.visualize_exploration and ARGS.vehicle_model == "racer_so3":
+    if (
+        ARGS.visualize_exploration
+        and ARGS.vehicle_model == "racer_so3"
+        and ARGS.depth_sensor_backend == "rtx"
+    ):
         for camera in range_sensors:
             render_product = getattr(camera, "_render_product", None)
             hydra_texture = getattr(
@@ -2478,6 +3758,12 @@ def main() -> None:
     offscreen_cameras_enabled = True
     frame = 0
     last_metrics = -math.inf
+    main_wall_started = time.monotonic()
+    main_wall_steps = 0
+    main_wall_step_sum_ms = 0.0
+    main_wall_step_max_ms = 0.0
+    main_world_step_sum_ms = 0.0
+    main_world_step_max_ms = 0.0
     print(
         f"RACER_3D_ISAAC_READY drones={len(bodies)} "
         f"duration={ARGS.duration:.1f} vehicle={ARGS.vehicle_model} "
@@ -2485,7 +3771,7 @@ def main() -> None:
         f"sensor_workers={bridge.sensor_worker_count} "
         f"scene_query_hz={1.0 / SCENE_QUERY_PERIOD:.0f} "
         f"propeller_visuals={'on' if bridge.propeller_visuals.enabled else 'off'} "
-        f"sensor={'DepthCamera+360SafetyLidar' if ARGS.vehicle_model == 'racer_so3' else 'RotatingLidarPhysX'} "
+        f"sensor={((('WarpRayCasterCamera' if ARGS.depth_sensor_backend == 'warp' else 'RTXDepthCamera') + '+GPU360SafetyRays') if ARGS.vehicle_model == 'racer_so3' else 'RotatingLidarPhysX')} "
         f"scene={ARGS.scene_usd or SCENARIO.name}",
         flush=True,
     )
@@ -2524,7 +3810,8 @@ def main() -> None:
                     flush=True,
                 )
             render_sensor = (
-                bridge.depth_render_due()
+                ARGS.depth_sensor_backend == "rtx"
+                and bridge.depth_render_due()
                 if ARGS.vehicle_model == "racer_so3"
                 else frame % max(1, ARGS.render_every) == 0
             )
@@ -2540,10 +3827,8 @@ def main() -> None:
             )
             render_frame = render_sensor or render_interactive
             # Extra wall-clock renders exist only to service the visible
-            # viewport.  Pause all five offscreen RTX camera products on
-            # those frames; re-enable them exactly when a simulation-time
-            # depth sample is due.  This preserves 30 Hz sensor semantics
-            # while avoiding five unnecessary 640x480 renders per UI frame.
+            # viewport. RTX comparison mode gates its offscreen products;
+            # Warp mode has no Hydra camera product at all.
             want_offscreen_cameras = render_sensor
             if (
                 offscreen_camera_textures
@@ -2552,9 +3837,24 @@ def main() -> None:
                 for texture in offscreen_camera_textures:
                     texture.set_updates_enabled(want_offscreen_cameras)
                 offscreen_cameras_enabled = want_offscreen_cameras
-            world.step(
-                render=render_frame
+            world_step_started = time.perf_counter()
+            world.step(render=render_frame)
+            world_step_ms = 1000.0 * (
+                time.perf_counter() - world_step_started
             )
+            main_world_step_sum_ms += world_step_ms
+            main_world_step_max_ms = max(
+                main_world_step_max_ms, world_step_ms
+            )
+            if (
+                ARGS.vehicle_model == "racer_so3"
+                and ARGS.depth_sensor_backend == "rtx"
+                and render_sensor
+            ):
+                # Isaac exposes RTX work through World.step(render=True).
+                # This complete render-bearing step includes one physics tick,
+                # hence the explicit render_step name in profiling output.
+                bridge.pending_rtx_render_step_ms = world_step_ms
             if phase_checkpoint:
                 print(
                     f"RACER_3D_PHASE step={bridge.control_steps} "
@@ -2602,11 +3902,43 @@ def main() -> None:
                 bridge.publish_metrics()
                 last_metrics = bridge.elapsed
             frame += 1
+            main_step_ms = 1000.0 * (time.monotonic() - step_started)
+            main_wall_steps += 1
+            main_wall_step_sum_ms += main_step_ms
+            main_wall_step_max_ms = max(main_wall_step_max_ms, main_step_ms)
+            if ARGS.sensor_profiling and main_wall_steps % 500 == 0:
+                main_wall_elapsed_s = time.monotonic() - main_wall_started
+                print(
+                    "RACER_3D_MAIN_WALL_PROFILE "
+                    + json.dumps(
+                        {
+                            "steps": main_wall_steps,
+                            "simulation_time_s": bridge.elapsed,
+                            "wall_clock_s": main_wall_elapsed_s,
+                            "real_time_factor": (
+                                bridge.elapsed / main_wall_elapsed_s
+                                if main_wall_elapsed_s > 0.0
+                                else 0.0
+                            ),
+                            "mean_main_step_ms": (
+                                main_wall_step_sum_ms / main_wall_steps
+                            ),
+                            "max_main_step_ms": main_wall_step_max_ms,
+                            "mean_world_step_ms": (
+                                main_world_step_sum_ms / main_wall_steps
+                            ),
+                            "max_world_step_ms": main_world_step_max_ms,
+                        },
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                    flush=True,
+                )
             remaining = PHYSICS_DT - (time.monotonic() - step_started)
             if remaining > 0.0:
                 time.sleep(remaining)
     finally:
-        bridge.commands = [np.zeros(3) for _ in bridge.commands]
+        bridge.commands = np.zeros_like(bridge.commands)
         bridge.publish_metrics()
         # Allow DDS to deliver the final simulator timestamp to the acceptance
         # monitor before tearing down the ROS context.
@@ -2627,6 +3959,7 @@ def main() -> None:
                     "collision_events": bridge.collision_events,
                     "physics_contact_events": bridge.collision_events,
                     "max_contact_force": bridge.max_contact_force,
+                    "contact_profile": bridge.contact_profile_report(),
                     "min_inter_drone": (
                         bridge.min_inter_drone
                         if math.isfinite(bridge.min_inter_drone)
@@ -2639,6 +3972,19 @@ def main() -> None:
                     ),
                     "path_lengths": bridge.path_lengths,
                     "start_positions": [list(point) for point in STARTS],
+                    "startup_recovery": {
+                        "enabled": ARGS.startup_free_space_yaw,
+                        "selected_yaws_rad": bridge.startup_yaws,
+                        "scan_duration_s": ARGS.startup_scan_duration,
+                        "unknown_corridor_distance_m": (
+                            ARGS.startup_unknown_corridor_distance
+                        ),
+                        "corridor_clearances_m": (
+                            bridge.startup_corridor_clearances
+                        ),
+                        "corridor_enabled": bridge.startup_corridor_enabled,
+                        "settle_duration_s": ARGS.startup_settle_duration,
+                    },
                     "positions": [
                         point.tolist() for point in bridge.positions
                     ],
@@ -2680,10 +4026,85 @@ def main() -> None:
                         else "application_closed"
                     ),
                     "sensor_source": (
-                        "upstream_depth_plus_360_safety_lidar"
+                        (
+                            "warp_gpu_batched_camera_plus_gpu_360_safety_rays"
+                            if ARGS.depth_sensor_backend == "warp"
+                            else "rtx_depth_plus_gpu_360_safety_rays"
+                        )
                         if ARGS.vehicle_model == "racer_so3"
                         else "legacy_rotating_lidar"
                     ),
+                    "depth_sensor_backend": (
+                        ARGS.depth_sensor_backend
+                        if ARGS.vehicle_model == "racer_so3"
+                        else None
+                    ),
+                    "warp_raycaster": bridge.warp_raycaster_report,
+                    "sensor_profile": {
+                        "frames": bridge.sensor_profile_frames,
+                        "mean_ms": {
+                            name: (
+                                total / bridge.sensor_profile_frames
+                                if bridge.sensor_profile_frames
+                                else 0.0
+                            )
+                            for name, total
+                            in bridge.sensor_profile_sums_ms.items()
+                        },
+                        "max_ms": bridge.sensor_profile_max_ms,
+                    },
+                    "safety_decision_profile": {
+                        "frames": bridge.safety_decision_profile_frames,
+                        "mean_batch_ms": (
+                            bridge.safety_decision_profile_sum_ms
+                            / bridge.safety_decision_profile_frames
+                            if bridge.safety_decision_profile_frames
+                            else 0.0
+                        ),
+                        "max_batch_ms": (
+                            bridge.safety_decision_profile_max_ms
+                        ),
+                        "mean_worker_max_ms": (
+                            bridge.safety_decision_worker_max_sum_ms
+                            / bridge.safety_decision_profile_frames
+                            if bridge.safety_decision_profile_frames
+                            else 0.0
+                        ),
+                        "max_worker_ms": (
+                            bridge.safety_decision_worker_max_max_ms
+                        ),
+                    },
+                    "control_batch_profile": (
+                        bridge.control_batch_profile_report()
+                    ),
+                    "rigid_body_io_profile": (
+                        bridge.rigid_io_profile_report()
+                    ),
+                    "main_wall_clock_profile": {
+                        "steps": main_wall_steps,
+                        "wall_clock_s": (
+                            time.monotonic() - main_wall_started
+                        ),
+                        "real_time_factor": (
+                            bridge.elapsed
+                            / max(
+                                time.monotonic() - main_wall_started,
+                                1.0e-9,
+                            )
+                        ),
+                        "mean_main_step_ms": (
+                            main_wall_step_sum_ms / main_wall_steps
+                            if main_wall_steps
+                            else 0.0
+                        ),
+                        "max_main_step_ms": main_wall_step_max_ms,
+                        "mean_world_step_ms": (
+                            main_world_step_sum_ms / main_wall_steps
+                            if main_wall_steps
+                            else 0.0
+                        ),
+                        "max_world_step_ms": main_world_step_max_ms,
+                    },
                     "physics_rate_hz": 1.0 / PHYSICS_DT,
                     "odometry_rate_hz": 1.0 / ODOM_PERIOD,
                     "sensor_rate_hz": 1.0 / DEPTH_PERIOD,

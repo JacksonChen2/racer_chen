@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <deque>
@@ -145,6 +146,10 @@ class CommunicationProxy final : public rclcpp::Node {
         ideal_coalesce_window_s_(
             1.0e-3 * declare_parameter<double>(
                            "ideal_coalesce_window_ms", 20.0)),
+        active_link_hold_s_(
+            declare_parameter<double>("active_link_hold_s", 1.0)),
+        active_link_publish_period_s_(declare_parameter<double>(
+            "active_link_publish_period_s", 0.02)),
         carrier_frequency_hz_(
             declare_parameter<double>("carrier_frequency_hz", 28.0e9)),
         bs_tx_power_dbm_(declare_parameter<double>("ap_tx_power_dbm", 33.0)),
@@ -197,7 +202,8 @@ class CommunicationProxy final : public rclcpp::Node {
     if (drone_count_ < 1 || queue_capacity_bytes_ == 0U ||
         max_retries_ < 0 || bs_max_retries_ < 0 ||
         chunk_data_max_pending_per_link_ < 0 ||
-        ideal_coalesce_window_s_ <= 0.0 || base_latency_s_ < 0.0 ||
+        ideal_coalesce_window_s_ <= 0.0 || active_link_hold_s_ <= 0.0 ||
+        active_link_publish_period_s_ <= 0.0 || base_latency_s_ < 0.0 ||
         jitter_s_ < 0.0 ||
         retry_backoff_s_ < 0.0 || bs_min_turn_s_ < 0.0 ||
         bs_control_bytes_ == 0U || bs_max_downlink_chunks_per_turn_ < 1 ||
@@ -284,14 +290,6 @@ class CommunicationProxy final : public rclcpp::Node {
     for (auto &topics : ap_latest_messages_) {
       topics.resize(kTopicPolicies.size());
     }
-    ideal_latest_messages_.resize(static_cast<std::size_t>(drone_count_));
-    ideal_latest_born_at_.resize(static_cast<std::size_t>(drone_count_));
-    for (int sender = 0; sender < drone_count_; ++sender) {
-      ideal_latest_messages_[static_cast<std::size_t>(sender)].resize(
-          kTopicPolicies.size());
-      ideal_latest_born_at_[static_cast<std::size_t>(sender)].assign(
-          kTopicPolicies.size(), 0.0);
-    }
     uav_chunks_.resize(static_cast<std::size_t>(drone_count_));
     uav_positions_.resize(static_cast<std::size_t>(drone_count_));
     uav_position_valid_.assign(static_cast<std::size_t>(drone_count_), false);
@@ -332,12 +330,14 @@ class CommunicationProxy final : public rclcpp::Node {
     statistics_publisher_ =
         create_publisher<racer_sionna_interfaces::msg::CommStatistics>(
             "/racer_sionna/comm_statistics", rclcpp::QoS(10).reliable());
+    active_link_publisher_ = create_publisher<LinkQualityArray>(
+        "/racer_sionna/active_links", rclcpp::QoS(20).reliable());
     scheduler_timer_ = create_wall_timer(
         std::chrono::milliseconds(2), [this]() { schedulerTick(); });
-    ideal_coalesce_timer_ = create_wall_timer(
+    active_link_timer_ = create_wall_timer(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::duration<double>(ideal_coalesce_window_s_)),
-        [this]() { flushIdealLatest(); });
+            std::chrono::duration<double>(active_link_publish_period_s_)),
+        [this]() { publishActiveLinks(); });
     statistics_timer_ = create_wall_timer(
         std::chrono::seconds(1), [this]() { publishStatistics(); });
 
@@ -487,15 +487,8 @@ class CommunicationProxy final : public rclcpp::Node {
     const bool has_chunk_key = chunk_key.owner > 0 && chunk_key.index > 0U;
 
     if (ideal_direct_enabled_) {
-      if (idealCoalescable(topic_index)) {
-        auto &latest = ideal_latest_messages_[static_cast<std::size_t>(sender)]
-                                             [topic_index];
-        if (latest) ++ideal_coalesced_messages_;
-        latest = std::move(message);
-        ideal_latest_born_at_[static_cast<std::size_t>(sender)][topic_index] =
-            stamp;
-        return;
-      }
+      // Preserve source callback order: perfect mode forwards this complete
+      // serialized logical message immediately, without queue or PER work.
       deliverIdealDirect(sender, topic_index, std::move(message), stamp,
                          has_chunk_key ? &chunk_key : nullptr);
       return;
@@ -595,12 +588,6 @@ class CommunicationProxy final : public rclcpp::Node {
     }
   }
 
-  bool idealCoalescable(std::size_t topic_index) const {
-    const auto &key = kTopicPolicies.at(topic_index).key;
-    return key == "drone_state" || key == "trajectory" ||
-           key == "chunk_stamps";
-  }
-
   void deliverIdealDirect(
       int sender, std::size_t topic_index,
       std::shared_ptr<rclcpp::SerializedMessage> message, double born_at,
@@ -611,58 +598,114 @@ class CommunicationProxy final : public rclcpp::Node {
     if (topic_key == "recovery_status" || topic_key == "recovery_command") {
       return;
     }
+    const auto profile_started = std::chrono::steady_clock::now();
     const double stamp = now().seconds();
     const std::size_t bytes = 64U + (message ? message->size() : 0U);
     const auto receivers = messageReceivers(sender, topic_index, message);
+    ++ideal_logical_messages_;
     logical_attempted_packets_ += receivers.size();
     logical_attempted_bytes_ += receivers.size() * bytes;
-
-    auto flow = std::make_shared<DeliveryFlow>();
-    flow->origin_sender = sender;
-    flow->topic_index = topic_index;
-    flow->born_at = born_at;
-    flow->bytes = bytes;
-    flow->delivered.assign(static_cast<std::size_t>(drone_count_), false);
-    flow->delivered[static_cast<std::size_t>(sender)] = true;
 
     for (const int receiver : receivers) {
       ++attempted_packets_;
       attempted_bytes_ += bytes;
       ++direct_attempted_packets_;
-      PendingPacket packet;
-      packet.message = message;
-      packet.flow = flow;
-      packet.topic_index = topic_index;
-      packet.route = RouteStage::kDirect;
-      packet.final_receiver = receiver;
-      packet.born_at = born_at;
-      packet.enqueued_at = stamp;
-      packet.delivery_at = stamp;
-      packet.bytes = bytes;
-      if (chunk_key != nullptr) {
-        packet.has_chunk_key = true;
-        packet.chunk_key = *chunk_key;
+      ++delivered_packets_;
+      delivered_bytes_ += bytes;
+      ++direct_delivered_packets_;
+      ideal_statistical_transport_blocks_ +=
+          model_.transportBlockCount(bytes);
+      ideal_statistical_bytes_ += bytes;
+      const auto receiver_index = static_cast<std::size_t>(receiver);
+      if (chunk_key != nullptr &&
+          uav_chunks_[receiver_index].find(*chunk_key) !=
+              uav_chunks_[receiver_index].end()) {
+        ++duplicates_suppressed_;
+        ++ideal_direct_forwarded_packets_;
+        continue;
       }
-      completeSuccessfulPacket({sender, receiver}, packet, stamp);
+      publishers_[topic_index][receiver_index]->publish(*message);
+      if (chunk_key != nullptr) uav_chunks_[receiver_index].insert(*chunk_key);
+      ++logical_delivered_packets_;
+      logical_delivered_bytes_ += bytes;
+      cumulative_end_to_end_delay_s_ += stamp - born_at;
+      ++direct_delivery_wins_;
       ++ideal_direct_forwarded_packets_;
     }
+    const double elapsed_ms = 1000.0 * std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - profile_started).count();
+    ++perfect_forward_profile_calls_;
+    perfect_forward_profile_receivers_ += receivers.size();
+    perfect_forward_profile_total_ms_ += elapsed_ms;
+    perfect_forward_profile_max_ms_ =
+        std::max(perfect_forward_profile_max_ms_, elapsed_ms);
   }
 
-  void flushIdealLatest() {
-    if (!ideal_direct_enabled_) return;
-    for (int sender = 0; sender < drone_count_; ++sender) {
-      for (std::size_t topic_index = 0; topic_index < kTopicPolicies.size();
-           ++topic_index) {
-        auto &latest = ideal_latest_messages_[static_cast<std::size_t>(sender)]
-                                             [topic_index];
-        if (!latest) continue;
-        auto message = std::move(latest);
-        const double born_at =
-            ideal_latest_born_at_[static_cast<std::size_t>(sender)]
-                                 [topic_index];
-        deliverIdealDirect(sender, topic_index, std::move(message), born_at);
-      }
+  void markActiveLink(int sender, int receiver) {
+    if (mode_ == "ideal" || sender < 0 || receiver < 0 ||
+        sender >= radio_node_count_ || receiver >= radio_node_count_ ||
+        sender == receiver) {
+      return;
     }
+    const LinkKey key{sender, receiver};
+    if (active_links_.find(key) == active_links_.end()) {
+      active_links_dirty_ = true;
+    }
+    active_links_[key] = std::chrono::steady_clock::now();
+  }
+
+  void publishActiveLinks() {
+    if (mode_ == "ideal" || !active_link_publisher_) return;
+    const auto wall_now = std::chrono::steady_clock::now();
+    // A queued packet keeps its link active even if no new logical message
+    // arrived during the hold interval.
+    for (const auto &[key, queue] : queues_) {
+      if (queue.packets.empty()) continue;
+      if (active_links_.find(key) == active_links_.end()) {
+        active_links_dirty_ = true;
+      }
+      active_links_[key] = wall_now;
+    }
+    std::vector<LinkKey> requested_links;
+    requested_links.reserve(active_links_.size());
+    for (auto iterator = active_links_.begin();
+         iterator != active_links_.end();) {
+      const double age_s = std::chrono::duration<double>(
+          wall_now - iterator->second).count();
+      if (age_s > active_link_hold_s_) {
+        iterator = active_links_.erase(iterator);
+        active_links_dirty_ = true;
+        continue;
+      }
+      requested_links.push_back(iterator->first);
+      ++iterator;
+    }
+    if (requested_links.empty()) return;
+    // The 20 ms timer gives a newly active link low request latency. Once the
+    // set is stable, a half-TTL keepalive is sufficient and avoids publishing
+    // thousands of identical 90-link arrays during slow-wall-clock runs.
+    const double keepalive_s = std::min(0.5, 0.5 * active_link_hold_s_);
+    if (!active_links_dirty_ && have_active_link_publish_wall_ &&
+        std::chrono::duration<double>(wall_now - last_active_link_publish_wall_)
+                .count() < keepalive_s) {
+      return;
+    }
+    LinkQualityArray request;
+    request.stamp = now();
+    request.links.reserve(requested_links.size());
+    for (const auto &key : requested_links) {
+      LinkQuality link;
+      link.stamp = request.stamp;
+      link.sender_id = key.sender;
+      link.receiver_id = key.receiver;
+      request.links.push_back(std::move(link));
+    }
+    active_link_publisher_->publish(request);
+    active_links_dirty_ = false;
+    have_active_link_publish_wall_ = true;
+    last_active_link_publish_wall_ = wall_now;
+    ++active_link_publications_;
+    active_link_samples_published_ += request.links.size();
   }
 
   std::vector<int> intendedReceivers(int sender) {
@@ -897,6 +940,7 @@ class CommunicationProxy final : public rclcpp::Node {
                int final_receiver, double born_at,
                const ChunkKey *chunk_key = nullptr,
                std::size_t override_bytes = 0U) {
+    markActiveLink(sender, receiver);
     const double stamp = now().seconds();
     const std::size_t bytes = override_bytes > 0U
                                   ? override_bytes
@@ -1445,6 +1489,25 @@ class CommunicationProxy final : public rclcpp::Node {
          << 1000.0 * ideal_coalesce_window_s_
          << ",\"ideal_coalesced_messages\":"
          << ideal_coalesced_messages_
+         << ",\"perfect_forwarding_calls\":"
+         << perfect_forward_profile_calls_
+         << ",\"perfect_forwarding_receivers\":"
+         << perfect_forward_profile_receivers_
+         << ",\"perfect_forwarding_mean_ms\":"
+         << (perfect_forward_profile_calls_ == 0U ? 0.0 :
+             perfect_forward_profile_total_ms_ /
+                 static_cast<double>(perfect_forward_profile_calls_))
+         << ",\"perfect_forwarding_max_ms\":"
+         << perfect_forward_profile_max_ms_
+         << ",\"ideal_logical_messages\":" << ideal_logical_messages_
+         << ",\"ideal_statistical_transport_blocks\":"
+         << ideal_statistical_transport_blocks_
+         << ",\"ideal_statistical_bytes\":"
+         << ideal_statistical_bytes_
+         << ",\"active_link_publications\":"
+         << active_link_publications_
+         << ",\"active_link_samples_published\":"
+         << active_link_samples_published_
          << ",\"ideal_direct_forwarded_packets\":"
          << ideal_direct_forwarded_packets_
          << ",\"lossless_nearest_forwarded_packets\":"
@@ -1581,6 +1644,8 @@ class CommunicationProxy final : public rclcpp::Node {
   int chunk_data_max_pending_per_link_{};
   double communication_range_m_{};
   double ideal_coalesce_window_s_{};
+  double active_link_hold_s_{};
+  double active_link_publish_period_s_{};
   double carrier_frequency_hz_{};
   double bs_tx_power_dbm_{};
   double uav_tx_power_dbm_{};
@@ -1611,6 +1676,11 @@ class CommunicationProxy final : public rclcpp::Node {
   std::unordered_map<LinkKey, LinkQuality, LinkKeyHash> links_;
   std::unordered_map<LinkKey, LinkQueue, LinkKeyHash> queues_;
   std::unordered_map<LinkKey, std::mt19937, LinkKeyHash> link_rngs_;
+  std::unordered_map<LinkKey, std::chrono::steady_clock::time_point,
+                     LinkKeyHash> active_links_;
+  bool active_links_dirty_{false};
+  bool have_active_link_publish_wall_{false};
+  std::chrono::steady_clock::time_point last_active_link_publish_wall_{};
   std::unordered_map<std::string, std::uint64_t> link_model_counts_;
   std::unordered_map<std::string, std::uint64_t> mcs_counts_;
   std::unordered_map<ChunkKey, CachedChunk, ChunkKeyHash> chunk_repository_;
@@ -1622,18 +1692,16 @@ class CommunicationProxy final : public rclcpp::Node {
   std::vector<rclcpp::GenericSubscription::SharedPtr> subscriptions_;
   std::vector<std::vector<std::shared_ptr<rclcpp::SerializedMessage>>>
       ap_latest_messages_;
-  std::vector<std::vector<std::shared_ptr<rclcpp::SerializedMessage>>>
-      ideal_latest_messages_;
-  std::vector<std::vector<double>> ideal_latest_born_at_;
   rclcpp::Subscription<LinkQualityArray>::SharedPtr link_subscription_;
   std::vector<rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr>
       odometry_subscriptions_;
   rclcpp::Publisher<racer_sionna_interfaces::msg::CommStatistics>::SharedPtr
       statistics_publisher_;
+  rclcpp::Publisher<LinkQualityArray>::SharedPtr active_link_publisher_;
   rclcpp::GenericPublisher::SharedPtr ap_recovery_status_publisher_;
   rclcpp::GenericSubscription::SharedPtr ap_recovery_command_subscription_;
   rclcpp::TimerBase::SharedPtr scheduler_timer_;
-  rclcpp::TimerBase::SharedPtr ideal_coalesce_timer_;
+  rclcpp::TimerBase::SharedPtr active_link_timer_;
   rclcpp::TimerBase::SharedPtr statistics_timer_;
 
   bool bs_turn_active_{false};
@@ -1675,6 +1743,15 @@ class CommunicationProxy final : public rclcpp::Node {
   std::uint64_t position_unavailable_receivers_{};
   std::uint64_t ideal_coalesced_messages_{};
   std::uint64_t ideal_direct_forwarded_packets_{};
+  std::uint64_t ideal_logical_messages_{};
+  std::uint64_t ideal_statistical_transport_blocks_{};
+  std::uint64_t ideal_statistical_bytes_{};
+  std::uint64_t perfect_forward_profile_calls_{};
+  std::uint64_t perfect_forward_profile_receivers_{};
+  double perfect_forward_profile_total_ms_{};
+  double perfect_forward_profile_max_ms_{};
+  std::uint64_t active_link_publications_{};
+  std::uint64_t active_link_samples_published_{};
   std::uint64_t lossless_nearest_forwarded_packets_{};
   std::uint64_t lossless_range_forwarded_packets_{};
   std::uint64_t lossless_nearest_position_unavailable_events_{};

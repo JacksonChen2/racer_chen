@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot coverage history and top-view trajectories for a paired 10-UAV run."""
+"""Plot coverage history and top-view trajectories for a paired multi-UAV run."""
 
 from __future__ import annotations
 
@@ -98,6 +98,7 @@ def draw_trajectory_panel(
     geometry,
     title: str,
     panel: str,
+    colors: np.ndarray,
 ) -> None:
     metrics = result["metrics"]
     samples = metrics["trajectory_history"]
@@ -106,10 +107,10 @@ def draw_trajectory_panel(
     ends = np.asarray(metrics["positions"], dtype=float)
     paths = np.asarray(metrics["path_lengths"], dtype=float)
     executed = set(int(value) for value in result["executed_drone_ids"])
-    colors = plt.get_cmap("tab10")(np.arange(10))
+    n_uavs = int(result["drone_count"])
 
     draw_geometry(axis, geometry, BOUNDS)
-    for index in range(10):
+    for index in range(n_uavs):
         drone_id = index + 1
         trajectory = positions[:, index, :]
         active = drone_id in executed
@@ -158,7 +159,7 @@ def draw_trajectory_panel(
     coverage = 100.0 * float(metrics["mapping_coverage_joint"])
     axis.set_title(
         f"{panel}  {title}\n"
-        f"覆盖 {coverage:.2f}% · 航程 {paths.sum():.1f} m · 执行 {len(executed)}/10",
+        f"覆盖 {coverage:.2f}% · 航程 {paths.sum():.1f} m · 执行 {len(executed)}/{n_uavs}",
         loc="left",
         fontsize=12.5,
         fontweight="bold",
@@ -173,12 +174,16 @@ def main() -> None:
     ideal = load_result(args.ideal)
     sionna = load_result(args.sionna)
     geometry = load_projected_geometry(args.mesh_dir, 0.25, 8.4)
+    n_uavs = int(ideal["drone_count"])
+    if int(sionna["drone_count"]) != n_uavs:
+        raise ValueError("paired results have different drone counts")
+    colors = plt.get_cmap("tab20")(np.linspace(0.0, 0.95, n_uavs))
     ideal_executed = [int(value) for value in ideal["executed_drone_ids"]]
     sionna_executed = [int(value) for value in sionna["executed_drone_ids"]]
 
     def execution_summary(label: str, executed: list[int]) -> str:
-        if len(executed) == 10:
-            return f"{label}：10/10 架执行，完整性验证通过"
+        if len(executed) == n_uavs:
+            return f"{label}：{n_uavs}/{n_uavs} 架执行，完整性验证通过"
         ids = "、".join(f"U{value}" for value in executed)
         return f"{label}：仅 {ids} 执行，完整性验证失败"
 
@@ -198,7 +203,7 @@ def main() -> None:
         2,
         left=0.06,
         right=0.975,
-        bottom=0.105,
+        bottom=0.15 if n_uavs > 10 else 0.105,
         top=0.84,
         height_ratios=(0.72, 1.45),
         hspace=0.37,
@@ -209,7 +214,7 @@ def main() -> None:
     sionna_axis = figure.add_subplot(grid[1, 1])
 
     figure.suptitle(
-        "五起飞点 10-UAV：轨迹与覆盖率变化",
+        f"五起飞点 {n_uavs}-UAV：轨迹与覆盖率变化",
         x=0.06,
         y=0.965,
         ha="left",
@@ -276,13 +281,16 @@ def main() -> None:
     coverage_axis.legend(frameon=False, loc="upper left", ncol=2)
     coverage_axis.set_facecolor("white")
 
-    draw_trajectory_panel(ideal_axis, ideal, geometry, "完美通信俯视轨迹", "B")
-    draw_trajectory_panel(sionna_axis, sionna, geometry, "Sionna 分布式俯视轨迹", "C")
+    draw_trajectory_panel(
+        ideal_axis, ideal, geometry, "完美通信俯视轨迹", "B", colors
+    )
+    draw_trajectory_panel(
+        sionna_axis, sionna, geometry, "Sionna 分布式俯视轨迹", "C", colors
+    )
 
-    colors = plt.get_cmap("tab10")(np.arange(10))
     legend_handles = [
         Line2D([0], [0], color=colors[index], lw=2, label=f"UAV {index + 1}")
-        for index in range(10)
+        for index in range(n_uavs)
     ]
     legend_handles.extend(
         [
@@ -304,7 +312,7 @@ def main() -> None:
         handles=legend_handles,
         loc="lower center",
         bbox_to_anchor=(0.5, 0.048),
-        ncol=13,
+        ncol=min(9, n_uavs + 3),
         frameon=False,
         fontsize=8.8,
     )

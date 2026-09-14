@@ -10,10 +10,11 @@ episodes="${RACER_QWEN8_EPISODES:-1}"
 duration="${RACER_QWEN8_DURATION:-300}"
 domain_base="${RACER_QWEN8_DOMAIN_BASE:-118}"
 reference="${RACER_QWEN8_PERFECT_RESULT:-${final_root}/reference_result/formal_300s/warehouse_full_distributed_result.json}"
-selection="${final_root}/config/warehouse_full_10uav_five_sites_layout.json"
+selection="${RACER_QWEN8_START_LAYOUT:-${final_root}/config/warehouse_full_10uav_five_sites_layout.json}"
 scene_usd="${final_root}/assets/warehouse_scenes/isaac/warehouse_full_with_industrial_ap.usda"
 sionna_xml="${final_root}/assets/sionna_scene/warehouse.xml"
 gt_path="${RACER_QWEN8_GT_PATH:-${final_root}/data/gt_occupied_voxels.txt}"
+nvidia_runtime_helper="${training_root}/scripts/configure_nvidia_driver_runtime.sh"
 
 if ! [[ "${episodes}" =~ ^[1-9][0-9]*$ ]] ||
    ! [[ "${duration}" =~ ^[1-9][0-9]*$ ]]; then
@@ -26,7 +27,8 @@ if ! [[ "${domain_base}" =~ ^[0-9]+$ ]] ||
   exit 2
 fi
 for required in "${python_env}" "${config}" "${reference}" "${selection}" \
-                "${scene_usd}" "${sionna_xml}" "${gt_path}"; do
+                "${scene_usd}" "${sionna_xml}" "${gt_path}" \
+                "${nvidia_runtime_helper}"; do
   if [[ ! -e "${required}" ]]; then
     printf 'Missing runtime input: %s\n' "${required}" >&2
     exit 2
@@ -46,6 +48,8 @@ export FASTDDS_DEFAULT_PROFILES_FILE="${final_root}/ros2_ws/config/fastdds_large
 export FASTRTPS_DEFAULT_PROFILES_FILE="${FASTDDS_DEFAULT_PROFILES_FILE}"
 export SIONNA_RUNTIME_DIR="${final_root}/ros2_ws/.sionna_runtime"
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
+source "${nvidia_runtime_helper}"
+racer_configure_nvidia_driver_runtime "${python_env}"
 export RACER_FIDELITY_SCENARIO=warehouse_full
 export RACER_FIDELITY_DURATION="${duration}"
 export RACER_FIDELITY_DRONE_COUNT=10
@@ -81,7 +85,7 @@ else
 fi
 export RACER_RL_BS_SCHEDULER_ENABLED=true
 export RACER_FORCE_BS_PERFECT_DELIVERY="${RACER_QWEN8_FORCE_BS_PERFECT_DELIVERY:-false}"
-export RACER_PAIR_CONTROL_RESERVATION_ENABLED=false
+export RACER_PAIR_CONTROL_RESERVATION_ENABLED="${RACER_PAIR_CONTROL_RESERVATION_ENABLED:-false}"
 if [[ "${RACER_COMMUNICATION_MODE}" == "ideal" ]]; then
   export RACER_EXPLORATION_ASSIGNMENT_MODE="${RACER_EXPLORATION_ASSIGNMENT_MODE:-original}"
   export RACER_INITIAL_ASSIGNMENT_PERFECT_DELIVERY="${RACER_INITIAL_ASSIGNMENT_PERFECT_DELIVERY:-false}"
@@ -92,13 +96,16 @@ else
   export RACER_INITIAL_ASSIGNMENT_PERFECT_VIA_BS="${RACER_INITIAL_ASSIGNMENT_PERFECT_VIA_BS:-true}"
 fi
 export RACER_BS_TX_POWER_DBM="${RACER_QWEN8_BS_TX_POWER_DBM:-40}"
-export RACER_UAV_TX_POWER_DBM=23
+export RACER_UAV_TX_POWER_DBM="${RACER_UAV_TX_POWER_DBM:-23}"
 export RACER_BANDWIDTH_HZ="${RACER_QWEN8_BANDWIDTH_HZ:-100000000}"
 export RACER_RESOURCE_BLOCKS="${RACER_QWEN8_RESOURCE_BLOCKS:-66}"
 export RACER_UAV_BROADCAST_BANDWIDTH_HZ="${RACER_QWEN8_UAV_BROADCAST_BANDWIDTH_HZ:-50000000}"
 export RACER_UAV_BROADCAST_RESOURCE_BLOCKS="${RACER_QWEN8_UAV_BROADCAST_RESOURCE_BLOCKS:-33}"
 export RACER_BS_BANDWIDTH_HZ="${RACER_QWEN8_BS_BANDWIDTH_HZ:-50000000}"
 export RACER_BS_RESOURCE_BLOCKS="${RACER_QWEN8_BS_RESOURCE_BLOCKS:-33}"
+export RACER_BS_MAX_INFLIGHT_CHUNKS_PER_UAV="${RACER_QWEN8_BS_MAX_INFLIGHT_CHUNKS_PER_UAV:-${RACER_BS_MAX_INFLIGHT_CHUNKS_PER_UAV:-0}}"
+export RACER_BS_MAX_UPLINK_CHUNKS_PER_RL_SLOT="${RACER_QWEN8_BS_MAX_UPLINK_CHUNKS_PER_RL_SLOT:-${RACER_BS_MAX_UPLINK_CHUNKS_PER_RL_SLOT:-0}}"
+export RACER_BS_MAX_DOWNLINK_CHUNKS_PER_RL_SLOT="${RACER_QWEN8_BS_MAX_DOWNLINK_CHUNKS_PER_RL_SLOT:-${RACER_BS_MAX_DOWNLINK_CHUNKS_PER_RL_SLOT:-0}}"
 # -1 selects SNR-adaptive MCS.  BS-assisted traffic already uses the
 # dedicated adaptive BS link model; keeping the campaign-level model adaptive
 # makes the requested PHY mode explicit in the launch manifest as well.

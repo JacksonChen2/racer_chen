@@ -46,6 +46,8 @@ chunk_data_pre_enqueue_dedup="${RACER_CHUNK_DATA_PRE_ENQUEUE_DEDUP:-false}"
 chunk_data_max_pending_per_link="${RACER_CHUNK_DATA_MAX_PENDING_PER_LINK:-0}"
 communication_range_m="${RACER_COMMUNICATION_RANGE_M:-4.0}"
 ideal_coalesce_window_ms="${RACER_IDEAL_COALESCE_WINDOW_MS:-20.0}"
+preserve_ideal_direct_with_bs="${RACER_PRESERVE_IDEAL_DIRECT_WITH_BS:-false}"
+initial_assignment_perfect_delivery="${RACER_INITIAL_ASSIGNMENT_PERFECT_DELIVERY:-false}"
 launch_package="${RACER_LAUNCH_PACKAGE:-racer_sionna_comm}"
 launch_file="${RACER_LAUNCH_FILE:-original_racer_warehouse_sionna.launch.py}"
 algorithm_label="${RACER_ALGORITHM_LABEL:-original_racer_ros1_source_faithful_ros2_cpp_sionna_rt}"
@@ -59,6 +61,7 @@ wall_time_grace="${RACER_WALL_TIME_GRACE_SECONDS:-300}"
 drone_count="${RACER_FIDELITY_DRONE_COUNT:-5}"
 trigger_minimum_cloud_frames="${RACER_TRIGGER_MINIMUM_CLOUD_FRAMES:-25}"
 trigger_delay_s="${RACER_TRIGGER_DELAY_S:-5.0}"
+coverage_update_rate_hz="${RACER_COVERAGE_UPDATE_RATE_HZ:-10.0}"
 scenario="${RACER_FIDELITY_SCENARIO:-warehouse_simple}"
 headless="${RACER_FIDELITY_HEADLESS:-1}"
 visualize="${RACER_FIDELITY_VISUALIZE:-0}"
@@ -90,6 +93,8 @@ result_dir="${RACER_RESULT_DIR:-${workspace_dir}/validation}"
 bs_tx_power_dbm="${RACER_BS_TX_POWER_DBM:-33.0}"
 uav_tx_power_dbm="${RACER_UAV_TX_POWER_DBM:-23.0}"
 carrier_frequency_hz="${RACER_CARRIER_FREQUENCY_HZ:-28000000000.0}"
+bandwidth_hz="${RACER_BANDWIDTH_HZ:-100000000.0}"
+resource_blocks="${RACER_RESOURCE_BLOCKS:-66}"
 max_retries="${RACER_MAX_RETRIES:-3}"
 bs_max_retries="${RACER_BS_MAX_RETRIES:-3}"
 fixed_mcs_index="${RACER_FIXED_MCS_INDEX:--1}"
@@ -100,9 +105,20 @@ rl_bs_action_path="${RACER_RL_BS_ACTION_PATH:-/tmp/racer_agentic_crpo/action.txt
 rl_bs_state_path="${RACER_RL_BS_STATE_PATH:-/tmp/racer_agentic_crpo/communication_state.json}"
 rl_bs_mission_state_path="${RACER_RL_BS_MISSION_STATE_PATH:-/tmp/racer_agentic_crpo/mission_state.json}"
 rl_bs_decision_period_ms="${RACER_RL_BS_DECISION_PERIOD_MS:-20.0}"
+rl_bs_communication_slot_ms="${RACER_RL_BS_COMMUNICATION_SLOT_MS:-20.0}"
+rl_sync_enabled="${RACER_RL_SYNC_ENABLED:-false}"
+rl_sync_release_path="${RACER_RL_SYNC_RELEASE_PATH:-}"
+rl_sync_ack_path="${RACER_RL_SYNC_ACK_PATH:-}"
+rl_sync_maximum_wait_s="${RACER_RL_SYNC_MAXIMUM_WAIT_S:-1200.0}"
+rl_sync_poll_s="${RACER_RL_SYNC_POLL_S:-0.002}"
+single_gpu_pause_request_path="${RACER_SINGLE_GPU_PAUSE_REQUEST_PATH:-}"
+single_gpu_pause_ack_path="${RACER_SINGLE_GPU_PAUSE_ACK_PATH:-}"
+single_gpu_maximum_pause_s="${RACER_SINGLE_GPU_MAXIMUM_PAUSE_S:-600.0}"
+single_gpu_pause_poll_s="${RACER_SINGLE_GPU_PAUSE_POLL_S:-0.01}"
 ground_truth_occupied_voxels_path="${RACER_GROUND_TRUTH_OCCUPIED_VOXELS_PATH:-}"
 observed_occupied_voxels_path="${RACER_OBSERVED_OCCUPIED_VOXELS_PATH:-}"
 require_ground_truth_map="${RACER_REQUIRE_GROUND_TRUTH_MAP:-false}"
+task_metric_observer_mode="${RACER_TASK_METRIC_OBSERVER_MODE:-inline}"
 if [[ "${network_topology}" != "distributed" && "${network_topology}" != "nearest_neighbors" && "${network_topology}" != "distance_radius" && "${network_topology}" != "ap_assisted" && "${network_topology}" != "bs_round_robin" ]]; then
   printf 'RACER_NETWORK_TOPOLOGY must be distributed, nearest_neighbors, distance_radius, ap_assisted, or bs_round_robin.\n' >&2
   exit 2
@@ -111,13 +127,78 @@ if [[ "${rl_bs_scheduler_enabled}" != "true" && "${rl_bs_scheduler_enabled}" != 
   printf 'RACER_RL_BS_SCHEDULER_ENABLED must be true or false.\n' >&2
   exit 2
 fi
+if [[ "${preserve_ideal_direct_with_bs}" != "true" &&
+      "${preserve_ideal_direct_with_bs}" != "false" ]]; then
+  printf 'RACER_PRESERVE_IDEAL_DIRECT_WITH_BS must be true or false.\n' >&2
+  exit 2
+fi
+if [[ "${initial_assignment_perfect_delivery}" != "true" &&
+      "${initial_assignment_perfect_delivery}" != "false" ]]; then
+  printf 'RACER_INITIAL_ASSIGNMENT_PERFECT_DELIVERY must be true or false.\n' >&2
+  exit 2
+fi
+if [[ "${initial_assignment_perfect_delivery}" == "true" ]] &&
+   { [[ "${communication_mode}" == "ideal" ]] ||
+     [[ "${network_topology}" != "distributed" ]]; }; then
+  printf 'RACER_INITIAL_ASSIGNMENT_PERFECT_DELIVERY=true requires non-ideal distributed communication.\n' >&2
+  exit 2
+fi
+if [[ "${preserve_ideal_direct_with_bs}" == "true" ]] &&
+   { [[ "${communication_mode}" != "ideal" ]] ||
+     [[ "${network_topology}" != "bs_round_robin" ]] ||
+     [[ "${rl_bs_scheduler_enabled}" != "true" ]]; }; then
+  printf 'RACER_PRESERVE_IDEAL_DIRECT_WITH_BS=true requires ideal mode, bs_round_robin, and the RL BS scheduler.\n' >&2
+  exit 2
+fi
+if [[ "${rl_sync_enabled}" != "true" && "${rl_sync_enabled}" != "false" ]]; then
+  printf 'RACER_RL_SYNC_ENABLED must be true or false.\n' >&2
+  exit 2
+fi
+if [[ "${rl_sync_enabled}" == "true" ]]; then
+  if [[ "${rl_bs_scheduler_enabled}" != "true" ||
+        "${stop_on_completion}" != "0" ]]; then
+    printf 'Synchronous RL requires the RL BS scheduler and a fixed exploration horizon.\n' >&2
+    exit 2
+  fi
+  if [[ -z "${rl_sync_release_path}" || -z "${rl_sync_ack_path}" ]]; then
+    printf 'Synchronous RL requires release and acknowledgement paths.\n' >&2
+    exit 2
+  fi
+  if ! python3 -c 'import math,sys; comm,decision,max_wait,poll=map(float,sys.argv[1:]); ok=all(math.isfinite(v) and v>0 for v in (comm,decision,max_wait,poll)) and math.isclose(decision,5*comm,rel_tol=0,abs_tol=1e-9); raise SystemExit(not ok)' \
+    "${rl_bs_communication_slot_ms}" "${rl_bs_decision_period_ms}" \
+    "${rl_sync_maximum_wait_s}" "${rl_sync_poll_s}"; then
+    printf 'Synchronous RL requires T_RL=5*T_comm with positive finite intervals.\n' >&2
+    exit 2
+  fi
+fi
+if ! python3 -c 'import math,sys; value=float(sys.argv[1]); raise SystemExit(not (math.isfinite(value) and value > 0.0))' \
+  "${coverage_update_rate_hz}"; then
+  printf 'RACER_COVERAGE_UPDATE_RATE_HZ must be finite and positive.\n' >&2
+  exit 2
+fi
 if [[ "${require_ground_truth_map}" != "true" && "${require_ground_truth_map}" != "false" ]]; then
   printf 'RACER_REQUIRE_GROUND_TRUTH_MAP must be true or false.\n' >&2
+  exit 2
+fi
+if [[ "${task_metric_observer_mode}" != "inline" &&
+      "${task_metric_observer_mode}" != "async" &&
+      "${task_metric_observer_mode}" != "off" ]]; then
+  printf 'RACER_TASK_METRIC_OBSERVER_MODE must be inline, async, or off.\n' >&2
   exit 2
 fi
 if [[ "${require_ground_truth_map}" == "true" && ! -f "${ground_truth_occupied_voxels_path}" ]]; then
   printf 'RACER_REQUIRE_GROUND_TRUTH_MAP=true requires an existing RACER_GROUND_TRUTH_OCCUPIED_VOXELS_PATH.\n' >&2
   exit 2
+fi
+if [[ -n "${single_gpu_pause_request_path}" || -n "${single_gpu_pause_ack_path}" ]]; then
+  if [[ -z "${single_gpu_pause_request_path}" || -z "${single_gpu_pause_ack_path}" ]]; then
+    printf 'Both RACER_SINGLE_GPU_PAUSE_REQUEST_PATH and RACER_SINGLE_GPU_PAUSE_ACK_PATH are required.\n' >&2
+    exit 2
+  fi
+  if ! python3 -c 'import math,sys; values=[float(v) for v in sys.argv[1:]]; raise SystemExit(not all(math.isfinite(v) and v > 0.0 for v in values))' "${single_gpu_maximum_pause_s}" "${single_gpu_pause_poll_s}"; then
+    printf 'Single-GPU pause timeout and polling interval must be positive finite values.\n' >&2
+    exit 2
+  fi
 fi
 if [[ "${rl_bs_scheduler_enabled}" == "true" && "${network_topology}" != "bs_round_robin" ]]; then
   printf 'RACER_RL_BS_SCHEDULER_ENABLED=true requires RACER_NETWORK_TOPOLOGY=bs_round_robin.\n' >&2
@@ -188,6 +269,11 @@ if [[ ! "${max_retries}" =~ ^[0-9]+$ || ! "${bs_max_retries}" =~ ^[0-9]+$ ]]; th
 fi
 if ! python3 -c 'import math,sys; value=float(sys.argv[1]); raise SystemExit(not (math.isfinite(value) and value > 0.0))' "${carrier_frequency_hz}"; then
   printf 'RACER_CARRIER_FREQUENCY_HZ must be a positive finite number.\n' >&2
+  exit 2
+fi
+if [[ ! "${resource_blocks}" =~ ^[1-9][0-9]*$ ]] ||
+   ! python3 -c 'import math,sys; bandwidth=float(sys.argv[1]); resource_blocks=int(sys.argv[2]); occupied=12.0*120000.0*resource_blocks; raise SystemExit(not (math.isfinite(bandwidth) and bandwidth > 0.0 and occupied <= bandwidth))' "${bandwidth_hz}" "${resource_blocks}"; then
+  printf 'RACER_BANDWIDTH_HZ and RACER_RESOURCE_BLOCKS must define a valid 120 kHz NR allocation.\n' >&2
   exit 2
 fi
 if [[ "${fixed_mcs_index}" != "-1" && "${fixed_mcs_index}" != "14" &&
@@ -283,6 +369,7 @@ fi
 
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-176}"
 launch_communication_args=(
+  coverage_update_rate_hz:="${coverage_update_rate_hz}"
   communication_mode:="${communication_mode}"
   network_topology:="${network_topology}"
   nearest_neighbor_count:="${nearest_neighbor_count}"
@@ -294,18 +381,25 @@ launch_communication_args=(
   chunk_data_max_pending_per_link:="${chunk_data_max_pending_per_link}"
   communication_range_m:="${communication_range_m}"
   ideal_coalesce_window_ms:="${ideal_coalesce_window_ms}"
+  preserve_ideal_direct_with_bs:="${preserve_ideal_direct_with_bs}"
+  initial_assignment_perfect_delivery:="${initial_assignment_perfect_delivery}"
   require_sionna:="${require_sionna}"
   sionna_scene_xml:="${sionna_scene_xml}"
   ap_tx_power_dbm:="${bs_tx_power_dbm}"
   uav_tx_power_dbm:="${uav_tx_power_dbm}"
   carrier_frequency_hz:="${carrier_frequency_hz}"
+  bandwidth_hz:="${bandwidth_hz}"
+  resource_blocks:="${resource_blocks}"
   max_retries:="${max_retries}"
   bs_max_retries:="${bs_max_retries}"
   fixed_mcs_index:="${fixed_mcs_index}"
   rl_bs_scheduler_enabled:="${rl_bs_scheduler_enabled}"
+  rl_bs_synchronous_mode:="${rl_sync_enabled}"
   rl_bs_action_path:="${rl_bs_action_path}"
   rl_bs_state_path:="${rl_bs_state_path}"
+  rl_bs_communication_slot_ms:="${rl_bs_communication_slot_ms}"
   require_ground_truth_map:="${require_ground_truth_map}"
+  task_metric_observer_mode:="${task_metric_observer_mode}"
   rl_bs_decision_period_ms:="${rl_bs_decision_period_ms}"
   random_seed:="${random_seed}"
 )
@@ -446,6 +540,27 @@ if [[ "${record_trajectory_history}" == "1" ]]; then
 fi
 if [[ "${rl_bs_scheduler_enabled}" == "true" ]]; then
   isaac_args+=(--agentic-crpo-state-file "${rl_bs_mission_state_path}")
+fi
+if [[ -n "${single_gpu_pause_request_path}" ]]; then
+  isaac_args+=(
+    --single-gpu-pause-request-file "${single_gpu_pause_request_path}"
+    --single-gpu-pause-ack-file "${single_gpu_pause_ack_path}"
+    --single-gpu-maximum-pause-s "${single_gpu_maximum_pause_s}"
+    --single-gpu-pause-poll-s "${single_gpu_pause_poll_s}"
+  )
+fi
+if [[ "${rl_sync_enabled}" == "true" ]]; then
+  isaac_args+=(
+    --rl-sync-state-file "${rl_bs_state_path}"
+    --rl-sync-action-file "${rl_bs_action_path}"
+    --rl-sync-release-file "${rl_sync_release_path}"
+    --rl-sync-ack-file "${rl_sync_ack_path}"
+    --rl-sync-communication-slot-s "$(python3 -c 'import sys; print(float(sys.argv[1])/1000.0)' "${rl_bs_communication_slot_ms}")"
+    --rl-sync-decision-interval-s "$(python3 -c 'import sys; print(float(sys.argv[1])/1000.0)' "${rl_bs_decision_period_ms}")"
+    --rl-sync-slots-per-decision 5
+    --rl-sync-maximum-wait-s "${rl_sync_maximum_wait_s}"
+    --rl-sync-poll-s "${rl_sync_poll_s}"
+  )
 fi
 
 duration_ceiling="$(python3 -c 'import math,sys; print(math.ceil(float(sys.argv[1])))' "${duration}")"

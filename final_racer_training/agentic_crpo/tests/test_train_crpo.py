@@ -3,11 +3,14 @@ from types import SimpleNamespace
 import pytest
 from torch import nn
 
+from agentic_crpo.crpo_ppo import CONSTRAINT_COST_VERSION
+from agentic_crpo.episode_tracker import EpisodeCostTracker
 from agentic_crpo.train_crpo import (
     _activation_class,
     _configure_rl_pytorch_threads,
     _learn_until_target_or_mission_end,
     _mission_has_ended,
+    _migrate_constraint_state_for_resume,
     _prepare_resume_for_new_episode,
 )
 
@@ -140,3 +143,31 @@ def test_resume_discards_terminal_runtime_state_but_keeps_training_counts() -> N
     assert model._last_episode_starts is None
     assert model.num_timesteps == 3000
     assert model.reward_updates == 8
+
+
+def test_resume_migrates_only_incompatible_constraint_statistics() -> None:
+    policy = object()
+    optimizer = object()
+    model = SimpleNamespace(
+        constraint_estimator="episode_return",
+        constraint_cost_version=None,
+        episode_cost_tracker=EpisodeCostTracker(1),
+        n_envs=1,
+        policy=policy,
+        optimizer=optimizer,
+    )
+    model.episode_cost_tracker.lengths[0] = 17
+
+    migration = _migrate_constraint_state_for_resume(
+        model,
+        expected_estimator="time_weighted_mean",
+        episode_cost_window=30,
+        telescoping_tolerance=1.0e-6,
+    )
+
+    assert migration is not None
+    assert model.constraint_estimator == "time_weighted_mean"
+    assert model.constraint_cost_version == CONSTRAINT_COST_VERSION
+    assert model.episode_cost_tracker.lengths.tolist() == [0]
+    assert model.policy is policy
+    assert model.optimizer is optimizer

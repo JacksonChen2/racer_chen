@@ -27,8 +27,20 @@ cd /home/jiazheng/RACER_warehouse_loaded_portable_20260805/racer_chen/final_race
 ./scripts/check.sh
 ```
 
-`training_overlay_ws` locally overrides only the Isaac adapter and
-communication proxy. The RACER core still resolves from `../final_racer`.
+`training_overlay_ws` locally overrides the Isaac adapter and communication
+proxy. The build also recompiles `racer_original_core` from `../final_racer`
+because MultiMapManager has an opt-in training hook that pushes each newly
+sealed chunk payload into the Proxy's local cache over a dedicated local topic.
+This local handoff does not update the BS map or consume simulated radio
+capacity; RL-selected uploads still use the configured PHY/MAC model. The
+action-time request path remains as a repair fallback when a local push is
+missed; the legacy 8/16 proactive pull worker is disabled by default. BS map
+traffic uses the action-bound per-slot SNR/MCS quota, pipelines serialized
+packets while earlier packets are propagating, and keeps about two current PHY
+slots outstanding per UAV. This window changes with link capacity and drains
+from actual delivery feedback. The old per-turn and fixed per-UAV in-flight
+limits accept a positive value only when an experiment explicitly needs an
+additional cap.
 
 ## Train
 

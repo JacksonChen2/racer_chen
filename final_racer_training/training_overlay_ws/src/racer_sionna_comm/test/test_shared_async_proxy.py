@@ -24,7 +24,10 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 TRAINING_ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(TRAINING_ROOT / "agentic_crpo"))
 
-from agentic_crpo.fast_state import decode_fast_state  # noqa: E402
+from agentic_crpo.fast_state import (  # noqa: E402
+    decode_fast_state,
+    encode_physical_fast,
+)
 from agentic_crpo.shared_ipc import (  # noqa: E402
     SharedMemoryLayout,
     create_layout,
@@ -165,6 +168,23 @@ def test_cpp_fast_state_is_step_aligned_and_holds_active_action():
             "local_known_chunks",
         }.isdisjoint(llm_payload)
 
+        # Reproduce a loaded proxy lagging behind Isaac: the physical block is
+        # already terminal at 5 s while communication is still producing the
+        # 0.1/0.2 s boundaries. The future terminal bit must not end RL early.
+        blocks["physical_fast"].publish_bytes(
+            encode_physical_fast(
+                n_uavs=2,
+                sim_step=500,
+                sim_time_s=5.0,
+                coverage=0.5,
+                coverage_delta=0.0,
+                terminated=False,
+                truncated=True,
+            ),
+            sim_step=500,
+            sim_time_s=5.0,
+        )
+
         # N=2: relay 0->1, relay 1->0, upload 0, upload 1.
         action_payload = " ".join(
             (
@@ -189,6 +209,8 @@ def test_cpp_fast_state_is_step_aligned_and_holds_active_action():
         assert [record.sim_time_s for record in records[:3]] == pytest.approx(
             [0.0, 0.1, 0.2]
         )
+        assert not decoded[1].values["truncated"]
+        assert not decoded[2].values["truncated"]
         executed = decoded[2]
         assert executed.values["communication_slot_index"] == 10
         assert executed.values["rl_decision_index"] == 2

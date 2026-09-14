@@ -56,6 +56,8 @@ if(BUILD_TESTING)
     test/test_ideal_proxy.py TIMEOUT 70)
   ament_add_pytest_test(racer_sionna_active_links_test
     test/test_sionna_active_links.py TIMEOUT 30)
+  ament_add_pytest_test(racer_sionna_synchronous_proxy_test
+    test/test_synchronous_proxy.py TIMEOUT 40)
 endif()
 
 ament_export_include_directories(include)
