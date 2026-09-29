@@ -302,6 +302,22 @@ SCENARIOS: Dict[str, Scenario3D] = {
 
 
 def get_scenario(name: str) -> Scenario3D:
+    if name == "office":
+        import json
+        import os
+        from pathlib import Path
+        profile = json.loads(Path(os.environ["RACER_SCENE_PROFILE"]).read_text())
+        return Scenario3D(
+            name="office",
+            map_min=tuple(profile["map_min"]),
+            map_max=tuple(profile["map_max"]),
+            starts=tuple(tuple(p) for p in profile["starts"]),
+            obstacles=(),
+            coarse_grid_size=tuple(profile["coarse_grid_size"]),
+            truth_mode="observed_volume",
+            safety_min=tuple(profile["safety_min"]),
+            safety_max=tuple(profile["safety_max"]),
+        )
     try:
         return SCENARIOS[str(name)]
     except KeyError as error:

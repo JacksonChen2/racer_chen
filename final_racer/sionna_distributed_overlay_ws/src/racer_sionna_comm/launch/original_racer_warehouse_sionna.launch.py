@@ -49,7 +49,7 @@ def _launch_nodes(context):
     scenario = LaunchConfiguration("scenario").perform(context)
     if scenario not in (
         "warehouse_simple", "warehouse_loaded", "warehouse_loaded_center",
-        "warehouse_loaded_full", "warehouse_full",
+        "warehouse_loaded_full", "warehouse_full", "office",
     ):
         raise RuntimeError(f"unsupported warehouse scenario: {scenario}")
     communication_mode = LaunchConfiguration("communication_mode").perform(context)
@@ -157,6 +157,21 @@ def _launch_nodes(context):
             "sdf_map.box_max_z": 8.4,
         }
         ap_position = [-10.02891489217081, 14.888611215255622, 7.55]
+
+    if scenario == "office":
+        import json
+        import os
+        profile = json.loads(Path(os.environ["RACER_SCENE_PROFILE"]).read_text())
+        scenario_parameters = {
+            **{f"sdf_map.map_size_{axis}": float(value)
+               for axis, value in zip("xyz", profile["map_size"])},
+            **{f"sdf_map.box_min_{axis}": float(value)
+               for axis, value in zip("xyz", profile["map_min"])},
+            **{f"sdf_map.box_max_{axis}": float(value)
+               for axis, value in zip("xyz", profile["map_max"])},
+            "sdf_map.virtual_ceil_height": float(profile["map_max"][2]),
+        }
+        ap_position = [0.0, 0.0, 2.78]
 
     ap_overrides = [
         LaunchConfiguration(name).perform(context)

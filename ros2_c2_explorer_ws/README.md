@@ -40,7 +40,7 @@ cd /path/to/racer_chen/ros2_c2_explorer_ws
 
 ## 在 Isaac Sim 运行
 
-默认是 5 架 UAV、`warehouse_simple.usd`、900 秒、无界面运行：
+默认是 5 架 UAV、`warehouse_simple.usd`、900 秒、无界面快速运行。Isaac 边界使用与 Final RACER 长实验相同的 100 Hz 物理、10 Hz 传感器和 GPU 批量射线；保留完整深度采样网格，C² 的 C++ 规划、建图、任务分配源码及其参数不变：
 
 ```bash
 cd /path/to/racer_chen/ros2_c2_explorer_ws
@@ -58,8 +58,14 @@ ROS_DOMAIN_ID=181 C2_DRONE_COUNT=5 C2_DURATION=900 \
 
 ```bash
 ROS_DOMAIN_ID=181 C2_DRONE_COUNT=3 C2_DURATION=30 \
-  C2_PHYSICS_RATE_HZ=100 C2_SENSOR_RATE_HZ=10 \
   C2_REQUIRE_COMPLETION=0 C2_STOP_ON_COMPLETION=0 \
+  ./scripts/run_isaac.sh
+```
+
+如需原边界频率与 RTX 传感器进行对照：
+
+```bash
+C2_RUNTIME_PROFILE=faithful C2_DEPTH_SENSOR_BACKEND=rtx \
   ./scripts/run_isaac.sh
 ```
 
@@ -93,7 +99,9 @@ C2_EXPERIMENT_DRONE_COUNT=10 C2_EXPERIMENT_DURATION=60 \
 - `C2_DEBUG_OPT_OUTPUT`：输出会合协议诊断证据；默认 0，只影响日志，不参与算法决策。
 - `C2_RESULT_DIR`：日志与 JSON 验收结果目录，默认 `validation/`。
 - `C2_SCENE_USD` / `C2_VEHICLE_USD`：覆盖场景或无人机 USD。
-- `C2_PHYSICS_RATE_HZ` / `C2_SENSOR_RATE_HZ`：物理和传感器频率；正式复现默认 1000/30 Hz。
+- `C2_RUNTIME_PROFILE`：`fast`（默认 100/10 Hz）或 `faithful`（1000/30 Hz）。降低的是 Isaac 动力学与观测频率，可能改变轨迹及覆盖速度；C² 算法源码和参数保持一致。
+- `C2_DEPTH_SENSOR_BACKEND`：`warp`（默认，静态场景 GPU 批量射线）或 `rtx`（原 Isaac 深度相机与 PhysX 安全雷达）。
+- `C2_PHYSICS_RATE_HZ` / `C2_SENSOR_RATE_HZ`：覆盖所选运行配置的物理和传感器频率。
 
 建议为并行实验设置不同的 `ROS_DOMAIN_ID`，Fast DDS 可用范围为 0–232。
 

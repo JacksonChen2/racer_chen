@@ -244,7 +244,11 @@ result_file="${result_dir}/${run_tag}_result.json"
 : > "${launch_log}"
 : > "${isaac_log}"
 
-if [[ "${scenario}" == "warehouse_full" ]]; then
+if [[ "${scenario}" == "office" ]]; then
+  default_scene_usd="${RACER_SCENE_USD:?Office requires RACER_SCENE_USD}"
+  default_sionna_scene_xml="${RACER_SIONNA_SCENE_XML:?Office requires RACER_SIONNA_SCENE_XML}"
+  default_radio_map_cache="${result_dir}/unused_radio_cache.npz"
+elif [[ "${scenario}" == "warehouse_full" ]]; then
   default_scene_usd="${repo_root}/warehouse_scenes/isaac/warehouse_full_with_industrial_ap.usda"
   default_sionna_scene_xml="${repo_root}/warehouse_scenes/sionna/warehouse_full_with_industrial_ap/warehouse.xml"
   default_radio_map_cache="${repo_root}/warehouse_scenes/sionna/warehouse_full_with_industrial_ap/hybrid_radio_cache.npz"

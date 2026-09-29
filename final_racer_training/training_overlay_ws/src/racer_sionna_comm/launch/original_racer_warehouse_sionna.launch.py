@@ -301,6 +301,9 @@ def _launch_nodes(context):
     bs_max_downlink_chunks_per_rl_slot = int(
         LaunchConfiguration("bs_max_downlink_chunks_per_rl_slot").perform(context)
     )
+    bs_downlink_newest_missing_chunk_first = LaunchConfiguration(
+        "bs_downlink_newest_missing_chunk_first"
+    ).perform(context).lower() in ("1", "true", "yes", "on")
     bs_control_ttl_s = float(
         LaunchConfiguration("bs_control_ttl_s").perform(context)
     )
@@ -398,6 +401,9 @@ def _launch_nodes(context):
     rl_bs_decision_period_ms = float(
         LaunchConfiguration("rl_bs_decision_period_ms").perform(context)
     )
+    rl_bs_repeat_action_each_slot = LaunchConfiguration(
+        "rl_bs_repeat_action_each_slot"
+    ).perform(context).lower() in ("1", "true", "yes", "on")
     rl_bs_communication_slot_ms = float(
         LaunchConfiguration("rl_bs_communication_slot_ms").perform(context)
     )
@@ -702,6 +708,9 @@ def _launch_nodes(context):
                     "bs_max_downlink_chunks_per_rl_slot": (
                         bs_max_downlink_chunks_per_rl_slot
                     ),
+                    "bs_downlink_newest_missing_chunk_first": (
+                        bs_downlink_newest_missing_chunk_first
+                    ),
                     "bs_control_ttl_s": bs_control_ttl_s,
                     "bs_all_to_all_relay_enabled": (
                         bs_all_to_all_relay_enabled
@@ -729,6 +738,9 @@ def _launch_nodes(context):
                     "require_ground_truth_map": require_ground_truth_map,
                     "task_metric_observer_mode": task_metric_observer_mode,
                     "rl_bs_decision_period_ms": rl_bs_decision_period_ms,
+                    "rl_bs_repeat_action_each_slot": (
+                        rl_bs_repeat_action_each_slot
+                    ),
                     "rl_llm_state_period_ms": rl_llm_state_period_ms,
                     "random_seed": random_seed,
                 },
@@ -797,7 +809,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "uav_channel_access_mode",
                 default_value=EnvironmentVariable(
-                    "RACER_UAV_CHANNEL_ACCESS_MODE", default_value="ofdma"
+                    "RACER_UAV_CHANNEL_ACCESS_MODE", default_value="csma"
                 ),
             ),
             DeclareLaunchArgument(
@@ -899,6 +911,10 @@ def generate_launch_description():
                 "bs_max_downlink_chunks_per_rl_slot", default_value="0"
             ),
             DeclareLaunchArgument(
+                "bs_downlink_newest_missing_chunk_first",
+                default_value="false",
+            ),
+            DeclareLaunchArgument(
                 "bs_control_ttl_s", default_value="2.0"
             ),
             DeclareLaunchArgument(
@@ -956,6 +972,9 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "rl_bs_decision_period_ms", default_value="20.0"
+            ),
+            DeclareLaunchArgument(
+                "rl_bs_repeat_action_each_slot", default_value="true"
             ),
             DeclareLaunchArgument(
                 "rl_bs_communication_slot_ms", default_value="20.0"

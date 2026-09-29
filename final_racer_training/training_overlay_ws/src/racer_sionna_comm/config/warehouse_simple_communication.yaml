@@ -30,10 +30,10 @@ racer_sionna_communication_proxy:
     directed_message_unicast: false
     uav_udp_directed_unicast: true
     uav_udp_header_bytes: 8
-    # The default preserves the existing centralized, collision-free OFDMA
-    # model.  Set csma to use per-UAV random backoff over the complete shared
-    # UAV band, with no scheduler grants or fixed per-UAV subbands.
-    uav_channel_access_mode: ofdma
+    # U2U defaults to per-UAV CSMA random backoff over the complete shared UAV
+    # band, with no scheduler grants or fixed per-UAV subbands. Experiments
+    # that specifically require centralized OFDMA must opt in explicitly.
+    uav_channel_access_mode: csma
     uav_csma_cw_min: 15
     uav_csma_cw_max: 1023
     uav_csma_difs_slots: 2

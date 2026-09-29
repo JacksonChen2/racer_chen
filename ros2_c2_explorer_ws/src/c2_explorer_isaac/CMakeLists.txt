@@ -39,6 +39,7 @@ install(PROGRAMS
   DESTINATION lib/${PROJECT_NAME})
 install(FILES
   isaac_sim/c2_explorer_isaac.py
+  isaac_sim/warp_raycast_camera.py
   isaac_sim/crazyflie_cpp_bridge.py
   isaac_sim/pointcloud_cpp_bridge.py
   isaac_sim/racer_so3_cpp_bridge.py

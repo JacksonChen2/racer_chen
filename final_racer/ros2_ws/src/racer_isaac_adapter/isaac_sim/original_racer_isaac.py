@@ -3596,6 +3596,10 @@ def main() -> None:
             safety_max_range=SAFETY_RAY_MAX_RANGE,
             safety_voxel_size=SAFETY_POINT_VOXEL_SIZE,
             safety_mount_translation=LIDAR_TRANSLATION,
+            safety_scene_bounds=(
+                (SCENARIO.safety_min, SCENARIO.safety_max)
+                if SCENARIO.name == "office" else None
+            ),
         )
         print(
             "RACER_3D_WARP_RAYCASTER_READY "

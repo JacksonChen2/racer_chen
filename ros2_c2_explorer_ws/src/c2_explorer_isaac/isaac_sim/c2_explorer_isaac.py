@@ -3,9 +3,9 @@
 
 Isaac Sim exposes its application API in Python; C2-Explorer mapping, task
 representation, allocation and trajectory planning remain in the original C++
-sources.  The plant and sensor boundary is the already validated 0.98 kg SO3
-quadrotor used by this repository's RACER reproduction: a 1 kHz plant, 200 Hz
-odometry/IMU and a 640x480 30 Hz ideal pinhole depth camera.
+sources. The plant and sensor boundary uses the 0.98 kg SO3 quadrotor and
+the original 640x480 pinhole sampling grid. The runner offers the original
+1 kHz/30 Hz and Final RACER's faster 100 Hz/10 Hz runtime profiles.
 """
 
 import argparse
@@ -43,6 +43,10 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--drone-count", type=int, default=3)
     parser.add_argument("--physics-rate-hz", type=float, default=1000.0)
     parser.add_argument("--sensor-rate-hz", type=float, default=30.0)
+    parser.add_argument(
+        "--depth-sensor-backend", choices=("warp", "rtx"), default="warp",
+        help="batched static-scene GPU rays or the original RTX camera",
+    )
     parser.add_argument("--depth-width", type=int, default=640)
     parser.add_argument("--depth-height", type=int, default=480)
     parser.add_argument(
@@ -211,6 +215,8 @@ from isaacsim.core.utils.extensions import enable_extension  # noqa: E402
 
 
 enable_extension("isaacsim.ros2.bridge")
+if ARGS.vehicle_model == "racer_so3" and ARGS.depth_sensor_backend == "warp":
+    enable_extension("omni.warp.core")
 if ARGS.visualize_exploration:
     enable_extension("isaacsim.util.debug_draw")
 simulation_app.update()
@@ -264,6 +270,8 @@ from safety_cpp_bridge import (  # noqa: E402
     pointcloud_obstacle_filter,
     sweep_obstacle_filter,
 )
+if ARGS.vehicle_model == "racer_so3" and ARGS.depth_sensor_backend == "warp":
+    from warp_raycast_camera import WarpRayCasterCameraBatch  # noqa: E402
 
 if ARGS.visualize_exploration:
     from isaacsim.util.debug_draw import _debug_draw  # noqa: E402
@@ -297,7 +305,10 @@ PHYSICS_DT = (
     if ARGS.vehicle_model == "racer_so3"
     else 0.02
 )
-ODOM_PERIOD = 1.0 / (200.0 if ARGS.vehicle_model == "racer_so3" else 50.0)
+ODOM_PERIOD = 1.0 / min(
+    ARGS.physics_rate_hz,
+    200.0 if ARGS.vehicle_model == "racer_so3" else 50.0,
+)
 DEPTH_PERIOD = 1.0 / ARGS.sensor_rate_hz
 BODY_SIZE = (0.16, 0.16, 0.06)
 DEPTH_WIDTH = ARGS.depth_width
@@ -384,11 +395,16 @@ VISUAL_MAP_COLOR = (0.0, 0.72, 1.0, 0.62)
 
 
 def _low_level_safety_description() -> str:
+    safety_sensor = (
+        "GPU 360-degree safety rays"
+        if ARGS.vehicle_model == "racer_so3" and ARGS.depth_sensor_backend == "warp"
+        else "360-degree PhysX safety lidar"
+    )
     if ARGS.scene_usd is None:
         return "AABB stopping-distance velocity barrier"
     if SCENARIO.safety_min is not None and SCENARIO.safety_max is not None:
         return (
-            "depth plus 360-degree safety-lidar, PhysX rigid-body sweep, "
+            f"depth plus {safety_sensor}, PhysX rigid-body sweep, "
             "and flight-volume stopping-distance barriers"
         )
     return (
@@ -577,7 +593,10 @@ def _add_racer_so3(
             reset_xform_properties=True,
         )
     )
-    depth_camera = world.scene.add(
+    depth_camera = None
+    safety_lidar = None
+    if ARGS.depth_sensor_backend == "rtx":
+        depth_camera = world.scene.add(
         Camera(
             prim_path=body_path + "/depth_camera",
             name=f"racer_depth_camera_{drone_id}",
@@ -590,14 +609,14 @@ def _add_racer_so3(
             orientation=np.asarray((1.0, 0.0, 0.0, 0.0)),
         )
     )
-    depth_camera.set_opencv_pinhole_properties(
+        depth_camera.set_opencv_pinhole_properties(
         cx=DEPTH_CX,
         cy=DEPTH_CY,
         fx=DEPTH_FX,
         fy=DEPTH_FY,
         pinhole=[0.0] * 12,
     )
-    depth_camera.set_clipping_range(
+        depth_camera.set_clipping_range(
         # The mapper discards source measurements below 0.2 m. Matching that
         # usable near range also prevents imported self geometry inside the
         # ideal camera's blind zone from becoming a false obstacle.
@@ -607,7 +626,7 @@ def _add_racer_so3(
     # The upstream forward depth camera remains the exploration sensor. A
     # coarse full-sphere PhysX lidar supplies the near-field safety layer so
     # thin rack posts cannot disappear in lateral/rear camera blind zones.
-    safety_lidar = world.scene.add(
+        safety_lidar = world.scene.add(
         RotatingLidarPhysX(
             prim_path=body_path + "/safety_lidar",
             name=f"racer_safety_lidar_{drone_id}",
@@ -739,6 +758,8 @@ def build_world():
         body.set_linear_velocity(np.zeros(3, dtype=float))
         body.set_angular_velocity(np.zeros(3, dtype=float))
     for range_sensor in range_sensors:
+        if range_sensor is None:
+            continue
         if ARGS.vehicle_model == "racer_so3":
             range_sensor.add_distance_to_image_plane_to_frame()
         else:
@@ -1026,11 +1047,29 @@ class TrajectoryRecorder:
 
 
 class IsaacRacer3DBridge(Node):
-    def __init__(self, bodies, range_sensors, safety_sensors, contacts) -> None:
+    def __init__(self, bodies, range_sensors, safety_sensors, contacts,
+                 warp_raycaster=None) -> None:
         super().__init__("isaac_c2_explorer_bridge")
         self.bodies = bodies
         self.range_sensors = range_sensors
         self.safety_sensors = safety_sensors
+        self.warp_raycaster = warp_raycaster
+        self.warp_sample_rows = None
+        self.warp_sample_cols = None
+        if warp_raycaster is not None:
+            vv, uu = np.mgrid[
+                DEPTH_FILTER_MARGIN:DEPTH_HEIGHT - DEPTH_FILTER_MARGIN:DEPTH_SKIP_PIXEL,
+                DEPTH_FILTER_MARGIN:DEPTH_WIDTH - DEPTH_FILTER_MARGIN:DEPTH_SKIP_PIXEL,
+            ]
+            self.warp_sample_rows = vv.reshape(-1)
+            self.warp_sample_cols = uu.reshape(-1)
+            if len(self.warp_sample_rows) > ARGS.camera_ray_budget:
+                selected = np.linspace(
+                    0, len(self.warp_sample_rows) - 1,
+                    ARGS.camera_ray_budget, dtype=np.int64,
+                )
+                self.warp_sample_rows = self.warp_sample_rows[selected]
+                self.warp_sample_cols = self.warp_sample_cols[selected]
         self.contacts = contacts
         self.drone_count = len(bodies)
         self.commands = [np.zeros(3) for _ in bodies]
@@ -1047,7 +1086,7 @@ class IsaacRacer3DBridge(Node):
         self.scene_query = get_physx_scene_query_interface()
         # A single forward depth frame forgets a shelf as soon as it leaves
         # the camera frustum. Keep a short, world-frame, voxelized history so
-        # the 1 kHz rigid-body controller can still brake beside/behind it.
+        # the rigid-body controller can still brake beside/behind it.
         self.safety_point_history = [deque() for _ in bodies]
         self.yaw_commands = [0.0 for _ in bodies]
         self.yaw_targets = [0.0 for _ in bodies]
@@ -1974,12 +2013,42 @@ class IsaacRacer3DBridge(Node):
         return world.astype(np.float32), hit
 
     def _publish_clouds(self, stamp) -> None:
+        warp_depth = None
+        warp_safety = None
+        if self.warp_raycaster is not None:
+            from crazyflie_cpp_bridge import quaternion_matrix
+
+            poses = [body.get_world_pose() for body in self.bodies]
+            positions = [pose[0] for pose in poses]
+            orientations = [pose[1] for pose in poses]
+            _, hit_batch, distance_batch, _ = self.warp_raycaster.cast(
+                positions, orientations, quaternion_matrix,
+                return_distances=True, return_points=False,
+            )
+            # Warp measures along unit rays; the original depth annotator
+            # reports distance to the optical image plane. Reconstruct only
+            # the sampled pixels and retain the original C2 projection path.
+            warp_depth = np.where(
+                hit_batch,
+                distance_batch * self.warp_raycaster.forward_components_host,
+                np.nan,
+            ).astype(np.float32)
+            warp_safety, _, _, _ = self.warp_raycaster.cast_safety(
+                positions, orientations, quaternion_matrix
+            )
         for drone_id, (body, range_sensor) in enumerate(
             zip(self.bodies, self.range_sensors)
         ):
             position, orientation = body.get_world_pose()
             if ARGS.vehicle_model == "racer_so3":
-                raw = range_sensor.get_depth()
+                if warp_depth is not None:
+                    raw = np.full((DEPTH_HEIGHT, DEPTH_WIDTH), np.nan,
+                                  dtype=np.float32)
+                    raw[self.warp_sample_rows, self.warp_sample_cols] = (
+                        warp_depth[drone_id]
+                    )
+                else:
+                    raw = range_sensor.get_depth()
                 if raw is None:
                     self.cloud_none_per_drone[drone_id] += 1
                     continue
@@ -1994,16 +2063,27 @@ class IsaacRacer3DBridge(Node):
                 mapping_points = points
                 mapping_hit = hit
                 safety_hits = np.empty((0, 3), dtype=float)
-                safety_frame = self.safety_sensors[
-                    drone_id
-                ].get_current_frame()
-                raw_safety = safety_frame.get("point_cloud")
-                if raw_safety is not None:
-                    safety_hits = self._safety_lidar_world_points(
-                        _backend_array_to_numpy(raw_safety),
-                        position,
-                        orientation,
-                    )
+                if warp_safety is not None:
+                    safety_hits = warp_safety[drone_id]
+                    if len(safety_hits) > SAFETY_LIDAR_POINT_LIMIT:
+                        distances = np.linalg.norm(
+                            safety_hits - np.asarray(position), axis=1
+                        )
+                        nearest = np.argpartition(
+                            distances, SAFETY_LIDAR_POINT_LIMIT - 1
+                        )[:SAFETY_LIDAR_POINT_LIMIT]
+                        safety_hits = safety_hits[nearest]
+                else:
+                    safety_frame = self.safety_sensors[
+                        drone_id
+                    ].get_current_frame()
+                    raw_safety = safety_frame.get("point_cloud")
+                    if raw_safety is not None:
+                        safety_hits = self._safety_lidar_world_points(
+                            _backend_array_to_numpy(raw_safety),
+                            position,
+                            orientation,
+                        )
             else:
                 raw = range_sensor.get_current_frame().get("point_cloud")
                 if raw is None:
@@ -2099,7 +2179,9 @@ class IsaacRacer3DBridge(Node):
                     + json.dumps(
                         {
                             "sensor": (
-                                "depth_plus_360_safety_lidar"
+                                ("warp_depth_plus_gpu_360_safety"
+                                 if self.warp_raycaster is not None
+                                 else "depth_plus_360_safety_lidar")
                                 if ARGS.vehicle_model == "racer_so3"
                                 else "legacy_rotating_lidar"
                             ),
@@ -2146,10 +2228,18 @@ class IsaacRacer3DBridge(Node):
                 else "local rotor thrust and attitude torque"
             ),
             "sensor_source": (
-                "Isaac ideal pinhole depth camera plus 360-degree "
-                "near-field PhysX safety lidar"
+                (
+                    "Warp batched pinhole depth and 360-degree safety rays"
+                    if self.warp_raycaster is not None
+                    else "Isaac ideal pinhole depth camera plus 360-degree "
+                         "near-field PhysX safety lidar"
+                )
                 if ARGS.vehicle_model == "racer_so3"
                 else "Isaac RotatingLidarPhysX point cloud"
+            ),
+            "depth_sensor_backend": (
+                ARGS.depth_sensor_backend if ARGS.vehicle_model == "racer_so3"
+                else "legacy_lidar"
             ),
             "sensor_parameters": (
                 {
@@ -2243,7 +2333,37 @@ class IsaacRacer3DBridge(Node):
 
 
 def main() -> None:
+    run_started_wall = time.monotonic()
     world, bodies, range_sensors, safety_sensors, contacts = build_world()
+    warp_raycaster = None
+    if ARGS.vehicle_model == "racer_so3" and ARGS.depth_sensor_backend == "warp":
+        vv, uu = np.mgrid[
+            DEPTH_FILTER_MARGIN:DEPTH_HEIGHT - DEPTH_FILTER_MARGIN:DEPTH_SKIP_PIXEL,
+            DEPTH_FILTER_MARGIN:DEPTH_WIDTH - DEPTH_FILTER_MARGIN:DEPTH_SKIP_PIXEL,
+        ]
+        rows, cols = vv.reshape(-1), uu.reshape(-1)
+        if len(rows) > ARGS.camera_ray_budget:
+            selected = np.linspace(0, len(rows) - 1,
+                                   ARGS.camera_ray_budget, dtype=np.int64)
+            rows, cols = rows[selected], cols[selected]
+        warp_raycaster = WarpRayCasterCameraBatch(
+            omni.usd.get_context().get_stage(),
+            camera_count=len(bodies),
+            image_width=DEPTH_WIDTH, image_height=DEPTH_HEIGHT,
+            sample_rows=rows, sample_cols=cols,
+            fx=DEPTH_FX, fy=DEPTH_FY, cx=DEPTH_CX, cy=DEPTH_CY,
+            near_depth=DEPTH_MIN_RANGE, map_depth=DEPTH_MAP_RANGE,
+            render_depth=DEPTH_RENDER_HORIZON,
+            mount_translation=CAMERA_TRANSLATION,
+            safety_horizontal_resolution_deg=SAFETY_LIDAR_HORIZONTAL_RESOLUTION_DEG,
+            safety_vertical_resolution_deg=SAFETY_LIDAR_VERTICAL_RESOLUTION_DEG,
+            safety_near_range=SELF_FILTER_RADIUS,
+            safety_max_range=SAFETY_POINT_MEMORY_RADIUS,
+            safety_voxel_size=SAFETY_POINT_VOXEL_SIZE,
+            safety_mount_translation=LIDAR_TRANSLATION,
+        )
+        print("C2_EXPLORER_WARP_READY " + json.dumps(
+            warp_raycaster.report(), sort_keys=True), flush=True)
     if ARGS.visualize_exploration:
         start_center = np.mean(np.asarray(STARTS, dtype=float), axis=0)
         camera_target = np.asarray(
@@ -2256,9 +2376,9 @@ def main() -> None:
         simulation_app.update()
     rclpy.init()
     bridge = IsaacRacer3DBridge(
-        bodies, range_sensors, safety_sensors, contacts
+        bodies, range_sensors, safety_sensors, contacts, warp_raycaster
     )
-    if ARGS.vehicle_model == "racer_so3":
+    if ARGS.vehicle_model == "racer_so3" and warp_raycaster is None:
         async def wait_for_depth_products() -> None:
             await asyncio.gather(
                 *(
@@ -2418,7 +2538,8 @@ def main() -> None:
         )
         bridge.yaw_targets[0] = 2.0
     offscreen_camera_textures = []
-    if ARGS.visualize_exploration and ARGS.vehicle_model == "racer_so3":
+    if (ARGS.visualize_exploration and ARGS.vehicle_model == "racer_so3"
+            and warp_raycaster is None):
         for camera in range_sensors:
             render_product = getattr(camera, "_render_product", None)
             hydra_texture = getattr(
@@ -2452,7 +2573,7 @@ def main() -> None:
         f"duration={ARGS.duration:.1f} vehicle={ARGS.vehicle_model} "
         f"physics_hz={1.0 / PHYSICS_DT:.0f} motion=rotor_wrench "
         f"propeller_visuals={'on' if bridge.propeller_visuals.enabled else 'off'} "
-        f"sensor={'DepthCamera+360SafetyLidar' if ARGS.vehicle_model == 'racer_so3' else 'RotatingLidarPhysX'} "
+        f"sensor={('WarpDepth+GPU360Safety' if warp_raycaster is not None else 'DepthCamera+360SafetyLidar') if ARGS.vehicle_model == 'racer_so3' else 'RotatingLidarPhysX'} "
         f"scene={ARGS.scene_usd or SCENARIO.name}",
         flush=True,
     )
@@ -2464,6 +2585,7 @@ def main() -> None:
             flush=True,
         )
     try:
+        experiment_started_wall = time.monotonic()
         last_render_wall = -math.inf
         render_report_wall = time.monotonic()
         render_report_frames = 0
@@ -2491,7 +2613,7 @@ def main() -> None:
                     flush=True,
                 )
             render_sensor = (
-                bridge.depth_render_due()
+                (bridge.depth_render_due() if warp_raycaster is None else False)
                 if ARGS.vehicle_model == "racer_so3"
                 else frame % max(1, ARGS.render_every) == 0
             )
@@ -2668,6 +2790,14 @@ def main() -> None:
                         else "legacy_rotating_lidar"
                     ),
                     "physics_rate_hz": 1.0 / PHYSICS_DT,
+                    "depth_sensor_backend": (
+                        ARGS.depth_sensor_backend if ARGS.vehicle_model == "racer_so3"
+                        else "legacy_lidar"
+                    ),
+                    "wall_time_s": time.monotonic() - run_started_wall,
+                    "experiment_wall_time_s": (
+                        time.monotonic() - experiment_started_wall
+                    ),
                     "odometry_rate_hz": 1.0 / ODOM_PERIOD,
                     "sensor_rate_hz": 1.0 / DEPTH_PERIOD,
                     "camera_ray_budget": ARGS.camera_ray_budget,

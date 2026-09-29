@@ -46,8 +46,20 @@ coverage_target="${C2_MAPPING_COVERAGE_TARGET:-0}"
 # diagnostic budget can leave unknown voxel curtains that the unchanged
 # non-optimistic A* correctly refuses to cross.
 ray_budget="${C2_CAMERA_RAY_BUDGET:-76800}"
-physics_hz="${C2_PHYSICS_RATE_HZ:-1000}"
-sensor_hz="${C2_SENSOR_RATE_HZ:-30}"
+runtime_profile="${C2_RUNTIME_PROFILE:-fast}"
+if [[ "${runtime_profile}" == "fast" ]]; then
+  default_physics_hz=100
+  default_sensor_hz=10
+elif [[ "${runtime_profile}" == "faithful" ]]; then
+  default_physics_hz=1000
+  default_sensor_hz=30
+else
+  printf 'C2_RUNTIME_PROFILE must be fast or faithful.\n' >&2
+  exit 2
+fi
+physics_hz="${C2_PHYSICS_RATE_HZ:-${default_physics_hz}}"
+sensor_hz="${C2_SENSOR_RATE_HZ:-${default_sensor_hz}}"
+depth_backend="${C2_DEPTH_SENSOR_BACKEND:-warp}"
 depth_width="${C2_DEPTH_WIDTH:-640}"
 depth_height="${C2_DEPTH_HEIGHT:-480}"
 interactive_hz="${C2_INTERACTIVE_RENDER_HZ:-30}"
@@ -161,6 +173,7 @@ isaac_args=(
   --camera-ray-budget "${ray_budget}"
   --physics-rate-hz "${physics_hz}"
   --sensor-rate-hz "${sensor_hz}"
+  --depth-sensor-backend "${depth_backend}"
   --depth-width "${depth_width}"
   --depth-height "${depth_height}"
   --diagnostics

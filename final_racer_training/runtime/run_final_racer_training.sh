@@ -54,7 +54,7 @@ lossless_nearest_neighbor_count="${RACER_LOSSLESS_NEAREST_NEIGHBOR_COUNT:-0}"
 lossless_communication_range_m="${RACER_LOSSLESS_COMMUNICATION_RANGE_M:-0.0}"
 lossless_control_only="${RACER_LOSSLESS_CONTROL_ONLY:-false}"
 directed_message_unicast="${RACER_DIRECTED_MESSAGE_UNICAST:-false}"
-uav_channel_access_mode="${RACER_UAV_CHANNEL_ACCESS_MODE:-ofdma}"
+uav_channel_access_mode="${RACER_UAV_CHANNEL_ACCESS_MODE:-csma}"
 uav_csma_cw_min="${RACER_UAV_CSMA_CW_MIN:-15}"
 uav_csma_cw_max="${RACER_UAV_CSMA_CW_MAX:-1023}"
 uav_csma_difs_slots="${RACER_UAV_CSMA_DIFS_SLOTS:-2}"
@@ -139,6 +139,7 @@ bs_max_payload_precache_inflight="${RACER_BS_MAX_PAYLOAD_PRECACHE_INFLIGHT:-16}"
 bs_payload_precache_timeout_ms="${RACER_BS_PAYLOAD_PRECACHE_TIMEOUT_MS:-5000.0}"
 bs_max_uplink_chunks_per_rl_slot="${RACER_BS_MAX_UPLINK_CHUNKS_PER_RL_SLOT:-0}"
 bs_max_downlink_chunks_per_rl_slot="${RACER_BS_MAX_DOWNLINK_CHUNKS_PER_RL_SLOT:-0}"
+bs_downlink_newest_missing_chunk_first="${RACER_BS_DOWNLINK_NEWEST_MISSING_CHUNK_FIRST:-false}"
 bs_control_ttl_s="${RACER_BS_CONTROL_TTL_S:-2.0}"
 bs_all_to_all_relay_enabled="${RACER_BS_ALL_TO_ALL_RELAY_ENABLED:-false}"
 pair_control_reservation_enabled="${RACER_PAIR_CONTROL_RESERVATION_ENABLED:-false}"
@@ -160,6 +161,7 @@ rl_bs_action_path="${RACER_RL_BS_ACTION_PATH:-/tmp/racer_agentic_crpo/action.txt
 rl_bs_state_path="${RACER_RL_BS_STATE_PATH:-/tmp/racer_agentic_crpo/communication_state.json}"
 rl_bs_mission_state_path="${RACER_RL_BS_MISSION_STATE_PATH:-/tmp/racer_agentic_crpo/mission_state.json}"
 rl_bs_decision_period_ms="${RACER_RL_BS_DECISION_PERIOD_MS:-20.0}"
+rl_bs_repeat_action_each_slot="${RACER_RL_BS_REPEAT_ACTION_EACH_SLOT:-true}"
 rl_bs_communication_slot_ms="${RACER_RL_BS_COMMUNICATION_SLOT_MS:-20.0}"
 rl_llm_state_period_ms="${RACER_RL_LLM_STATE_PERIOD_MS:-5000.0}"
 rl_sync_enabled="${RACER_RL_SYNC_ENABLED:-false}"
@@ -212,6 +214,11 @@ if ! [[ "${bs_periodic_upload_chunks_per_request}" =~ ^[1-9][0-9]*$ ]] ||
    ! [[ "${bs_max_downlink_chunks_per_rl_slot}" =~ ^[0-9]+$ ]] ||
    (( bs_max_inflight_chunks_per_uav > 0 && bs_periodic_upload_chunks_per_request > bs_max_inflight_chunks_per_uav )); then
   printf 'BS fixed budgets must be nonnegative; zero selects automatic sizing; periodic chunk budget must be <= a positive per-UAV in-flight limit.\n' >&2
+  exit 2
+fi
+if [[ "${bs_downlink_newest_missing_chunk_first}" != "true" &&
+      "${bs_downlink_newest_missing_chunk_first}" != "false" ]]; then
+  printf 'RACER_BS_DOWNLINK_NEWEST_MISSING_CHUNK_FIRST must be true or false.\n' >&2
   exit 2
 fi
 if ! python3 -c 'import math,sys; value=float(sys.argv[1]); raise SystemExit(not (math.isfinite(value) and value > 0.0))' \
@@ -639,6 +646,7 @@ launch_communication_args=(
   bs_payload_precache_timeout_ms:="${bs_payload_precache_timeout_ms}"
   bs_max_uplink_chunks_per_rl_slot:="${bs_max_uplink_chunks_per_rl_slot}"
   bs_max_downlink_chunks_per_rl_slot:="${bs_max_downlink_chunks_per_rl_slot}"
+  bs_downlink_newest_missing_chunk_first:="${bs_downlink_newest_missing_chunk_first}"
   bs_control_ttl_s:="${bs_control_ttl_s}"
   bs_all_to_all_relay_enabled:="${bs_all_to_all_relay_enabled}"
   pair_control_reservation_enabled:="${pair_control_reservation_enabled}"
@@ -656,6 +664,7 @@ launch_communication_args=(
   require_ground_truth_map:="${require_ground_truth_map}"
   task_metric_observer_mode:="${task_metric_observer_mode}"
   rl_bs_decision_period_ms:="${rl_bs_decision_period_ms}"
+  rl_bs_repeat_action_each_slot:="${rl_bs_repeat_action_each_slot}"
   rl_llm_state_period_ms:="${rl_llm_state_period_ms}"
   random_seed:="${random_seed}"
 )

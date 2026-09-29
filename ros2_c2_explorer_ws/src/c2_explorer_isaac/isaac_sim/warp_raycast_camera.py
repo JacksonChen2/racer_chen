@@ -325,7 +325,6 @@ class WarpRayCasterCameraBatch:
         ),
         exclude_prefixes: Sequence[str] = ("/World/Drones",),
         device: str = "cuda:0",
-        safety_scene_bounds: Sequence[Sequence[float]] | None = None,
     ) -> None:
         if camera_count <= 0:
             raise ValueError("camera_count must be positive")
@@ -393,6 +392,7 @@ class WarpRayCasterCameraBatch:
         norms = np.linalg.norm(local, axis=1, keepdims=True)
         local /= norms
         forward = np.ascontiguousarray(local[:, 0], dtype=np.float32)
+        self.forward_components_host = forward
         self.ray_count = len(local)
         self.local_directions = wp.array(
             np.ascontiguousarray(local), dtype=wp.vec3, device=self.device
@@ -461,18 +461,8 @@ class WarpRayCasterCameraBatch:
             )
         self.safety_report = None
         if self.safety_enabled:
-            safety_vertices = vertices
-            if safety_scene_bounds is not None:
-                bounds = np.asarray(safety_scene_bounds, dtype=np.float64)
-                if bounds.shape != (2, 3) or not np.isfinite(bounds).all() or np.any(bounds[0] >= bounds[1]):
-                    raise ValueError("invalid safety scene bounds")
-                # Retain the full raycast mesh. Only the deduplication key
-                # domain is bounded, including every possible hit from the
-                # allowed flight volume plus sensor range and mount offset.
-                padding = float(safety_max_range) + float(np.linalg.norm(safety_mount_translation)) + 1.0
-                safety_vertices = np.stack((bounds[0] - padding, bounds[1] + padding))
             self._initialize_safety_rays(
-                safety_vertices,
+                vertices,
                 horizontal_resolution_deg=float(
                     safety_horizontal_resolution_deg
                 ),
@@ -688,6 +678,7 @@ class WarpRayCasterCameraBatch:
         quaternion_matrix,
         *,
         return_distances: bool = False,
+        return_points: bool = True,
     ):
         """Return endpoints, hit flags, optional ranges, and elapsed time.
 
@@ -741,8 +732,11 @@ class WarpRayCasterCameraBatch:
         )
         # Host PointCloud2 publication is the first CPU consumer. Copy once per
         # batch after the single GPU launch; no per-ray Python work occurs.
-        points = self.points_world.numpy().reshape(
-            (self.camera_count, self.ray_count, 3)
+        points = (
+            self.points_world.numpy().reshape(
+                (self.camera_count, self.ray_count, 3)
+            )
+            if return_points else None
         )
         hit = self.hit_mask.numpy().reshape(
             (self.camera_count, self.ray_count)

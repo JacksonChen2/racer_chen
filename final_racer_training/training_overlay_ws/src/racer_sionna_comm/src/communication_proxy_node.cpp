@@ -211,7 +211,7 @@ class CommunicationProxy final : public rclcpp::Node {
         udp_header_bytes_(
             declare_parameter<int>("uav_udp_header_bytes", 8)),
         uav_channel_access_mode_(declare_parameter<std::string>(
-            "uav_channel_access_mode", "ofdma")),
+            "uav_channel_access_mode", "csma")),
         csma_cw_min_(declare_parameter<int>("uav_csma_cw_min", 15)),
         csma_cw_max_(declare_parameter<int>("uav_csma_cw_max", 1023)),
         csma_difs_slots_(declare_parameter<int>("uav_csma_difs_slots", 2)),
@@ -235,6 +235,8 @@ class CommunicationProxy final : public rclcpp::Node {
             "bs_max_uplink_chunks_per_rl_slot", 0)),
         bs_max_downlink_chunks_per_rl_slot_(declare_parameter<int>(
             "bs_max_downlink_chunks_per_rl_slot", 0)),
+        bs_downlink_newest_missing_chunk_first_(declare_parameter<bool>(
+            "bs_downlink_newest_missing_chunk_first", false)),
         rl_bs_scheduler_enabled_(declare_parameter<bool>(
             "rl_bs_scheduler_enabled", false)),
         force_bs_perfect_delivery_(declare_parameter<bool>(
@@ -278,6 +280,8 @@ class CommunicationProxy final : public rclcpp::Node {
             "rl_bs_communication_slot_ms", 20.0)),
         rl_bs_decision_period_s_(1.0e-3 * declare_parameter<double>(
             "rl_bs_decision_period_ms", 20.0)),
+        rl_bs_repeat_action_each_slot_(declare_parameter<bool>(
+            "rl_bs_repeat_action_each_slot", true)),
         rl_llm_state_period_s_(1.0e-3 * declare_parameter<double>(
             "rl_llm_state_period_ms", 5000.0)),
         ground_truth_occupied_voxels_path_(declare_parameter<std::string>(
@@ -568,16 +572,16 @@ class CommunicationProxy final : public rclcpp::Node {
           std::abs(
               rl_bs_decision_period_s_ -
               static_cast<double>(rl_slots_per_decision_) *
-                  rl_bs_communication_slot_s_) > 1.0e-12 ||
-          rl_slots_per_decision_ != 5U) {
+                  rl_bs_communication_slot_s_) > 1.0e-12) {
         throw std::runtime_error(
-            "RL scheduling requires decision_period=5*communication_slot");
+            "RL scheduling requires decision_period to be a positive integer "
+            "multiple of communication_slot");
       }
     }
     if (rl_bs_event_driven_one_shot_) {
       // The experimental controller consumes a fresh action in exactly one
-      // physical communication slot. The fixed-clock path above retains its
-      // original hard requirement of five slots per decision.
+      // physical communication slot. The fixed-clock path above holds each
+      // action for the configured integer number of communication slots.
       rl_slots_per_decision_ = 1U;
       event_driven_gate_ = std::make_unique<EventDrivenOneShotGate>(
           rl_bs_communication_slot_s_);
@@ -691,6 +695,12 @@ class CommunicationProxy final : public rclcpp::Node {
         static_cast<std::size_t>(drone_count_));
     ordered_uav_missing_chunks_.resize(
         static_cast<std::size_t>(drone_count_));
+    downlink_priority_tables_.resize(static_cast<std::size_t>(drone_count_));
+    downlink_priority_positions_.resize(static_cast<std::size_t>(drone_count_));
+    downlink_priority_position_valid_.assign(
+        static_cast<std::size_t>(drone_count_), false);
+    downlink_priority_versions_.assign(static_cast<std::size_t>(drone_count_),
+                                       std::numeric_limits<std::uint64_t>::max());
     pending_bs_chunk_requests_.resize(
         static_cast<std::size_t>(drone_count_));
     bs_periodic_upload_request_pending_.assign(
@@ -1083,6 +1093,9 @@ class CommunicationProxy final : public rclcpp::Node {
   struct CachedChunk {
     std::shared_ptr<rclcpp::SerializedMessage> message;
     std::size_t bytes{};
+    std::array<double, 3> voxel_center{};
+    double mean_voxel_norm_squared{};
+    bool has_voxel_geometry{false};
   };
 
   struct TrajectorySummary {
@@ -1099,6 +1112,9 @@ class CommunicationProxy final : public rclcpp::Node {
     double map_coverage{-1.0};
     std::uint64_t task_step{};
     double source_sim_time_s{};
+    std::uint64_t bs_uplink_prb_slots{};
+    std::uint64_t bs_downlink_prb_slots{};
+    std::uint64_t direct_u2u_prb_slots{};
   };
 
   struct BsGlobalMapMetrics {
@@ -1562,6 +1578,36 @@ class CommunicationProxy final : public rclcpp::Node {
     return {x, y, z};
   }
 
+  CachedChunk cacheChunk(
+      std::shared_ptr<rclcpp::SerializedMessage> message,
+      std::size_t bytes,
+      const racer_fidelity_msgs::msg::ChunkData &chunk) const {
+    CachedChunk cached{std::move(message), bytes};
+    double norm_sum = 0.0;
+    std::size_t count = 0U;
+    for (const auto address : chunk.voxel_adrs) {
+      if (static_cast<std::uint64_t>(address) >= bs_full_map_voxels_) continue;
+      const auto index = bsAddressToIndex(address);
+      double norm_squared = 0.0;
+      for (std::size_t axis = 0; axis < 3U; ++axis) {
+        const double coordinate = bs_map_origin_[axis] +
+            (static_cast<double>(index[axis]) + 0.5) * bs_map_resolution_;
+        cached.voxel_center[axis] += coordinate;
+        norm_squared += coordinate * coordinate;
+      }
+      norm_sum += norm_squared;
+      ++count;
+    }
+    if (count > 0U) {
+      for (double &coordinate : cached.voxel_center) {
+        coordinate /= static_cast<double>(count);
+      }
+      cached.mean_voxel_norm_squared = norm_sum / static_cast<double>(count);
+      cached.has_voxel_geometry = true;
+    }
+    return cached;
+  }
+
   std::uint32_t bsIndexToAddress(
       const std::array<std::int64_t, 3> &index) const noexcept {
     const auto address =
@@ -1945,6 +1991,7 @@ class CommunicationProxy final : public rclcpp::Node {
     } else {
       ordered_bs_missing_chunks_[receiver_index].insert(key);
     }
+    ++downlink_inventory_version_;
     const auto repository = chunk_repository_.find(key);
     if (repository != chunk_repository_.end()) {
       const auto bytes = static_cast<std::uint64_t>(repository->second.bytes);
@@ -1996,6 +2043,7 @@ class CommunicationProxy final : public rclcpp::Node {
   bool insertKnownBsChunk(const ChunkKey &key) {
     const auto started = std::chrono::steady_clock::now();
     if (!bs_chunks_.insert(key).second) return false;
+    bs_chunk_arrival_sequences_[key] = ++bs_chunk_arrival_sequence_;
     for (int drone = 0; drone < drone_count_; ++drone) {
       const auto drone_index = static_cast<std::size_t>(drone);
       if (uav_chunks_[drone_index].count(key)) {
@@ -2004,6 +2052,7 @@ class CommunicationProxy final : public rclcpp::Node {
         ordered_uav_missing_chunks_[drone_index].insert(key);
       }
     }
+    ++downlink_inventory_version_;
     const auto repository = chunk_repository_.find(key);
     if (repository != chunk_repository_.end()) {
       const auto bytes = static_cast<std::uint64_t>(repository->second.bytes);
@@ -2145,7 +2194,9 @@ class CommunicationProxy final : public rclcpp::Node {
     const std::size_t bytes = 64U + message->size();
     const bool new_definition = chunk_repository_.find(*chunk_key) ==
                                 chunk_repository_.end();
-    chunk_repository_.insert_or_assign(*chunk_key, CachedChunk{message, bytes});
+    chunk_repository_.insert_or_assign(*chunk_key,
+                                       cacheChunk(message, bytes, chunk));
+    ++downlink_inventory_version_;
     if (new_definition) {
       // Chunk stamps can announce a key before its serialized payload arrives.
       // Seed deficits for every UAV already known to possess the chunk.  The
@@ -3989,6 +4040,76 @@ class CommunicationProxy final : public rclcpp::Node {
     return output;
   }
 
+  const std::vector<ChunkKey> &rankedDownlinkChunks(int receiver) {
+    const auto index = static_cast<std::size_t>(receiver);
+    const bool positioned = uav_position_valid_[index];
+    const auto position = positioned ? uav_positions_[index]
+                                     : std::array<double, 3>{};
+    if (downlink_priority_versions_[index] == downlink_inventory_version_ &&
+        downlink_priority_position_valid_[index] == positioned &&
+        (!positioned || downlink_priority_positions_[index] == position)) {
+      return downlink_priority_tables_[index];
+    }
+
+    // A chunk is indivisible. Its score is the mean value of its voxels,
+    // value(v) = -||v - UAV||^2. Expanding the square lets each UAV's table
+    // be refreshed from one cached centroid and second moment per chunk.
+    struct RankedChunk {
+      bool newest{};
+      double mean_distance_squared{};
+      ChunkKey key{};
+    };
+    ChunkKey newest_key{};
+    std::uint64_t newest_sequence{};
+    bool have_newest = false;
+    if (bs_downlink_newest_missing_chunk_first_) {
+      for (const auto &key : ordered_uav_missing_chunks_[index]) {
+        const auto sequence = bs_chunk_arrival_sequences_.find(key);
+        if (sequence != bs_chunk_arrival_sequences_.end() &&
+            (!have_newest || sequence->second > newest_sequence)) {
+          newest_key = key;
+          newest_sequence = sequence->second;
+          have_newest = true;
+        }
+      }
+    }
+    std::vector<RankedChunk> ranked;
+    ranked.reserve(ordered_uav_missing_chunks_[index].size());
+    for (const auto &key : ordered_uav_missing_chunks_[index]) {
+      double mean_distance_squared = std::numeric_limits<double>::infinity();
+      const auto found = chunk_repository_.find(key);
+      if (positioned && found != chunk_repository_.end() &&
+          found->second.has_voxel_geometry) {
+        const auto &chunk = found->second;
+        mean_distance_squared = chunk.mean_voxel_norm_squared;
+        for (std::size_t axis = 0; axis < 3U; ++axis) {
+          mean_distance_squared += position[axis] * position[axis] -
+              2.0 * position[axis] * chunk.voxel_center[axis];
+        }
+      }
+      ranked.push_back(
+          {have_newest && key == newest_key, mean_distance_squared, key});
+    }
+    std::sort(ranked.begin(), ranked.end(),
+              [](const auto &left, const auto &right) {
+                if (left.newest != right.newest) return left.newest;
+                if (left.mean_distance_squared !=
+                    right.mean_distance_squared) {
+                  return left.mean_distance_squared <
+                      right.mean_distance_squared;
+                }
+                return left.key < right.key;
+              });
+    auto &table = downlink_priority_tables_[index];
+    table.clear();
+    table.reserve(ranked.size());
+    for (const auto &entry : ranked) table.push_back(entry.key);
+    downlink_priority_versions_[index] = downlink_inventory_version_;
+    downlink_priority_position_valid_[index] = positioned;
+    downlink_priority_positions_[index] = position;
+    return table;
+  }
+
   std::shared_ptr<rclcpp::SerializedMessage> retargetChunkMessage(
       const std::shared_ptr<rclcpp::SerializedMessage> &message,
       int current_sender, int current_receiver) const {
@@ -4366,7 +4487,8 @@ class CommunicationProxy final : public rclcpp::Node {
     const bool new_definition =
         chunk_repository_.find(key) == chunk_repository_.end();
     chunk_repository_.insert_or_assign(
-        key, CachedChunk{std::move(message), bytes});
+        key, cacheChunk(std::move(message), bytes, chunk));
+    ++downlink_inventory_version_;
     if (new_definition) cacheNewChunkDefinition(key, bytes);
     insertKnownUavChunk(sender, key);
     if (task_metric_observer_mode_ == "inline") {
@@ -4598,8 +4720,7 @@ class CommunicationProxy final : public rclcpp::Node {
     // B[i,j] may use everything BS already had before this action.  Selection
     // is C_BS - C_j and therefore does not depend on chunk provenance or on
     // whether i's concurrent uplink succeeds.
-    const auto &candidates = ordered_uav_missing_chunks_[
-        static_cast<std::size_t>(receiver)];
+    const auto &candidates = rankedDownlinkChunks(receiver);
     std::size_t limit = requested_selection_limit;
     if (bs_max_downlink_chunks_per_turn_ > 0) {
       limit = std::min(
@@ -5362,9 +5483,11 @@ class CommunicationProxy final : public rclcpp::Node {
         return true;
       }
       rl_communication_slot_index_ = next_slot;
-      scheduleActiveRlAction(
-          static_cast<double>(next_slot) * rl_bs_communication_slot_s_);
-      ++rl_current_action_held_slots_;
+      if (rl_bs_repeat_action_each_slot_) {
+        scheduleActiveRlAction(
+            static_cast<double>(next_slot) * rl_bs_communication_slot_s_);
+        ++rl_current_action_held_slots_;
+      }
     }
     return false;
   }
@@ -5384,9 +5507,11 @@ class CommunicationProxy final : public rclcpp::Node {
         break;
       }
       rl_communication_slot_index_ = next_slot;
-      scheduleActiveRlAction(
-          static_cast<double>(next_slot) * rl_bs_communication_slot_s_);
-      ++rl_current_action_held_slots_;
+      if (rl_bs_repeat_action_each_slot_) {
+        scheduleActiveRlAction(
+            static_cast<double>(next_slot) * rl_bs_communication_slot_s_);
+        ++rl_current_action_held_slots_;
+      }
     }
   }
 
@@ -5454,9 +5579,13 @@ class CommunicationProxy final : public rclcpp::Node {
       }
       const std::uint64_t interval_decision =
           rl_communication_slot_index_ / rl_slots_per_decision_;
-      applyHeldRlAction(stamp, interval_decision);
+      const bool first_slot_in_decision =
+          rl_communication_slot_index_ % rl_slots_per_decision_ == 0U;
+      if (rl_bs_repeat_action_each_slot_ || first_slot_in_decision) {
+        applyHeldRlAction(stamp, interval_decision);
+        ++rl_current_action_held_slots_;
+      }
       ++rl_communication_slot_index_;
-      ++rl_current_action_held_slots_;
       if (rl_communication_slot_index_ % rl_slots_per_decision_ == 0U) {
         rl_decision_index_ =
             rl_communication_slot_index_ / rl_slots_per_decision_;
@@ -7078,6 +7207,9 @@ class CommunicationProxy final : public rclcpp::Node {
     racer_sionna_interfaces::msg::CommStatistics message;
     message.stamp = now();
     if (have_task_metric) {
+      task_quality.bs_uplink_prb_slots = bs_uplink_prb_slots_;
+      task_quality.bs_downlink_prb_slots = bs_downlink_prb_slots_;
+      task_quality.direct_u2u_prb_slots = direct_u2u_prb_slots_;
       if (task_quality_history_.empty() ||
           task_quality_history_.back().task_step < task_quality.task_step) {
         task_quality_history_.push_back(task_quality);
@@ -7382,6 +7514,8 @@ class CommunicationProxy final : public rclcpp::Node {
          << bs_max_uplink_chunks_per_rl_slot_
          << ",\"bs_max_downlink_chunks_per_rl_slot\":"
          << bs_max_downlink_chunks_per_rl_slot_
+         << ",\"bs_downlink_newest_missing_chunk_first\":"
+         << (bs_downlink_newest_missing_chunk_first_ ? "true" : "false")
          << ",\"bs_chunk_budget_admission_fraction\":"
          << kBsMapAdmissionFraction
          << ",\"bs_chunk_budget_reference_bytes\":"
@@ -7507,6 +7641,8 @@ class CommunicationProxy final : public rclcpp::Node {
          << 1.0e3 * rl_bs_communication_slot_s_
          << ",\"rl_bs_decision_period_ms\":"
          << 1.0e3 * rl_bs_decision_period_s_
+         << ",\"rl_bs_repeat_action_each_slot\":"
+         << (rl_bs_repeat_action_each_slot_ ? "true" : "false")
          << ",\"rl_bs_slots_per_decision\":" << rl_slots_per_decision_
          << ",\"rl_communication_slot_index\":"
          << rl_communication_slot_index_
@@ -7654,7 +7790,13 @@ class CommunicationProxy final : public rclcpp::Node {
            << ",\"source_sim_time_s\":" << sample.source_sim_time_s
            << ",\"redundant_exploration_ratio\":" << sample.redundancy
            << ",\"bs_global_map_iou\":" << sample.map_iou
-           << ",\"bs_global_map_coverage\":" << sample.map_coverage << '}';
+           << ",\"bs_global_map_coverage\":" << sample.map_coverage
+           << ",\"bs_uplink_prb_slots\":"
+           << sample.bs_uplink_prb_slots
+           << ",\"bs_downlink_prb_slots\":"
+           << sample.bs_downlink_prb_slots
+           << ",\"direct_u2u_prb_slots\":"
+           << sample.direct_u2u_prb_slots << '}';
     }
     json << ']'
          << ",\"bs_control_attempted_packets\":"
@@ -7801,6 +7943,7 @@ class CommunicationProxy final : public rclcpp::Node {
   int bs_max_uplink_chunks_per_turn_{};
   int bs_max_uplink_chunks_per_rl_slot_{};
   int bs_max_downlink_chunks_per_rl_slot_{};
+  bool bs_downlink_newest_missing_chunk_first_{false};
   bool rl_bs_scheduler_enabled_{false};
   bool force_bs_perfect_delivery_{false};
   bool bs_periodic_upload_request_enabled_{false};
@@ -7822,6 +7965,7 @@ class CommunicationProxy final : public rclcpp::Node {
   std::string rl_shared_memory_root_;
   double rl_bs_communication_slot_s_{};
   double rl_bs_decision_period_s_{};
+  bool rl_bs_repeat_action_each_slot_{true};
   double rl_llm_state_period_s_{};
   std::string ground_truth_occupied_voxels_path_;
   std::string observed_occupied_voxels_path_;
@@ -7871,11 +8015,19 @@ class CommunicationProxy final : public rclcpp::Node {
   std::unordered_map<std::string, std::uint64_t> uav_mcs_counts_;
   std::unordered_map<std::string, std::uint64_t> bs_mcs_counts_;
   std::unordered_map<ChunkKey, CachedChunk, ChunkKeyHash> chunk_repository_;
+  std::unordered_map<ChunkKey, std::uint64_t, ChunkKeyHash>
+      bs_chunk_arrival_sequences_;
+  std::uint64_t bs_chunk_arrival_sequence_{};
   std::vector<std::unordered_set<ChunkKey, ChunkKeyHash>> uav_chunks_;
   // Ordered materialized set differences make each PHY-slot selection cost
   // proportional to its quota instead of to the accumulated global map.
   std::vector<std::set<ChunkKey>> ordered_bs_missing_chunks_;
   std::vector<std::set<ChunkKey>> ordered_uav_missing_chunks_;
+  std::vector<std::vector<ChunkKey>> downlink_priority_tables_;
+  std::vector<std::array<double, 3>> downlink_priority_positions_;
+  std::vector<bool> downlink_priority_position_valid_;
+  std::vector<std::uint64_t> downlink_priority_versions_;
+  std::uint64_t downlink_inventory_version_{};
   std::vector<
       std::unordered_map<ChunkKey, PendingBsChunkRequest, ChunkKeyHash>>
       pending_bs_chunk_requests_;
